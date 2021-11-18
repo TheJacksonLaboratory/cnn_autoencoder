@@ -8,7 +8,7 @@ import numpy as np
 from torch.serialization import save
 
 
-VER = '0.1'
+VER = '0.2'
 DATASETS = ['MNIST']
 
 

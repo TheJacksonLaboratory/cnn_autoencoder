@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from models import Analyzer, Synthesizer, FactorizedEntropy
+from models import AutoEncoder
 from criterions import RateDistorsion
 from utils import save_state, get_training_args, setup_logger
 from datasets import get_data
@@ -14,10 +14,8 @@ from itertools import chain
 from inspect import getfullargspec
 
 
-def train(comp_model, decomp_model, ent_model, data, criterion, optimizer):
-    comp_model.train()
-    decomp_model.train()
-    ent_model.train()
+def train(cae_model, data, criterion, optimizer):
+    cae_model.train()
 
     sum_loss = 0
 
@@ -25,9 +23,7 @@ def train(comp_model, decomp_model, ent_model, data, criterion, optimizer):
         
         optimizer.zero_grad()
 
-        y_q = comp_model(x)
-        p_y = ent_model(y_q)
-        x_r = decomp_model(y_q)
+        x_r, p_y = cae_model(x)
 
         loss = criterion(x, x_r, p_y)
 
@@ -40,17 +36,12 @@ def train(comp_model, decomp_model, ent_model, data, criterion, optimizer):
     return mean_loss
 
 
-def valid(comp_model, decomp_model, ent_model, data, criterion):
-    comp_model.eval()
-    decomp_model.eval()
-    ent_model.eval()
-
+def valid(cae_model, data, criterion):
+    cae_model.train()
     sum_loss = 0
 
     for x, _ in data:
-        y_q = comp_model(x)
-        p_y = ent_model(y_q)
-        x_r = decomp_model(y_q)
+        x_r, p_y = cae_model(x)
 
         loss = criterion(x, x_r, p_y)
 
@@ -64,22 +55,17 @@ def valid(comp_model, decomp_model, ent_model, data, criterion):
 def main(args):
     logger = logging.getLogger('training_log')
 
-    # The autoencoder model is trained by separate, this allows to load only the required track when used for prediction
-    comp_model = Analyzer(args.input_channels, args.net_channels, args.bn_channels, args.compression_level, args.channels_expansion)
-    decomp_model = Synthesizer(args.input_channels, args.net_channels, args.bn_channels, args.compression_level, args.channels_expansion)    
-    ent_model = FactorizedEntropy(args.bn_channels, args.factorized_entropy_K, args.factorized_entropy_r)
+    # The autoencoder model contains all the modules
+    cae_model = AutoEncoder(args.input_channels, args.net_channels, args.bn_channels, args.compression_level, args.channels_expansion, K=args.factorized_entropy_K, r=args.factorized_entropy_r)
 
     # Loss function
     criterion = RateDistorsion(args.distorsion_lambda)
 
     if torch.cuda.is_available():
-        comp_model = nn.DataParallel(comp_model).cuda()
-        decomp_model = nn.DataParallel(decomp_model).cuda()       
-        ent_model = nn.DataParallel(ent_model).cuda()
-
+        cae_model = nn.DataParallel(cae_model).cuda()
         criterion = nn.DataParallel(criterion).cuda()
 
-    optimizer = optim.Adam(params=chain(comp_model.parameters(), decomp_model.parameters(), ent_model.parameters()), lr=args.learning_rate)
+    optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='min')
 
     train_data, valid_data = get_data(args)
@@ -89,8 +75,8 @@ def main(args):
     valid_loss_history = []
 
     for e in range(args.epochs):        
-        train_loss = train(comp_model, decomp_model, ent_model, train_data, criterion, optimizer)
-        valid_loss = valid(comp_model, decomp_model, ent_model, valid_data, criterion)
+        train_loss = train(cae_model, train_data, criterion, optimizer)
+        valid_loss = valid(cae_model, valid_data, criterion)
 
         logger.info('[Epoch {:3d}] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}'.format(
             e, train_loss, valid_loss, best_valid_loss)
@@ -108,9 +94,7 @@ def main(args):
         if valid_loss < best_valid_loss or e % args.checkpoint_epochs == 0:
             # Create a dictionary with the current state as checkpoint
             training_state = dict(
-                comp_model=comp_model.state_dict(),
-                decomp_model=decomp_model.state_dict(),
-                ent_model=ent_model.state_dict(),
+                cae_model=cae_model.state_dict(),
                 optimizer=optimizer.state_dict(),
                 args=args,
                 best_val=best_valid_loss,

@@ -173,3 +173,21 @@ class Synthesizer(nn.Module):
     def forward(self, x):
         x = self.synthesis_track(x)
         return x
+
+
+class AutoEncoder(nn.Module):
+    def __init__(self, channels_org, channels_net, channels_bn, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False, K=4, r=3):
+        super(AutoEncoder, self).__init__()
+
+        self.analysis = Analyzer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
+        self.synthesis = Synthesizer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
+        self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
+
+        self.apply(initialize_weights)
+
+    def forward(self, x):
+        y_q = self.analysis(x)
+        p_y = self.fact_entropy(y_q)
+        x_r = self.synthesis(y_q)
+
+        return x_r, p_y
