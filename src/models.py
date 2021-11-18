@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.container import Sequential
 
 
 def initialize_weights(m):
@@ -130,9 +131,9 @@ class UpsamplingUnit(nn.Module):
         return fx
 
 
-class AutoEncoder(nn.Module):
+class Analyzer(nn.Module):
     def __init__(self, channels_org, channels_net, channels_bn, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False):
-        super(AutoEncoder, self).__init__()
+        super(Analyzer, self).__init__()
 
         # Initial color convertion
         down_track = [nn.Conv2d(channels_org, channels_net, 3, 1, 1, 1, channels_org if groups else 1, bias=bias)]
@@ -146,8 +147,17 @@ class AutoEncoder(nn.Module):
         
         self.analysis_track = nn.Sequential(*down_track)
         
-        # TODO: Implement codification modules
         self.quantizer = Quantizer()
+
+    def forward(self, x):
+        y = self.analysis_track(x)
+        y_q = self.quantizer(y)
+        return y_q
+
+
+class Synthesizer(nn.Module):
+    def __init__(self, channels_org, channels_net, channels_bn, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False):
+        super(Synthesizer, self).__init__()
 
         # Initial deconvolution in the synthesis track
         up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias)]
@@ -160,28 +170,6 @@ class AutoEncoder(nn.Module):
         
         self.synthesis_track = nn.Sequential(*up_track)
 
-        self.apply(initialize_weights)
-
-    def compress(self, x):
-        # Analysis track
-        y = self.analysis_track(x)
-        y_q = self.quantizer(y)
-        return y_q
-
-    def decompress(self, y_q):
-        # Analysis track
-        x_hat = self.synthesis_track(y_q)
-        return x_hat
-
     def forward(self, x):
-        # Analysis track
-        y = self.compress(x)
-
-        # TODO: y_hat must be the decoded version of the quantized and coded y
-        y_q = self.quantizer(y)
-        y_hat = y_q
-
-        # Synthesis track
-        x_hat = self.decompress(y_hat)
-
-        return x_hat, y_q
+        x = self.synthesis_track(x)
+        return x

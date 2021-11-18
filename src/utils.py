@@ -25,6 +25,7 @@ def get_training_args():
     parser.add_argument('-e', '--epochs', dest='epochs', type=int, help='Number of training epochs', default=10)
     parser.add_argument('-ce', '--checkepochs', dest='checkpoint_epochs', type=int, help='Create a checkpoint every this number of epochs', default=10)
     
+    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ld', '--logdir', dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-dd', '--datadir', dest='data_dir', help='Directory where the data is stored', default='.')
     parser.add_argument('-ds', '--dataset', dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
@@ -39,7 +40,7 @@ def get_training_args():
     parser.add_argument('-eK', '--entK', type=float, dest='factorized_entropy_K', help='Number of layers in the latent space of the factorized entropy model', default=4)
     parser.add_argument('-er', '--entr', type=float, dest='factorized_entropy_r', help='Number of channels in the latent space of the factorized entropy model', default=3)
 
-    parser.add_argument('-lr', '--lrate', dest='learning_rate', help='Optimizer initial learning rate', default=0.01)
+    parser.add_argument('-lr', '--lrate', dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
 
     args = parser.parse_args()
 
@@ -60,13 +61,16 @@ def setup_logger(args):
     logger = logging.getLogger('training_log')
     logger.setLevel(logging.INFO)
 
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
     logger_fn = os.path.join(args.log_dir, 'training_ver%s_%s.log' % (args.version, args.seed))
     fh = logging.FileHandler(logger_fn)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
 
-    console = logging.StreamHandler()
+    if args.print_log:
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
 
-    logger.addHandler(fh)    
-    logger.addHandler(console)
-    logger.info('Code version %s, with random number generator seed: %s\n' % (args.version, args.seed))
+        logger.addHandler(fh)
+        logger.addHandler(console)
+        logger.info('Code version %s, with random number generator seed: %s\n' % (args.version, args.seed))
