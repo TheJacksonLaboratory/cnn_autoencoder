@@ -100,11 +100,6 @@ def main(args):
         train_loss_history.append(train_loss)
         valid_loss_history.append(valid_loss)
    
-        if scheduler is not None:
-            training_state['scheduler'] = scheduler.state_dict()
-        else:
-            training_state['scheduler'] = None
-
         if valid_loss < best_valid_loss or e % args.checkpoint_epochs == 0:
             # Create a dictionary with the current state as checkpoint
             training_state = dict(
@@ -119,6 +114,11 @@ def main(args):
                 valid_loss=valid_loss_history,
                 code_version=args.version
             )
+            
+            if scheduler is not None:
+                training_state['scheduler'] = scheduler.state_dict()
+            else:
+                training_state['scheduler'] = None            
             
             if e % args.checkpoint_epochs == 0:
                 save_state('last', training_state, args)
