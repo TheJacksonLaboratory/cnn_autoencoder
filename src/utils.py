@@ -1,3 +1,4 @@
+import json
 import argparse
 import logging
 import torch
@@ -21,6 +22,8 @@ def save_state(name, model_state, args):
 
 def get_training_args():
     parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
+    parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
+
     parser.add_argument('-rs', '--seed', dest='seed', type=int, help='Seed for random number generators', default=-1)
     parser.add_argument('-e', '--epochs', dest='epochs', type=int, help='Number of training epochs', default=10)
     parser.add_argument('-ce', '--checkepochs', dest='checkpoint_epochs', type=int, help='Create a checkpoint every this number of epochs', default=10)
@@ -28,7 +31,9 @@ def get_training_args():
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ld', '--logdir', dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-dd', '--datadir', dest='data_dir', help='Directory where the data is stored', default='.')
+
     parser.add_argument('-ds', '--dataset', dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
+    parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-ich', '--inputch', type=int, dest='input_channels', help='Number of channels in the input data', default=3)
@@ -40,9 +45,24 @@ def get_training_args():
     parser.add_argument('-eK', '--entK', type=float, dest='factorized_entropy_K', help='Number of layers in the latent space of the factorized entropy model', default=4)
     parser.add_argument('-er', '--entr', type=float, dest='factorized_entropy_r', help='Number of channels in the latent space of the factorized entropy model', default=3)
 
-    parser.add_argument('-lr', '--lrate', dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
+    parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
+    parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
+    parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
+
+    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
 
     args = parser.parse_args()
+
+    # Parse the arguments from a json configure file, when given
+    if args.config_file is not None:
+        if '.json' in args.config_file:
+            config = json.load(open(args.config_file, 'r'))
+            config_parser.set_defaults(**config)
+
+        else:
+            raise ValueError('The configure file must be a .json file')
+
+    args = config_parser.parse_args()
 
     args.version = VER
     

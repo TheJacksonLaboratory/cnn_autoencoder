@@ -22,10 +22,10 @@ def get_MNIST(args):
         ]
     )
 
-    mnist_data = MNIST(root=args.data_dir, train=True, download=False, transform=prep_trans)
+    mnist_data = MNIST(root=args.data_dir, train=True, download=args.download_data, transform=prep_trans)
 
     train_ds, valid_ds = random_split(mnist_data, (55000, 5000))
-    train_queue = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=args.workers)
-    valid_queue = DataLoader(valid_ds, batch_size=32, shuffle=False, num_workers=args.workers)
+    train_queue = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    valid_queue = DataLoader(valid_ds, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers)
 
     return train_queue, valid_queue

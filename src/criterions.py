@@ -7,10 +7,6 @@ import torch.nn.functional as F
 class RateDistorsion(nn.Module):
     def __init__(self, distorsion_lambda=0.01):
         super(RateDistorsion, self).__init__()
-
-        if not isinstance(distorsion_lambda, torch.Tensor):
-            distorsion_lambda = torch.FloatTensor([distorsion_lambda])
-        
         self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x, x_r, p_y):
@@ -26,13 +22,6 @@ class RateDistorsion(nn.Module):
 class RateDistorsionPenalty(nn.Module):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001):
         super(RateDistorsionPenalty, self).__init__()
-
-        if not isinstance(distorsion_lambda, torch.Tensor):
-            distorsion_lambda = torch.FloatTensor([distorsion_lambda])
-
-        if not isinstance(penalty_beta, torch.Tensor):
-            penalty_beta = torch.FloatTensor([penalty_beta])
-        
         self._distorsion_lambda = distorsion_lambda
         self._penalty_beta = penalty_beta
 

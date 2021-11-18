@@ -72,7 +72,12 @@ def main(args):
     # Loss function
     criterion = RateDistorsion(args.distorsion_lambda)
 
-    # TODO: If GPU available, move models and criterion to GPU
+    if torch.cuda.is_available():
+        comp_model = nn.DataParallel(comp_model).cuda()
+        decomp_model = nn.DataParallel(decomp_model).cuda()       
+        ent_model = nn.DataParallel(ent_model).cuda()
+
+        criterion = nn.DataParallel(criterion).cuda()
 
     optimizer = optim.Adam(params=chain(comp_model.parameters(), decomp_model.parameters(), ent_model.parameters()), lr=args.learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='min')
