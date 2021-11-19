@@ -53,7 +53,7 @@ def valid(cae_model, data, criterion):
 
 
 def main(args):
-    logger = logging.getLogger('training_log')
+    logger = logging.getLogger(args.mode + '_log')
 
     # The autoencoder model contains all the modules
     cae_model = AutoEncoder(**args.__dict__)

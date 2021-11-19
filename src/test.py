@@ -27,7 +27,7 @@ def valid(cae_model, data, criterion):
 
 
 def main(args):
-    logger = logging.getLogger('training_log')
+    logger = logging.getLogger(args.mode + '_log')
 
     state = load_state(args)
 

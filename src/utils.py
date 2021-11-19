@@ -27,19 +27,18 @@ def load_state(args):
     """
 
     # If optimizer is not none, the state is being open as checkpoint to resume training
-    if args.test:
-        name = 'best'
-        save_fn = os.path.join(args.trained_model)
+    if args.mode == 'training':
+        save_fn = os.path.join(args.log_dir, 'last_ver%s_%s.pth' % (args.version, args.seed))
     else:
-        name = 'last'
-        save_fn = os.path.join(args.log_dir, name + '_ver%s_%s.pth' % (args.version, args.seed))
+        save_fn = os.path.join(args.trained_model)
 
     state = torch.load(save_fn)
-    logger = logging.getLogger('training_log')
+    logger = logging.getLogger(args.mode + '_log')
     logger.info('Loaded model from %s' % save_fn)
 
     logger.info('Training arguments')
     logger.info(state['args'])
+
     return state
 
 
@@ -47,16 +46,16 @@ def get_training_args():
     parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
 
-    parser.add_argument('-rs', '--seed', dest='seed', type=int, help='Seed for random number generators', default=-1)
-    parser.add_argument('-e', '--epochs', dest='epochs', type=int, help='Number of training epochs', default=10)
-    parser.add_argument('-ce', '--checkepochs', dest='checkpoint_epochs', type=int, help='Create a checkpoint every this number of epochs', default=10)
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-e', '--epochs', type=int, dest='epochs', help='Number of training epochs', default=10)
+    parser.add_argument('-ce', '--checkepochs', type=int, dest='checkpoint_epochs', help='Create a checkpoint every this number of epochs', default=10)
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
-    parser.add_argument('-ld', '--logdir', dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
-    parser.add_argument('-dd', '--datadir', dest='data_dir', help='Directory where the data is stored', default='.')
+    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
-    parser.add_argument('-ds', '--dataset', dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
+    parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
     parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
     parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
@@ -96,24 +95,24 @@ def get_training_args():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed + 1)
 
-    args.test = False
+    args.mode = 'training'
 
     return args
 
 
 def get_testing_args():
-    parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
-    parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
+    parser = argparse.ArgumentParser('Testing of an image compression-decompression model')
+    parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
 
-    parser.add_argument('-rs', '--seed', dest='seed', type=int, help='Seed for random number generators', default=-1)
-    parser.add_argument('-tm', '--model', dest='trained_model', type=str, help='The checkpoint of the model to be tested')
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
-    parser.add_argument('-ld', '--logdir', dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
-    parser.add_argument('-dd', '--datadir', dest='data_dir', help='Directory where the data is stored', default='.')
+    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
-    parser.add_argument('-ds', '--dataset', dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
+    parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
     parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
@@ -142,26 +141,111 @@ def get_testing_args():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed + 1)
     
-    args.test = True
+    args.mode = 'testing'
+
+    return args
+
+
+def get_compress_args():
+    parser = argparse.ArgumentParser('Testing of an image compression model')
+    parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
+
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
+    
+    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+
+    parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
+    parser.add_argument('-i', '--input', type=str, dest='input', help='Input image to compress')
+    parser.add_argument('-o', '--output', type=str, dest='output', help='Output filename to store the compressed image')
+
+    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
+
+    args = parser.parse_args()
+
+    # Parse the arguments from a json configure file, when given
+    if args.config_file is not None:
+        if '.json' in args.config_file:
+            config = json.load(open(args.config_file, 'r'))
+            config_parser.set_defaults(**config)
+
+        else:
+            raise ValueError('The configure file must be a .json file')
+
+    args = config_parser.parse_args()
+
+    args.version = VER
+    
+    # Set the random number generator seed for reproducibility
+    if args.seed < 0:
+        args.seed = np.random.randint(1, 100000)
+    
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed + 1)
+    
+    args.mode = 'compress'
+
+    return args
+
+
+def get_decompress_args():
+    parser = argparse.ArgumentParser('Testing of an image decompression model')
+    parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
+
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
+    
+    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+
+    parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
+    parser.add_argument('-i', '--input', type=str, dest='input', help='Input compressed image')
+    parser.add_argument('-o', '--output', type=str, dest='output', help='Output filename to store the decompressed image')
+
+    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
+
+    args = parser.parse_args()
+
+    # Parse the arguments from a json configure file, when given
+    if args.config_file is not None:
+        if '.json' in args.config_file:
+            config = json.load(open(args.config_file, 'r'))
+            config_parser.set_defaults(**config)
+
+        else:
+            raise ValueError('The configure file must be a .json file')
+
+    args = config_parser.parse_args()
+
+    args.version = VER
+    
+    # Set the random number generator seed for reproducibility
+    if args.seed < 0:
+        args.seed = np.random.randint(1, 100000)
+    
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed + 1)
+    
+    args.mode = 'decompress'
 
     return args
 
 
 def setup_logger(args):
     # Create the training logger
-    logger = logging.getLogger('training_log')
+    logger = logging.getLogger(args.mode + '_log')
     logger.setLevel(logging.INFO)
 
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-    logger_fn = os.path.join(args.log_dir, 'training_ver%s_%s.log' % (args.version, args.seed))
-    fh = logging.FileHandler(logger_fn)
-    fh.setFormatter(formatter)
+    if args.mode in ['training', 'testing']:
+        logger_fn = os.path.join(args.log_dir, '%s_ver%s_%s.log' % (args.mode, args.version, args.seed))
+        fh = logging.FileHandler(logger_fn)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
 
     if args.print_log:
         console = logging.StreamHandler()
         console.setFormatter(formatter)
-
-        logger.addHandler(fh)
         logger.addHandler(console)
-        logger.info('Code version %s, with random number generator seed: %s\n' % (args.version, args.seed))
+    
+    logger.info('Code version %s, with random number generator seed: %s\n' % (args.version, args.seed))
