@@ -25,7 +25,7 @@ def get_MNIST(args):
     )
 
     # If testing the model, return the test set from MNIST
-    if args.test:
+    if args.mode == 'testing':
         mnist_data = MNIST(root=args.data_dir, train=False, download=args.download_data, transform=prep_trans)
         test_queue = DataLoader(mnist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
         return test_queue
