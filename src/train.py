@@ -37,7 +37,7 @@ def train(cae_model, data, criterion, optimizer):
 
 
 def valid(cae_model, data, criterion):
-    cae_model.train()
+    cae_model.eval()
     sum_loss = 0
 
     for x, _ in data:
@@ -56,10 +56,10 @@ def main(args):
     logger = logging.getLogger('training_log')
 
     # The autoencoder model contains all the modules
-    cae_model = AutoEncoder(args.input_channels, args.net_channels, args.bn_channels, args.compression_level, args.channels_expansion, K=args.factorized_entropy_K, r=args.factorized_entropy_r)
+    cae_model = AutoEncoder(**args.__dict__)
 
     # Loss function
-    criterion = RateDistorsion(args.distorsion_lambda)
+    criterion = RateDistorsion(**args.__dict__)
 
     if torch.cuda.is_available():
         cae_model = nn.DataParallel(cae_model).cuda()
@@ -96,7 +96,7 @@ def main(args):
             training_state = dict(
                 cae_model=cae_model.state_dict(),
                 optimizer=optimizer.state_dict(),
-                args=args,
+                args=args.__dict__,
                 best_val=best_valid_loss,
                 epoch=e,
                 train_loss=train_loss_history,
@@ -119,6 +119,7 @@ def main(args):
 
 if __name__ == '__main__':
     args = get_training_args()
+    
     setup_logger(args)
-   
+
     main(args)

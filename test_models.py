@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from src.models import FactorizedEntropy, AutoEncoder
+from src.models import FactorizedEntropy
 
 
 def test_factorized_entropy(size=1000):
@@ -42,34 +42,5 @@ def test_factorized_entropy(size=1000):
     plt.show()
 
 
-
-def test_autoencoder():
-    print('Test the autoencoder')
-    net = AutoEncoder(channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False)
-    net.train(True)
-
-    x = torch.rand([5, 3, 480, 320])
-    print('Original shape:', x.size(), x.min(), x.max(), x.mean(), x.std())
-
-    x_hat, y_q = net(x)
-
-    print('Quantized shape:', y_q.size(), y_q.min(), y_q.max(), y_q.mean(), y_q.std())
-
-    fact_entropy = FactorizedEntropy(channels=y_q.size(1))
-    p_y = fact_entropy(y_q)
-    print('Factorized probability of quantized y:', p_y.size(), p_y.min(), p_y.max())
-
-    print('Reconstruction shape:', x_hat.size(), x_hat.min(), x_hat.max(), x_hat.mean(), x_hat.std())
-    res = torch.sum((x - x_hat)**2)
-
-    comp_rate = -torch.mean(torch.log2(y_q))
-    loss = 0.0001 * res + comp_rate
-
-    print('Reconstruction residual:', res, ', compression rate:', comp_rate, 'model loss:', loss)
-
-    loss.backward()
-
-
 if __name__ == '__main__':
-    # test_factorized_entropy()
-    test_autoencoder()
+    test_factorized_entropy()

@@ -132,7 +132,7 @@ class UpsamplingUnit(nn.Module):
 
 
 class Analyzer(nn.Module):
-    def __init__(self, channels_org, channels_net, channels_bn, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False):
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False):
         super(Analyzer, self).__init__()
 
         # Initial color convertion
@@ -156,7 +156,7 @@ class Analyzer(nn.Module):
 
 
 class Synthesizer(nn.Module):
-    def __init__(self, channels_org, channels_net, channels_bn, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False):
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False):
         super(Synthesizer, self).__init__()
 
         # Initial deconvolution in the synthesis track
@@ -176,7 +176,7 @@ class Synthesizer(nn.Module):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, channels_org, channels_net, channels_bn, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False, K=4, r=3):
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False, K=4, r=3, **kwargs):
         super(AutoEncoder, self).__init__()
 
         self.analysis = Analyzer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)

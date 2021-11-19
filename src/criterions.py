@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class RateDistorsion(nn.Module):
-    def __init__(self, distorsion_lambda=0.01):
+    def __init__(self, distorsion_lambda=0.01, **kwargs):
         super(RateDistorsion, self).__init__()
         self._distorsion_lambda = distorsion_lambda
 
@@ -20,7 +20,7 @@ class RateDistorsion(nn.Module):
     
 
 class RateDistorsionPenalty(nn.Module):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001):
+    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
         super(RateDistorsionPenalty, self).__init__()
         self._distorsion_lambda = distorsion_lambda
         self._penalty_beta = penalty_beta
