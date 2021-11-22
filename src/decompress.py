@@ -1,4 +1,5 @@
 import logging
+import os
 
 import numpy as np
 import torch
@@ -10,7 +11,7 @@ from utils import get_decompress_args, load_state, setup_logger
 from datasets import open_compressed, save_image
 
 
-def main(args):
+def decompress(args):
     logger = logging.getLogger(args.mode + '_log')
 
     state = load_state(args)
@@ -29,12 +30,10 @@ def main(args):
         
     decomp_model.eval()
     
-    y_q = open_compressed(args.input)
-    x = decomp_model(y_q)
-
-    logger.info('Image of shape {} in the range of [{}, {}], decompressed from a pytorch tensor of size {}'.format(x.size(), x.min(), x.max(), y_q.size()))
-
-    save_image(args.output, x)
+    for i, fn in enumerate(args.input):
+        y_q = open_compressed(fn)
+        x = decomp_model(y_q)
+        save_image(os.path.join(args.output_dir, '{:03d}_rec.pgm'.format(i)), x)
 
 
 if __name__ == '__main__':
@@ -42,4 +41,4 @@ if __name__ == '__main__':
     
     setup_logger(args)
     
-    main(args)
+    decompress(args)

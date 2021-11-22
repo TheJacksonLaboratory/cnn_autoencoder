@@ -32,7 +32,12 @@ def load_state(args):
     else:
         save_fn = os.path.join(args.trained_model)
 
-    state = torch.load(save_fn)
+    if not torch.cuda.is_available():
+        state = torch.load(save_fn, map_location=torch.device('cpu'))
+    
+    else:
+        state = torch.load(save_fn)
+    
     logger = logging.getLogger(args.mode + '_log')
     logger.info('Loaded model from %s' % save_fn)
 
@@ -85,8 +90,6 @@ def get_training_args():
             raise ValueError('The configure file must be a .json file')
 
     args = config_parser.parse_args()
-
-    args.version = VER
     
     # Set the random number generator seed for reproducibility
     if args.seed < 0:
@@ -132,8 +135,6 @@ def get_testing_args():
 
     args = config_parser.parse_args()
 
-    args.version = VER
-    
     # Set the random number generator seed for reproducibility
     if args.seed < 0:
         args.seed = np.random.randint(1, 100000)
@@ -156,8 +157,8 @@ def get_compress_args():
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
-    parser.add_argument('-i', '--input', type=str, dest='input', help='Input image to compress')
-    parser.add_argument('-o', '--output', type=str, dest='output', help='Output filename to store the compressed image')
+    parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input images to compress (list of images).')
+    parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed image')
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
 
@@ -173,8 +174,6 @@ def get_compress_args():
             raise ValueError('The configure file must be a .json file')
 
     args = config_parser.parse_args()
-
-    args.version = VER
     
     # Set the random number generator seed for reproducibility
     if args.seed < 0:
@@ -198,8 +197,8 @@ def get_decompress_args():
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
-    parser.add_argument('-i', '--input', type=str, dest='input', help='Input compressed image')
-    parser.add_argument('-o', '--output', type=str, dest='output', help='Output filename to store the decompressed image')
+    parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
+    parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
 
@@ -215,8 +214,6 @@ def get_decompress_args():
             raise ValueError('The configure file must be a .json file')
 
     args = config_parser.parse_args()
-
-    args.version = VER
     
     # Set the random number generator seed for reproducibility
     if args.seed < 0:
@@ -231,7 +228,9 @@ def get_decompress_args():
 
 
 def setup_logger(args):
-    # Create the training logger
+    args.version = VER
+
+    # Create the logger
     logger = logging.getLogger(args.mode + '_log')
     logger.setLevel(logging.INFO)
 

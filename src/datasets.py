@@ -7,25 +7,27 @@ from torchvision.datasets import MNIST
 from PIL import Image
 
 
-def get_data(args):
+def get_data(args, normalize=True):
     if args.dataset == 'MNIST':
-        return get_MNIST(args)
+        return get_MNIST(args, normalize)
 
     else:
         raise ValueError('The dataset \'%s\' is not available for training.' % args.dataset)
 
 
-def get_MNIST(args):
-    prep_trans = transforms.Compose(        
-        [transforms.Pad(2),
+def get_MNIST(args, normalize=True):
+    prep_trans_list = [transforms.Pad(2),
          transforms.PILToTensor(),
-         transforms.ConvertImageDtype(torch.float32),
-         transforms.Normalize(mean=0.0, std=1.0)
+         transforms.ConvertImageDtype(torch.float32)
         ]
-    )
+    
+    if normalize:
+        prep_trans_list.append(transforms.Normalize(mean=0.0, std=1.0))
+    
+    prep_trans = transforms.Compose(prep_trans_list)
 
     # If testing the model, return the test set from MNIST
-    if args.mode == 'testing':
+    if args.mode != 'training':
         mnist_data = MNIST(root=args.data_dir, train=False, download=args.download_data, transform=prep_trans)
         test_queue = DataLoader(mnist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
         return test_queue
@@ -70,6 +72,7 @@ def open_image(filename, compression_level):
 
 def save_image(filename, img):
     img = img.clip(0.0, 1.0) * 255.0
+
     post_trans = transforms.ToPILImage()
     img = post_trans(img.squeeze().to(torch.uint8))
     img.save(filename)
