@@ -241,6 +241,7 @@ def setup_logger(args):
         fh = logging.FileHandler(logger_fn)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
+        logger.setLevel(logging.DEBUG)
 
     if args.print_log:
         console = logging.StreamHandler()

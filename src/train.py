@@ -15,11 +15,13 @@ from inspect import getfullargspec
 
 
 def train(cae_model, data, criterion, optimizer):
+    logger = logging.getLogger(args.mode + '_log')
+
     cae_model.train()
 
     sum_loss = 0
 
-    for x, _ in data:
+    for i, (x, _) in enumerate(data):
         
         optimizer.zero_grad()
 
@@ -31,21 +33,29 @@ def train(cae_model, data, criterion, optimizer):
         optimizer.step()
         sum_loss += loss.item()
 
+        if i % int(0.1 * len(data)) == 0:
+            logger.debug('[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f})'.format(i, len(data), loss.item(), sum_loss / (i+1)))
+
     mean_loss = sum_loss / len(data)
 
     return mean_loss
 
 
 def valid(cae_model, data, criterion):
+    logger = logging.getLogger(args.mode + '_log')
+
     cae_model.eval()
     sum_loss = 0
 
-    for x, _ in data:
+    for i, (x, _) in enumerate(data):
         x_r, p_y = cae_model(x)
 
         loss = criterion(x, x_r, p_y)
 
         sum_loss += loss.item()
+
+        if i % int(0.1 * len(data)) == 0:
+            logger.debug('[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f})'.format(i, len(data), loss.item(), sum_loss / (i+1)))
 
     mean_loss = sum_loss / len(data)
 

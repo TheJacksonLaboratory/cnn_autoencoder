@@ -1,8 +1,10 @@
+import os
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, random_split
 import torchvision.transforms as transforms
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, ImageFolder
 
 from PIL import Image
 
@@ -10,6 +12,9 @@ from PIL import Image
 def get_data(args, normalize=True):
     if args.dataset == 'MNIST':
         return get_MNIST(args, normalize)
+
+    elif args.dataset == 'ImageNet':
+        return get_ImageNet(args, normalize)
 
     else:
         raise ValueError('The dataset \'%s\' is not available for training.' % args.dataset)
@@ -35,6 +40,35 @@ def get_MNIST(args, normalize=True):
     mnist_data = MNIST(root=args.data_dir, train=True, download=args.download_data, transform=prep_trans)
 
     train_ds, valid_ds = random_split(mnist_data, (55000, 5000))
+    train_queue = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    valid_queue = DataLoader(valid_ds, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers)
+
+    return train_queue, valid_queue
+
+
+def get_ImageNet(args, normalize=True):
+    prep_trans_list = [
+         transforms.PILToTensor(),
+         transforms.ConvertImageDtype(torch.float32)
+        ]
+
+    if args.mode == 'training':
+        prep_trans_list.append(transforms.RandomCrop((128, 128)))
+
+    if normalize:
+        prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+    
+    prep_trans = transforms.Compose(prep_trans_list)
+
+    # If testing the model, return the validation set from MNIST
+    if args.mode != 'training':
+        imagenet_data = ImageFolder(root=os.path.join(args.data_dir, 'ILSVRC/Data/CLS-LOC/val'), transform=prep_trans)
+        test_queue = DataLoader(imagenet_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+        return test_queue
+
+    imagenet_data = ImageFolder(root=os.path.join(args.data_dir, 'ILSVRC/Data/CLS-LOC/train'), transform=prep_trans)
+    
+    train_ds, valid_ds = random_split(imagenet_data, (len(imagenet_data) - 50000, 50000))
     train_queue = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     valid_queue = DataLoader(valid_ds, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers)
 
