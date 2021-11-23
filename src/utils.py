@@ -53,8 +53,10 @@ def get_training_args():
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
 
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
-    parser.add_argument('-e', '--epochs', type=int, dest='epochs', help='Number of training epochs', default=10)
-    parser.add_argument('-ce', '--checkepochs', type=int, dest='checkpoint_epochs', help='Create a checkpoint every this number of epochs', default=10)
+    parser.add_argument('-s', '--steps', type=int, dest='steps', help='Number of training steps', default=1e5)
+    parser.add_argument('-cs', '--checksteps', type=int, dest='checkpoint_steps', help='Create a checkpoint every this number of steps', default=1e3)
+    
+    parser.add_argument('-rm', '--resume', type=str, dest='resume', help='Resume training from an existing checkpoint')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
@@ -92,6 +94,7 @@ def get_training_args():
         else:
             raise ValueError('The configure file must be a .json file')
 
+    # The parameters passed through a json file are overridable from console instructions
     args = config_parser.parse_args()
     
     # Set the random number generator seed for reproducibility
@@ -136,6 +139,7 @@ def get_testing_args():
         else:
             raise ValueError('The configure file must be a .json file')
 
+    # The parameters passed through a json file are overridable from console instructions
     args = config_parser.parse_args()
 
     # Set the random number generator seed for reproducibility
@@ -176,6 +180,7 @@ def get_compress_args():
         else:
             raise ValueError('The configure file must be a .json file')
 
+    # The parameters passed through a json file are overridable from console instructions
     args = config_parser.parse_args()
     
     # Set the random number generator seed for reproducibility
@@ -216,6 +221,7 @@ def get_decompress_args():
         else:
             raise ValueError('The configure file must be a .json file')
 
+    # The parameters passed through a json file are overridable from console instructions
     args = config_parser.parse_args()
     
     # Set the random number generator seed for reproducibility
