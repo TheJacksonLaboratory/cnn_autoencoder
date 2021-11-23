@@ -16,10 +16,10 @@ def compress(args):
     The images can be provided as a lis of tensors, or a tensor stacked in the first dimension.
     """
     logger = logging.getLogger(args.mode + '_log')
+
     state = load_state(args)
 
     comp_model = Analyzer(**state['args'])
-    quantizer = Quantizer()
 
     # Load only the analysis track from the trained model:
     comp_state_dict = {}
@@ -32,13 +32,13 @@ def compress(args):
         comp_model = nn.DataParallel(comp_model).cuda()
 
     comp_model.eval()
-    quantizer.eval()
 
     for i, fn in enumerate(args.input):
         x = open_image(fn, state['args']['compression_level'])
 
-        y = comp_model(x)
-        y_q = quantizer(y).to(torch.uint8)
+        y_q, _ = comp_model(x)
+        
+        logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
         
         save_compressed(os.path.join(args.output_dir, '{:03d}.pth'.format(i)), y_q)
 

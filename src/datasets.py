@@ -27,8 +27,9 @@ def get_MNIST(args, normalize=True):
         ]
     
     if normalize:
-        prep_trans_list.append(transforms.Normalize(mean=0.0, std=1.0))
-    
+        # prep_trans_list.append(transforms.Normalize(mean=0.0, std=1.0))
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
+            
     prep_trans = transforms.Compose(prep_trans_list)
 
     # If testing the model, return the test set from MNIST
@@ -56,8 +57,9 @@ def get_ImageNet(args, normalize=True):
         prep_trans_list.append(transforms.RandomCrop((128, 128), pad_if_needed=True))
 
     if normalize:
-        prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
-    
+        # prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+        prep_trans_list.append(transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]))
+        
     prep_trans = transforms.Compose(prep_trans_list)
 
     # If testing the model, return the validation set from MNIST
@@ -90,10 +92,12 @@ def open_image(filename, compression_level):
     channels = len(img.getbands())
 
     if channels == 3:
-        # TODO: check actual normalization parameters from the paper. The parameters here are from ImageNet
-        trans_comp.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+        # The ImageNet original normalization parameters
+        # trans_comp.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+        # The paper normalization parameters
+        trans_comp.append(transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]))
     elif channels == 1:
-        trans_comp.append(transforms.Normalize(mean=0.0, std=1.0))
+        trans_comp.append(transforms.Normalize(mean=0.5, std=0.5))
     else:
         raise ValueError('The image has an unsoported number of channels.')
     

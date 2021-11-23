@@ -1,3 +1,5 @@
+import logging 
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,7 +11,7 @@ class RateDistorsion(nn.Module):
         super(RateDistorsion, self).__init__()
         self._distorsion_lambda = distorsion_lambda
 
-    def forward(self, x, x_r, p_y):
+    def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
         # Distorsion
         dist = F.mse_loss(x_r, x)
         
@@ -25,9 +27,10 @@ class RateDistorsionPenaltyA(nn.Module):
         self._distorsion_lambda = distorsion_lambda
         self._penalty_beta = penalty_beta
 
-    def forward(self, x, y, x_r, p_y):
+    def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
         # Compute A, the approximation to the variance introduced during the analysis track
-        A = torch.sum(y ** 2, dim=(3, 4)) / (torch.sum(x ** 2, dim=(1, 2, 3)) + 1e-10)
+        A = torch.var(y, dim=(2, 3)) / (torch.var(x, dim=(1, 2, 3)).unsqueeze(dim=1) + 1e-10)
+
         P_A = torch.sum(-A * torch.log2(A), dim=1)
 
         # Distorsion
@@ -45,7 +48,7 @@ class RateDistorsionPenaltyB(nn.Module):
         self._distorsion_lambda = distorsion_lambda
         self._penalty_beta = penalty_beta
 
-    def forward(self, x, x_r, p_y, y, synth_net):
+    def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
         # Compute B, the approximation to the variance introduced during the quntization and synthesis track
         _, K, H, W = y.size()
 

@@ -8,8 +8,9 @@ import numpy as np
 from torch.serialization import save
 
 
-VER = '0.3'
+VER = '0.4'
 DATASETS = ['MNIST']
+CRITERIONS = ['RD', 'RD_PA', 'RD_PB']
 
 
 def save_state(name, model_state, args):
@@ -60,8 +61,10 @@ def get_training_args():
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
-    parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default='MNIST', choices=DATASETS)
+    parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
     parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
+
+    parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=CRITERIONS[0], choices=CRITERIONS)
 
     parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
     parser.add_argument('-nch', '--netch', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)

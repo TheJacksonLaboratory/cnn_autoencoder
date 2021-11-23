@@ -12,8 +12,8 @@ from datasets import open_compressed, save_image
 
 
 def decompress(args):
-    logger = logging.getLogger(args.mode + '_log')
-
+    """" Deompress a list of pytorch pickled files into images.
+    """
     state = load_state(args)
 
     decomp_model = Synthesizer(**state['args'])
@@ -27,7 +27,7 @@ def decompress(args):
 
     if torch.cuda.is_available():
         decomp_model = nn.DataParallel(decomp_model).cuda()
-        
+    
     decomp_model.eval()
     
     for i, fn in enumerate(args.input):

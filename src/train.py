@@ -2,11 +2,12 @@ import logging
 
 import numpy as np
 import torch
+from torch._C import Value
 import torch.nn as nn
 import torch.optim as optim
 
 from models import AutoEncoder
-from criterions import RateDistorsion
+from criterions import RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB
 from utils import save_state, get_training_args, setup_logger
 from datasets import get_data
 
@@ -22,12 +23,11 @@ def train(cae_model, data, criterion, optimizer):
     sum_loss = 0
 
     for i, (x, _) in enumerate(data):
-        
         optimizer.zero_grad()
 
-        x_r, p_y = cae_model(x)
+        x_r, y, p_y = cae_model(x)
 
-        loss = criterion(x, x_r, p_y)
+        loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=cae_model.synthesis)
 
         loss.backward()
         optimizer.step()
@@ -47,15 +47,16 @@ def valid(cae_model, data, criterion):
     cae_model.eval()
     sum_loss = 0
 
-    for i, (x, _) in enumerate(data):
-        x_r, p_y = cae_model(x)
+    with torch.no_grad():
+        for i, (x, _) in enumerate(data):
+            x_r, y, p_y = cae_model(x)
 
-        loss = criterion(x, x_r, p_y)
+            loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=cae_model.synthesis)
 
-        sum_loss += loss.item()
+            sum_loss += loss.item()
 
-        if i % int(0.1 * len(data)) == 0:
-            logger.debug('[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f})'.format(i, len(data), loss.item(), sum_loss / (i+1)))
+            if i % int(0.1 * len(data)) == 0:
+                logger.debug('[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f})'.format(i, len(data), loss.item(), sum_loss / (i+1)))
 
     mean_loss = sum_loss / len(data)
 
@@ -69,7 +70,14 @@ def main(args):
     cae_model = AutoEncoder(**args.__dict__)
 
     # Loss function
-    criterion = RateDistorsion(**args.__dict__)
+    if args.criterion == 'RD_PA':
+        criterion = RateDistorsionPenaltyA(**args.__dict__)
+    elif args.criterion == 'RD_PB':
+        criterion = RateDistorsionPenaltyB(**args.__dict__)
+    elif args.criterion == 'RD':
+        criterion = RateDistorsion(**args.__dict__)
+    else:
+        raise ValueError('Criterion \'%s\' not supported' % args.criterion)
 
     if torch.cuda.is_available():
         cae_model = nn.DataParallel(cae_model).cuda()

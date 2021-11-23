@@ -60,20 +60,21 @@ class FactorizedEntropy(nn.Module):
                                      ])
 
     def forward(self, x):
-        channels = x.size(1)        
+        channels = x.size(1)
+        fx = x.clone()
         for H_k, b_k, a_k in zip(self._H[:-1], self._b[:-1], self._a):
             # Reparametrerize the matrix H, and vector a to generate nonegative Jacobian matrices
             H_k = F.softplus(H_k)
             a_k = torch.tanh(a_k)
             
             # Using the 2d convolution instead of simple element-wise product allows to operate over all channels at the same time
-            x = F.conv2d(x, weight=H_k, bias=b_k, groups=channels)
-            x = x + a_k * torch.tanh(x)
+            fx = F.conv2d(fx, weight=H_k, bias=b_k, groups=channels)
+            fx = fx + a_k * torch.tanh(fx)
 
         H_K = F.softplus(self._H[-1])
-        x = torch.sigmoid(F.conv2d(x, weight=H_K, bias=self._b[-1], groups=channels))
+        fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b[-1], groups=channels))
 
-        return x
+        return fx
 
 
 class DownsamplingUnit(nn.Module):
@@ -151,7 +152,7 @@ class Analyzer(nn.Module):
     def forward(self, x):
         y = self.analysis_track(x)
         y_q = self.quantizer(y)
-        return y_q
+        return y_q, y
 
 
 class Synthesizer(nn.Module):
@@ -185,8 +186,8 @@ class AutoEncoder(nn.Module):
         self.apply(initialize_weights)
 
     def forward(self, x):
-        y_q = self.analysis(x)
+        y_q, y = self.analysis(x)
         p_y = self.fact_entropy(y_q)
         x_r = self.synthesis(y_q)
 
-        return x_r, p_y
+        return x_r, y, p_y
