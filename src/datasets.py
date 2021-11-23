@@ -53,7 +53,7 @@ def get_ImageNet(args, normalize=True):
         ]
 
     if args.mode == 'training':
-        prep_trans_list.append(transforms.RandomCrop((128, 128)))
+        prep_trans_list.append(transforms.RandomCrop((128, 128), pad_if_needed=True))
 
     if normalize:
         prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
