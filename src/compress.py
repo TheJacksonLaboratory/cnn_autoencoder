@@ -7,8 +7,7 @@ import torch.nn as nn
 
 from models import Analyzer, Quantizer
 
-from utils import get_compress_args, load_state, setup_logger
-from datasets import open_image, save_compressed
+from utils import get_compress_args, load_state, setup_logger, open_image, save_compressed
 
 
 def compress(args):

@@ -4,10 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models import AutoEncoder
-from criterions import RateDistorsion
-from utils import load_state, get_testing_args, setup_logger
-from datasets import get_data
+from models import AutoEncoder, RateDistorsion
+from utils import load_state, get_testing_args, setup_logger, get_data
 
 
 def valid(cae_model, data, criterion):

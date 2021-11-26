@@ -6,10 +6,8 @@ from torch._C import Value
 import torch.nn as nn
 import torch.optim as optim
 
-from models import AutoEncoder
-from criterions import RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB
-from utils import save_state, get_training_args, setup_logger
-from datasets import get_data
+from models import AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB
+from utils import save_state, get_training_args, setup_logger, get_data
 
 from itertools import chain
 from inspect import getfullargspec, signature

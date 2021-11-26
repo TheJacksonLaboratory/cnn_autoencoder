@@ -7,8 +7,7 @@ import torch.nn as nn
 
 from models import Synthesizer
 
-from utils import get_decompress_args, load_state, setup_logger
-from datasets import open_compressed, save_image
+from utils import get_decompress_args, load_state, setup_logger, open_compressed, save_image
 
 
 def decompress(args):

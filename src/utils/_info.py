@@ -1,0 +1,5 @@
+VER = '0.4'
+
+DATASETS = ['MNIST']
+
+CRITERIONS = ['RD', 'RD_PA', 'RD_PB']
