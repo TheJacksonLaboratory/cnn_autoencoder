@@ -14,6 +14,14 @@ from datasets import open_compressed, save_image
 def decompress(args):
     """" Deompress a list of pytorch pickled files into images.
     """
+    
+    if args.dataset == 'MNIST':
+        img_ext = 'pgm'
+    elif args.dataset == 'ImageNet':
+        img_ext = 'jpg'
+    else:
+        raise ValueError('The dataset \'%s\' is not supported.' % args.dataset)
+
     state = load_state(args)
 
     decomp_model = Synthesizer(**state['args'])
@@ -33,7 +41,7 @@ def decompress(args):
     for i, fn in enumerate(args.input):
         y_q = open_compressed(fn)
         x = decomp_model(y_q)
-        save_image(os.path.join(args.output_dir, '{:03d}_rec.pgm'.format(i)), x)
+        save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
 
 
 if __name__ == '__main__':

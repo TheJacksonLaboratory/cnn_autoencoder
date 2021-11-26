@@ -28,9 +28,16 @@ class RateDistorsionPenaltyA(nn.Module):
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
+        logger = logging.getLogger('training_log')
+        
         # Compute A, the approximation to the variance introduced during the analysis track
-        A = torch.var(y, dim=(2, 3)) / (torch.var(x, dim=(1, 2, 3)).unsqueeze(dim=1) + 1e-10)
-
+        with torch.no_grad():
+            x_mean = torch.mean(x, dim=1)
+            x_var = torch.var(x_mean, dim=(1, 2)).unsqueeze(dim=1) + 1e-10
+        
+        A = torch.var(y, dim=(2, 3)) / x_var
+        A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
+        
         P_A = torch.sum(-A * torch.log2(A), dim=1)
 
         # Distorsion
@@ -55,8 +62,14 @@ class RateDistorsionPenaltyB(nn.Module):
         fake_codes = torch.cat([torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)        
         fake_rec = synth_net(fake_codes)
 
-        B = torch.sum(fake_rec ** 2, dim=(2, 3))
+        B = torch.sum(fake_rec ** 2, dim=(2, 3))        
         max_e = torch.softmax(B, dim=1)
+
+        # For simplicity, B is not divided by its individual sum.
+        # Therefore, the P(B) here is proportional to the P(B) in the original paper.
+        # This does not affect the objective, since B is allways non-negative.
+        # B = B / torch.sum(B, dim=1).unsqueeze(dim=1)
+
         P_B = torch.sum(max_e * B, dim=1)
 
         # Distorsion

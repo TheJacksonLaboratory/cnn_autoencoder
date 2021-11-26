@@ -15,8 +15,24 @@ from itertools import chain
 from inspect import getfullargspec, signature
 
 
-
 def valid(cae_model, data, criterion):
+    """ Validation step.
+    Evaluates the performance of the network in its current state using the full set of validation elements.
+
+    Parameters
+    ----------
+    cae_model : torch.nn.Module
+        The network model in the current state
+    data : torch.utils.data.DataLoader or list[tuple]
+        The validation dataset. Because the target is recosntruct the input, the label associated is ignored
+    criterion : function or torch.nn.Module
+        The loss criterion to evaluate the network's performance
+    
+    Returns
+    -------
+    mean_loss : float
+        Mean value of the criterion function over the full set of validation elements
+    """
     logger = logging.getLogger(args.mode + '_log')
 
     cae_model.eval()
@@ -26,11 +42,16 @@ def valid(cae_model, data, criterion):
         for i, (x, _) in enumerate(data):
             x_r, y, p_y = cae_model(x)
 
-            loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=cae_model.synthesis)
+            if isinstance(cae_model, nn.DataParallel):
+                synthesis_model = nn.DataParallel(cae_model.module.synthesis).cuda()                
+            else:
+                synthesis_model = cae_model.synthesis
+
+            loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesis_model)
 
             sum_loss += loss.item()
 
-            if i % int(0.1 * len(data)) == 0:
+            if i % max(1, int(0.1 * len(data))) == 0:
                 logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f})'.format(i, len(data), loss.item(), sum_loss / (i+1)))
 
     mean_loss = sum_loss / len(data)
@@ -39,8 +60,33 @@ def valid(cae_model, data, criterion):
 
 
 def train(cae_model, train_data, valid_data, criterion, optimizer, scheduler, args):
+    """ Training loop by steps
+
+    Parameters
+    ----------
+    cae_model : torch.nn.Module
+        The model to be trained
+    train_data : torch.utils.data.DataLoader or list[tuple]
+        The training data. Must contain the input and respective label; however, only the input is used because the target is reconstructing the input
+    valid_data : torch.utils.data.DataLoader or list[tuple]
+        The validation data.
+    criterion : function or torch.nn.Module
+        The loss criterion to evaluate the network's performance
+    optimizer : torch.optim.Optimizer
+        The parameter's optimizer method
+    scheduler : torch.optim.lr_scheduler or None
+        If provided, a learning rate scheduler for the optimizer
+    args : dict or Namespace
+        The dictionary of input arguments passed at running time
+    
+    Returns
+    -------
+    completed : bool
+        Whether the training was sucessfully completed or it was interrupted
+    """
     logger = logging.getLogger(args.mode + '_log')
 
+    completed = False
     step = 1
     sum_loss = 0
 
@@ -55,14 +101,19 @@ def train(cae_model, train_data, valid_data, criterion, optimizer, scheduler, ar
 
             x_r, y, p_y = cae_model(x)
 
-            loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=cae_model.synthesis)
+            if isinstance(cae_model, nn.DataParallel):
+                synthesis_model = nn.DataParallel(cae_model.module.synthesis).cuda()                
+            else:
+                synthesis_model = cae_model.synthesis
+
+            loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesis_model)
 
             loss.backward()
             optimizer.step()
             sum_loss += loss.item()
 
             # Log the training performance every 10% of the training set
-            if i % int(0.1 * len(train_data)) == 0:
+            if i % max(1, int(0.1 * len(train_data))) == 0:
                 logger.debug('\t[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f})'.format(i, len(train_data), loss.item(), sum_loss / (i+1)))
     
             # Checkpoint step
@@ -113,9 +164,21 @@ def train(cae_model, train_data, valid_data, criterion, optimizer, scheduler, ar
             step += 1
             if step > args.steps:
                 break
+    else:
+        completed = True
+
+    # Return True if the training finished sucessfully
+    return completed
    
 
 def main(args):
+    """ Set up the training environment
+
+    Parameters
+    ----------
+    args : dict or Namespace
+
+    """
     logger = logging.getLogger(args.mode + '_log')
 
     # The autoencoder model contains all the modules
@@ -152,6 +215,7 @@ def main(args):
         if scheduler is not None and checkpoint_state['scheduler'] is not None:
             scheduler.load_state_dict(checkpoint_state['scheduler'])
 
+    # Log the training setup
     logger.info('Network architecture:')
     logger.info(cae_model)
     
