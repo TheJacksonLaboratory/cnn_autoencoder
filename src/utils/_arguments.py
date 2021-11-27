@@ -166,6 +166,7 @@ def get_decompress_args():
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
+    parser.add_argument('-f', '--format', type=str, dest='format', help='Format of the output image')
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
 

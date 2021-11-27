@@ -22,13 +22,15 @@ def compress(args):
 
     # Load only the analysis track from the trained model:
     comp_state_dict = {}
-    for k in filter(lambda k: k.split('.')[0] == 'analysis', state['cae_model'].keys()):
-        comp_state_dict['.'.join(k.split('.')[1:])] = state['cae_model'][k]
+    for k in filter(lambda k: 'analysis' in k, state['cae_model'].keys()):
+        comp_module_name = '.'.join(filter(lambda m: m != 'analysis', k.split('.')))
+        comp_state_dict[comp_module_name] = state['cae_model'][k]
+
+    comp_model = nn.DataParallel(comp_model)
+    if torch.cuda.is_available():
+        comp_model.cuda()
     
     comp_model.load_state_dict(comp_state_dict)
-
-    if torch.cuda.is_available():
-        comp_model = nn.DataParallel(comp_model).cuda()
 
     comp_model.eval()
 

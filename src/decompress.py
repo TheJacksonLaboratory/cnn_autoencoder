@@ -14,26 +14,31 @@ def decompress(args):
     """" Deompress a list of pytorch pickled files into images.
     """
     
-    if args.dataset == 'MNIST':
-        img_ext = 'pgm'
-    elif args.dataset == 'ImageNet':
-        img_ext = 'jpg'
+    if hasattr(args, 'dataset'):
+        if args.dataset == 'MNIST':
+            img_ext = 'pgm'
+        elif args.dataset == 'ImageNet':
+            img_ext = 'jpg'
+        else:
+            raise ValueError('The dataset \'%s\' is not supported.' % args.dataset)
     else:
-        raise ValueError('The dataset \'%s\' is not supported.' % args.dataset)
-
+        img_ext = args.format
+    
     state = load_state(args)
 
     decomp_model = Synthesizer(**state['args'])
 
     # Load only the analysis track from the trained model:
     decomp_state_dict = {}
-    for k in filter(lambda k: k.split('.')[0] == 'synthesis', state['cae_model'].keys()):
-        decomp_state_dict['.'.join(k.split('.')[1:])] = state['cae_model'][k]
+    for k in filter(lambda k: 'synthesis' in k, state['cae_model'].keys()):
+        decomp_module_name = '.'.join(filter(lambda m: m != 'synthesis', k.split('.')))
+        decomp_state_dict[decomp_module_name] = state['cae_model'][k]
+
+    decomp_model = nn.DataParallel(decomp_model)
+    if torch.cuda.is_available():
+        decomp_model.cuda()
     
     decomp_model.load_state_dict(decomp_state_dict)
-
-    if torch.cuda.is_available():
-        decomp_model = nn.DataParallel(decomp_model).cuda()
     
     decomp_model.eval()
     

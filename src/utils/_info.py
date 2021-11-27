@@ -1,4 +1,4 @@
-VER = '0.4'
+VER = '0.5'
 
 DATASETS = ['MNIST']
 
