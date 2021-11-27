@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models import Analyzer, Quantizer
+from models import Analyzer
 
 from utils import get_compress_args, load_state, setup_logger, open_image, save_compressed
 

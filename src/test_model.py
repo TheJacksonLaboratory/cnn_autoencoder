@@ -3,8 +3,7 @@ import argparse
 import os
 import json
 
-from utils import setup_logger
-from datasets import save_image, get_data
+from utils import setup_logger, save_image, get_data
 from compress import compress
 from decompress import decompress
 
