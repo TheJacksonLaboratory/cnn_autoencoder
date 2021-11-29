@@ -64,7 +64,7 @@ def get_ImageNet(args, normalize=True):
 
     # If testing the model, return the validation set from MNIST
     if args.mode != 'training':
-        imagenet_data = ImageFolder(root=os.path.join(args.data_dir, 'ILSVRC/Data/CLS-LOC/val'), transform=prep_trans)
+        imagenet_data = ImageFolder(root=os.path.join(args.data_dir, 'ILSVRC/Data/CLS-LOC/test'), transform=prep_trans)
         test_queue = DataLoader(imagenet_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
         return test_queue
 

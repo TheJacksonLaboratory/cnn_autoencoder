@@ -172,6 +172,9 @@ class Synthesizer(nn.Module):
 
     def forward(self, x):
         x = self.synthesis_track(x)
+
+        # Unnormalize the result to be in the range [0, 1]
+        x = x * 0.5 + 0.5
         return x
 
 
