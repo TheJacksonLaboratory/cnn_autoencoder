@@ -3,10 +3,17 @@ import torch.nn as nn
 import torchac
 
 
-def _get_uniform_cdf(n_symbols):
+def _get_uniform_cdf(n_symbols, precision=16):
+    # Generate a histogram from an uniform distribution
     hist = torch.ones(size=(1, 1, 1, 1, n_symbols), dtype=torch.float32) / n_symbols
+    
+    # Compute the cummulative distribution function
     cdf = torch.cumsum(hist, dim=-1)
-    cdf = torch.cat((torch.zeros(1, 1, 1, 1), cdf), dim=-1)
+    cdf = torch.cat((torch.zeros(1, 1, 1, 1, 1), cdf), dim=-1)
+    
+    # Convert from float32 to int16
+    cdf.mul_(2**precision)
+    cdf = cdf.round().to(torch.int16)
     return cdf
 
 
@@ -18,21 +25,18 @@ class Encoder(nn.Module):
 
         self._n_symbols = n_symbols
 
-        self._cdf = self.get_uniform_cdf(n_symbols)
+        self._cdf = _get_uniform_cdf(n_symbols)
 
     def forward(self, x):
         """ Encode x using an uniform cdf
         """
-        b, c, h, w = x.size()
-        device = x.device()
+        x = x.to(dtype=torch.int16)
 
-        x = x.to(torch.device('cpu'))
+        cdf = torch.ones(size=(*x.size(), self._n_symbols + 1), dtype=torch.int16) * self._cdf
 
-        cdf = torch.ones(size=(b, c, h, w, self._n_symbols + 1), dtype=torch.float32) * self._cdf
+        x_e = torchac.encode_int16_normalized_cdf(cdf, x)
 
-        x_e = torchac.encode_float_cdf(cdf, x)
-
-        return x_e.to(device)
+        return x_e
 
 
 class Decoder(nn.Module):
@@ -43,21 +47,16 @@ class Decoder(nn.Module):
 
         self._n_symbols = n_symbols
 
-        self._cdf = self.get_uniform_cdf(n_symbols)
+        self._cdf = _get_uniform_cdf(n_symbols)
 
-    def forward(self, x):
+    def forward(self, x, size):
         """ Decode x using an uniform cdf
         """
-        b, c, h, w = x.size()
-        device = x.device()
+        cdf = torch.ones(size=(*size, self._n_symbols + 1), dtype=torch.int16) * self._cdf
 
-        x = x.to(torch.device('cpu'))
+        x_d = torchac.decode_int16_normalized_cdf(cdf, x)
 
-        cdf = torch.ones(size=(b, c, h, w, self._n_symbols + 1), dtype=torch.float32) * self._cdf
-
-        x_d = torchac.decode_float_cdf(cdf, x)
-
-        return x_d.to(device)
+        return x_d.to(dtype=torch.float32)
 
 
 if __name__ == '__main__':
@@ -72,18 +71,21 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
-    encoder = Encoder(255)
-    decoder = Decoder(255)
+    encoder = Encoder(256)
+    decoder = Decoder(256)
 
     im = Image.open(args.input)
+
     pil2ten = transforms.PILToTensor()
     ten2pil = transforms.ToPILImage()
-    x = pil2ten(im)
+
+    x = pil2ten(im).unsqueeze(dim=0)
+    print('Original image:', x[0, 0, -10:, -1])
 
     x_e = encoder(x)
-    print('Endoded tensor sie:', len(x_e))
-    x_d = encoder(x_e)
-
-    im_rec = ten2pil(x_d)
+    print('Endoded tensor size:', len(x_e))
+    x_d = decoder(x_e, size=x.size())
+    print('Reconstructed image:', x_d[0, 0, -10:, -1])
+    im_rec = ten2pil(x_d.squeeze(dim=0).to(torch.uint8))
 
     im_rec.save(args.output)

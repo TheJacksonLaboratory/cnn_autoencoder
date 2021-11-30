@@ -173,12 +173,14 @@ class Synthesizer(nn.Module):
     def forward(self, x):
         x = self.synthesis_track(x)
 
-        # Unnormalize the result to be in the range [0, 1]
+        # Denormalize the result to be in the range [0, 1]
         x = x * 0.5 + 0.5
         return x
 
 
 class AutoEncoder(nn.Module):
+    """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
+    """
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False, K=4, r=3, **kwargs):
         super(AutoEncoder, self).__init__()
 
