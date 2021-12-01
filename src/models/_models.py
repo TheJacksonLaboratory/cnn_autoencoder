@@ -144,6 +144,7 @@ class Analyzer(nn.Module):
 
         # Final convolution in the analysis track
         down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
+        down_track.append(nn.Hardtanh(min_val=0.0, max_val=255.0))
         
         self.analysis_track = nn.Sequential(*down_track)
         

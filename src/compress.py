@@ -1,3 +1,4 @@
+import struct
 import logging
 import os
 
@@ -5,9 +6,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models import Analyzer
+from .models import Analyzer, Encoder
 
-from utils import get_compress_args, load_state, setup_logger, open_image, save_compressed
+from .utils import get_compress_args, load_state, setup_logger, open_image, save_compressed
 
 
 def compress(args):
@@ -31,17 +32,30 @@ def compress(args):
         comp_model.cuda()
     
     comp_model.load_state_dict(comp_state_dict)
-
     comp_model.eval()
+
+    encoder = Encoder(1024)
 
     for i, fn in enumerate(args.input):
         x = open_image(fn, state['args']['compression_level'])
 
         y_q, _ = comp_model(x)
-        
+       
         logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
         
-        save_compressed(os.path.join(args.output_dir, '{:03d}.pth'.format(i)), y_q)
+        y_q.clamp_(min=0.0, max=1023.0)
+
+        y_b = encoder(y_q.cpu())
+        
+        logger.info('Encoded repressentation size {} b'.format(len(y_b)))
+
+        # save_compressed(os.path.join(args.output_dir, '{:03d}.pth'.format(i)), y_q)
+        with open(os.path.join(args.output_dir, '{:03d}.comp'.format(i)), mode='wb') as f:
+            # Write the size of the image:
+            f.write(struct.pack('IIII', *y_q.size()))
+
+            # Write the compressed bitstream
+            f.write(y_b)
 
 
 if __name__ == '__main__':

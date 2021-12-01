@@ -3,9 +3,9 @@ import argparse
 import os
 import json
 
-from utils import setup_logger, save_image, get_data
-from compress import compress
-from decompress import decompress
+import src.utils as utils
+import src.compress as compress
+import src.decompress as decompress
 
 
 DATASETS = ['MNIST', 'ImageNet']
@@ -14,7 +14,7 @@ DATASETS = ['MNIST', 'ImageNet']
 def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
-    data_queue = get_data(args, normalize=False)
+    data_queue = utils.get_data(args, normalize=False)
 
     if args.dataset == 'MNIST':
         img_ext = 'pgm'
@@ -33,18 +33,18 @@ def main(args):
         logger.info('Input image {}, of size: {}'.format(i, x.size()))
 
         save_fn = os.path.join(args.output_dir, '{:03d}.{}'.format(i, img_ext))
-        comp_fn = os.path.join(args.output_dir, '{:03d}.pth'.format(i))
-        save_image(save_fn, x)
+        comp_fn = os.path.join(args.output_dir, '{:03d}.comp'.format(i))
+        utils.save_image(save_fn, x)
         fn_list.append(save_fn)
         comp_list.append(comp_fn)
 
     # Compress the list of images
     args.input = fn_list
-    compress(args)
+    compress.compress(args)
     logger.info('All %s images compressed successfully' % args.n_imgs)
 
     args.input = comp_list
-    decompress(args)
+    decompress.decompress(args)
     logger.info('All %s images decompressed successfully' % args.n_imgs)
     
 
@@ -82,6 +82,6 @@ if __name__ == '__main__':
     args.batch_size = 1
     args.mode = 'models_testing'
 
-    setup_logger(args)
+    utils.setup_logger(args)
 
     main(args)
