@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from src.models import FactorizedEntropy
+from .src.models import FactorizedEntropy
 
 
 def test_factorized_entropy(size=1000):

@@ -36,9 +36,11 @@ def main(args):
     # Loss function
     criterion = RateDistorsion(**state['args'])
 
+    cae_model = nn.DataParallel(cae_model)
+    criterion = nn.DataParallel(criterion)
     if torch.cuda.is_available():
-        cae_model = nn.DataParallel(cae_model).cuda()
-        criterion = nn.DataParallel(criterion).cuda()
+        cae_model = cae_model.cuda()
+        criterion = criterion.cuda()
 
     test_data = get_data(args)
 

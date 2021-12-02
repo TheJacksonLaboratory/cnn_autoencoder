@@ -192,9 +192,11 @@ def main(args):
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
 
+    cae_model = nn.DataParallel(cae_model)
+    criterion = nn.DataParallel(criterion)
     if torch.cuda.is_available():
-        cae_model = nn.DataParallel(cae_model).cuda()
-        criterion = nn.DataParallel(criterion).cuda()
+        cae_model = cae_model.cuda()
+        criterion = criterion.cuda()
 
     optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate)
 
