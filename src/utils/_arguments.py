@@ -7,6 +7,33 @@ import argparse
 from ._info import DATASETS, CRITERIONS
 
 
+def _override_config_file(parser):
+    args = parser.parse_args()
+
+    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
+
+    # Parse the arguments from a json configure file, when given
+    if args.config_file is not None:
+        if '.json' in args.config_file:
+            config = json.load(open(args.config_file, 'r'))
+            config_parser.set_defaults(**config)
+
+        else:
+            raise ValueError('The configure file must be a .json file')
+
+    # The parameters passed through a json file are overridable from console instructions
+    args = config_parser.parse_args()
+
+    # Set the random number generator seed for reproducibility
+    if args.seed < 0:
+        args.seed = np.random.randint(1, 100000)
+    
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed + 1)
+
+    return args
+
+
 def get_training_args():
     parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
@@ -40,28 +67,7 @@ def get_training_args():
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
 
-    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
-
-    args = parser.parse_args()
-
-    # Parse the arguments from a json configure file, when given
-    if args.config_file is not None:
-        if '.json' in args.config_file:
-            config = json.load(open(args.config_file, 'r'))
-            config_parser.set_defaults(**config)
-
-        else:
-            raise ValueError('The configure file must be a .json file')
-
-    # The parameters passed through a json file are overridable from console instructions
-    args = config_parser.parse_args()
-    
-    # Set the random number generator seed for reproducibility
-    if args.seed < 0:
-        args.seed = np.random.randint(1, 100000)
-    
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed + 1)
+    args = _override_config_file(parser)
 
     args.mode = 'training'
 
@@ -85,28 +91,7 @@ def get_testing_args():
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
 
-    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
-
-    args = parser.parse_args()
-
-    # Parse the arguments from a json configure file, when given
-    if args.config_file is not None:
-        if '.json' in args.config_file:
-            config = json.load(open(args.config_file, 'r'))
-            config_parser.set_defaults(**config)
-
-        else:
-            raise ValueError('The configure file must be a .json file')
-
-    # The parameters passed through a json file are overridable from console instructions
-    args = config_parser.parse_args()
-
-    # Set the random number generator seed for reproducibility
-    if args.seed < 0:
-        args.seed = np.random.randint(1, 100000)
-    
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed + 1)
+    args = _override_config_file(parser)
     
     args.mode = 'testing'
 
@@ -126,28 +111,7 @@ def get_compress_args():
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input images to compress (list of images).')
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed image')
 
-    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
-
-    args = parser.parse_args()
-
-    # Parse the arguments from a json configure file, when given
-    if args.config_file is not None:
-        if '.json' in args.config_file:
-            config = json.load(open(args.config_file, 'r'))
-            config_parser.set_defaults(**config)
-
-        else:
-            raise ValueError('The configure file must be a .json file')
-
-    # The parameters passed through a json file are overridable from console instructions
-    args = config_parser.parse_args()
-    
-    # Set the random number generator seed for reproducibility
-    if args.seed < 0:
-        args.seed = np.random.randint(1, 100000)
-    
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed + 1)
+    args = _override_config_file(parser)
     
     args.mode = 'compress'
 
@@ -168,29 +132,8 @@ def get_decompress_args():
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
     parser.add_argument('-f', '--format', type=str, dest='format', help='Format of the output image')
 
-    config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
+    args = _override_config_file(parser)
 
-    args = parser.parse_args()
-
-    # Parse the arguments from a json configure file, when given
-    if args.config_file is not None:
-        if '.json' in args.config_file:
-            config = json.load(open(args.config_file, 'r'))
-            config_parser.set_defaults(**config)
-
-        else:
-            raise ValueError('The configure file must be a .json file')
-
-    # The parameters passed through a json file are overridable from console instructions
-    args = config_parser.parse_args()
-    
-    # Set the random number generator seed for reproducibility
-    if args.seed < 0:
-        args.seed = np.random.randint(1, 100000)
-    
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed + 1)
-    
     args.mode = 'decompress'
 
     return args

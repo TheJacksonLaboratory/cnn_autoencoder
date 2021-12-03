@@ -86,13 +86,15 @@ class DownsamplingUnit(nn.Module):
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(nn.ReLU(inplace=False))
+        # model.append(nn.ReLU(inplace=False))
+        model.append(nn.LeakyReLU(inplace=False))
         model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(nn.ReLU(inplace=False))
+        # model.append(nn.ReLU(inplace=False))
+        model.append(nn.LeakyReLU(inplace=False))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -113,13 +115,15 @@ class UpsamplingUnit(nn.Module):
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(nn.ReLU(inplace=False))
+        # model.append(nn.ReLU(inplace=False))
+        model.append(nn.LeakyReLU(inplace=False))
         model.append(nn.ConvTranspose2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(nn.ReLU(inplace=False))
+        # model.append(nn.ReLU(inplace=False))
+        model.append(nn.LeakyReLU(inplace=False))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -144,7 +148,7 @@ class Analyzer(nn.Module):
 
         # Final convolution in the analysis track
         down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
-        down_track.append(nn.Hardtanh(min_val=0.0, max_val=255.0))
+        # down_track.append(nn.Hardtanh(min_val=0.0, max_val=255.0))
         
         self.analysis_track = nn.Sequential(*down_track)
         

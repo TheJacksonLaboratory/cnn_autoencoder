@@ -13,9 +13,13 @@ def valid(cae_model, data, criterion):
     sum_loss = 0
 
     for x, _ in data:
-        x_r, p_y = cae_model(x)
+        x_r, y, p_y = cae_model(x)
 
-        loss = criterion(x, x_r, p_y)
+        synthesis_model = nn.DataParallel(cae_model.module.synthesis)
+        if args.gpu:
+            synthesis_model.cuda()
+
+        loss = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesis_model)
 
         sum_loss += loss.item()
 
@@ -41,6 +45,9 @@ def main(args):
     if torch.cuda.is_available():
         cae_model = cae_model.cuda()
         criterion = criterion.cuda()
+        args.gpu = True
+    else:
+        args.gpu = False
 
     test_data = get_data(args)
 
