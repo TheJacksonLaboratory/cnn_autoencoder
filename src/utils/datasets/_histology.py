@@ -34,7 +34,7 @@ class Histology_zarr(Dataset):
 
         self._n_files = len(self._filenames)
 
-        self._z_list = [zarr.open(fn, mode='r')['0/%s' % level] for fn in filenames]
+        self._z_list = [zarr.open(fn, mode='r')['0/%s' % level] for fn in self._filenames]
         
         # Get the lower bound of patches that can be obtained from all zarr files
         min_H = min([z.shape[-2] for z in self._z_list])
@@ -71,16 +71,13 @@ class Histology_zarr(Dataset):
 
     def __getitem__(self, index):        
         i, tl_y, tl_x = self._compute_grid(index)
-        patch = self._z_list[i][0, :, 0, tl_y:(tl_y + self._patch_size), tl_x:(tl_x + self._patch_size)]
-
-        patch = self._transform(patch)
-
-        return patch
+        patch = self._z_list[i][..., tl_y:(tl_y + self._patch_size), tl_x:(tl_x + self._patch_size)].squeeze()
+        patch = self._transform(patch.transpose(1, 2, 0))
+        return patch, [0]
 
 
 def get_Histology(args, normalize):
-    prep_trans_list = [transforms.Pad(2),
-         transforms.ToTensor(),
+    prep_trans_list = [transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
     
