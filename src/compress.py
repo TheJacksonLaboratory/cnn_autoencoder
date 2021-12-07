@@ -21,17 +21,11 @@ def compress(args):
 
     comp_model = Analyzer(**state['args'])
 
-    # Load only the analysis track from the trained model:
-    comp_state_dict = {}
-    for k in filter(lambda k: 'analysis' in k, state['cae_model'].keys()):
-        comp_module_name = '.'.join(filter(lambda m: m != 'analysis', k.split('.')))
-        comp_state_dict[comp_module_name] = state['cae_model'][k]
-
     comp_model = nn.DataParallel(comp_model)
     if torch.cuda.is_available():
         comp_model.cuda()
     
-    comp_model.load_state_dict(comp_state_dict)
+    comp_model.load_state_dict(state['encoder'])
     comp_model.eval()
 
     encoder = Encoder(1024)
@@ -43,6 +37,9 @@ def compress(args):
        
         logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
         
+        # Save the compressed representation as the output of the cnn autoencoder
+        torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
+
         y_q.clamp_(min=0.0, max=1023.0)
 
         y_b = encoder(y_q.cpu())

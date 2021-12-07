@@ -12,7 +12,7 @@ from .utils import get_decompress_args, load_state, setup_logger, open_compresse
 
 
 def decompress(args):
-    """" Deompress a list of pytorch pickled files into images.
+    """" Decompress a list of pytorch pickled files into images.
     """
     
     if hasattr(args, 'dataset'):
@@ -20,6 +20,8 @@ def decompress(args):
             img_ext = 'pgm'
         elif args.dataset == 'ImageNet':
             img_ext = 'jpg'
+        elif args.dataset == 'Histology':
+            img_ext = 'png'
         else:
             raise ValueError('The dataset \'%s\' is not supported.' % args.dataset)
     else:
@@ -28,23 +30,22 @@ def decompress(args):
     state = load_state(args)
 
     decomp_model = Synthesizer(**state['args'])
-
-    # Load only the analysis track from the trained model:
-    decomp_state_dict = {}
-    for k in filter(lambda k: 'synthesis' in k, state['cae_model'].keys()):
-        decomp_module_name = '.'.join(filter(lambda m: m != 'synthesis', k.split('.')))
-        decomp_state_dict[decomp_module_name] = state['cae_model'][k]
-
     decomp_model = nn.DataParallel(decomp_model)
+
     if torch.cuda.is_available():
         decomp_model.cuda()
     
-    decomp_model.load_state_dict(decomp_state_dict)
+    decomp_model.load_state_dict(state['decoder'])
     decomp_model.eval()
 
     decoder = Decoder(1024)
     
     for i, fn in enumerate(args.input):
+        y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
+        x = decomp_model(y_q)
+
+        save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
+
         with open(os.path.join(args.output_dir, '{:03d}.comp'.format(i)), mode='rb') as f:
             # Write the size of the image:
             size_b = f.read(16)
@@ -57,7 +58,7 @@ def decompress(args):
         
         x = decomp_model(y_q)
         
-        save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
+        save_image(os.path.join(args.output_dir, '{:03d}_ae_rec.{}'.format(i, img_ext)), x)
 
 
 if __name__ == '__main__':

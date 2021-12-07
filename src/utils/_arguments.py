@@ -4,7 +4,7 @@ import torch
 import json
 import argparse
 
-from ._info import DATASETS, CRITERIONS
+from ._info import DATASETS, CRITERIONS, SCHEDULERS
 
 
 def _override_config_file(parser):
@@ -41,6 +41,8 @@ def get_training_args():
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-s', '--steps', type=int, dest='steps', help='Number of training steps', default=1e5)
     parser.add_argument('-cs', '--checksteps', type=int, dest='checkpoint_steps', help='Create a checkpoint every this number of steps', default=1e3)
+    parser.add_argument('-esp', '--earlypatience', type=int, dest='patience', help='Early stopping patience, i.e. number of consecutive bad evaluations before stop training', default=5)
+    parser.add_argument('-esw', '--earlywarmup', type=int, dest='warmup', help='Early stopping warmup steps, i.e. number of steps to perform before starting to count bad evaluations', default=1e4)
     
     parser.add_argument('-rm', '--resume', type=str, dest='resume', help='Resume training from an existing checkpoint')
     
@@ -53,6 +55,7 @@ def get_training_args():
     parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
     parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=CRITERIONS[0], choices=CRITERIONS)
+    parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
 
     parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
     parser.add_argument('-nch', '--netch', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)
@@ -66,6 +69,7 @@ def get_training_args():
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
+    parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
 
     args = _override_config_file(parser)
 

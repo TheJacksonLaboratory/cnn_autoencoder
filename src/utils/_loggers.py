@@ -8,6 +8,11 @@ from ._info import VER
 def setup_logger(args):
     args.version = VER
 
+    if torch.cuda.is_available():
+        args.gpu = True
+    else:
+        args.gpu = False
+    
     # Create the logger
     logger = logging.getLogger(args.mode + '_log')
     logger.setLevel(logging.INFO)
@@ -27,6 +32,7 @@ def setup_logger(args):
         logger.addHandler(console)
     
     logger.info('Code version %s, with random number generator seed: %s\n' % (args.version, args.seed))
+    logger.info(args)
 
 
 def save_state(name, model_state, args):

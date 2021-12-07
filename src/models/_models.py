@@ -37,7 +37,7 @@ class FactorizedEntropy(nn.Module):
         This function computes the function c(x) from Balle et al. VARIATIONAL IMAGE COMPRESSION WITH A SCALE HYPERPRIOR. ICLR 2018
         Function c(x) can be used to model the probability of a random variable that has been comvolved with a uniform distribution.
     """
-    def __init__(self, channels, K=4, r=3):
+    def __init__(self, channels_bn, K=4, r=3, **kwargs):
         super(FactorizedEntropy, self).__init__()
         
         self._K = K
@@ -47,15 +47,15 @@ class FactorizedEntropy(nn.Module):
         d = [1] + r[:-1]
 
         # The non-parametric density model is initialized with random normal distributed weights
-        self._H = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(channels * r_k, d_k, 1, 1), 0.0, 0.01))
+        self._H = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r_k, d_k, 1, 1), 0.0, 0.01))
                                       for d_k, r_k in zip(d, r)
                                      ])
 
-        self._b = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(channels * r_k), 0.0, 0.01))
+        self._b = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r_k), 0.0, 0.01))
                                       for r_k in r
                                      ])
 
-        self._a = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(1, channels * r_k, 1, 1), 0.0, 0.01))
+        self._a = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r_k, 1, 1), 0.0, 0.01))
                                       for r_k in r[:-1]
                                      ])
 
@@ -107,7 +107,7 @@ class DownsamplingUnit(nn.Module):
     
 
 class UpsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False, normalize=True, dropout=0.0, bias=True):
+    def __init__(self, channels_in, channels_out, groups=False, normalize=False, dropout=0.0, bias=True):
         super(UpsamplingUnit, self).__init__()
 
         model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias)]
@@ -148,11 +148,14 @@ class Analyzer(nn.Module):
 
         # Final convolution in the analysis track
         down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
-        # down_track.append(nn.Hardtanh(min_val=0.0, max_val=255.0))
-        
+        # down_track.append(nn.LeakyReLU(inplace=False))
+        # down_track.append(nn.Hardtanh(min_val=0.0, max_val=1023.0, inplace=False))
+
         self.analysis_track = nn.Sequential(*down_track)
         
         self.quantizer = Quantizer()
+
+        self.apply(initialize_weights)
 
     def forward(self, x):
         y = self.analysis_track(x)
@@ -172,8 +175,11 @@ class Synthesizer(nn.Module):
         
         # Final color reconvertion
         up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias))
-        
+        up_track.append(nn.LeakyReLU(inplace=False))
+
         self.synthesis_track = nn.Sequential(*up_track)
+
+        self.apply(initialize_weights)
 
     def forward(self, x):
         x = self.synthesis_track(x)
