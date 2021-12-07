@@ -82,8 +82,7 @@ def get_Histology(args, normalize):
         ]
     
     if normalize:
-        # prep_trans_list.append(transforms.Normalize(mean=0.0, std=1.0))
-        prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
+        prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
             
     prep_trans = transforms.Compose(prep_trans_list)
 
@@ -100,14 +99,14 @@ def get_Histology(args, normalize):
     # If testing the model, return the test set from MNIST
     if args.mode != 'training':
         hist_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans)
-        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
         return test_queue
 
     hist_train_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='test', transform=prep_trans)
     hist_valid_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans)
 
-    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers)
+    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
+    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
     return train_queue, valid_queue
 

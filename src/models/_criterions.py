@@ -100,16 +100,16 @@ class StoppingCriterion(object):
 
 
 class EarlyStoppingPatience(StoppingCriterion):
-    def __init__(self, patience=5, warmup=0, mode='min', initial=None, **kwargs):
+    def __init__(self, patience=5, warmup=0, target='min', initial=None, **kwargs):
         super(EarlyStoppingPatience, self).__init__(**kwargs)
 
         self._bad_epochs = 0
         self._patience = patience
         self._warmup = warmup
 
-        self._mode = mode
+        self._target = target
 
-        if self._mode=='min':
+        if self._target=='min':
             self._best_metric = float('inf') if initial is None else initial
             self._metric_sign = 1
         else:
@@ -128,34 +128,34 @@ class EarlyStoppingPatience(StoppingCriterion):
         else:
             self._bad_epochs += 1
 
-        self._keep_training &= self._bad_epochs > self._patience
+        self._keep_training &= self._bad_epochs <= self._patience
 
     def __repr__(self):
-        repr = 'EarlyStoppingPatience(mode: %s, patience: %d, warmup: %d, bad-epochs: %d, best metric: %.4f)' % (self._mode, self._patience, self._warmup, self._bad_epochs, self._best_metric)
+        repr = 'EarlyStoppingPatience(target: %s, patience: %d, warmup: %d, bad-epochs: %d, best metric: %.4f)' % (self._target, self._patience, self._warmup, self._bad_epochs, self._best_metric)
         return repr
 
 
 class EarlyStoppingTarget(StoppingCriterion):
-    def __init__(self, target, mode='l', **kwargs):
+    def __init__(self, target, comparison='l', **kwargs):
         super(EarlyStoppingTarget, self).__init__(**kwargs)
         self._target = target
-        self._mode = mode
+        self._comparison = comparison
 
     def update(self, metric=None, **kwargs):
         super(EarlyStoppingTarget, self).update(**kwargs)
 
         # If the criterion is met, the training is stopped
-        if self._mode == 'l':
+        if self._comparison == 'l':
             res = metric >= self._target
-        elif self._mode == 'le':
+        elif self._comparison == 'le':
             res = metric > self._target
-        elif self._mode == 'g':
+        elif self._comparison == 'g':
             res = metric <= self._target
-        elif self._mode == 'ge':
+        elif self._comparison == 'ge':
             res = metric < self._target
         
         self._keep_training &= res
     
     def __repr__(self):
-        repr = 'EarlyStoppingTarget(mode: %s, target: %s)' % (self._mode, self._target)
+        repr = 'EarlyStoppingTarget(comparison: %s, target: %s)' % (self._comparison, self._target)
         return repr

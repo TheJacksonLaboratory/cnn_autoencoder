@@ -24,7 +24,7 @@ def get_ImageNet(args, normalize=True):
     # If testing the model, return the validation set from MNIST
     if args.mode != 'training':
         imagenet_data = ImageFolder(root=os.path.join(args.data_dir, 'ILSVRC/Data/CLS-LOC/test'), transform=prep_trans)
-        test_queue = DataLoader(imagenet_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+        test_queue = DataLoader(imagenet_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
         return test_queue
 
     imagenet_data = ImageFolder(root=os.path.join(args.data_dir, 'ILSVRC/Data/CLS-LOC/train'), transform=prep_trans)
@@ -33,7 +33,7 @@ def get_ImageNet(args, normalize=True):
     val_size = len(imagenet_data) - train_size
     
     train_ds, valid_ds = random_split(imagenet_data, (train_size, val_size))
-    train_queue = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    valid_queue = DataLoader(valid_ds, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers)
+    train_queue = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
+    valid_queue = DataLoader(valid_ds, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
 
     return train_queue, valid_queue

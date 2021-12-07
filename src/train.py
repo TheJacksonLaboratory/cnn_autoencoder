@@ -3,9 +3,10 @@ import logging
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import Synthesizer, Analyzer, FactorizedEntropy, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
+from models import AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
 from utils import save_state, get_training_args, setup_logger, get_data
 
 from collections import namedtuple
@@ -13,16 +14,15 @@ from itertools import chain
 from functools import reduce
 from inspect import signature
 
-
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
 
 
 def checkpoint(step, cae_model, optimizer, scheduler, valid_loss, best_valid_loss, train_loss_history, valid_loss_history):
     # Create a dictionary with the current state as checkpoint
     training_state = dict(
-        encoder=cae_model.encoder.state_dict(),
-        decoder=cae_model.decoder.state_dict(),
-        fact_ent=cae_model.fact_ent.state_dict(),
+        encoder=cae_model.module.analysis.state_dict(),
+        decoder=cae_model.module.synthesis.state_dict(),
+        fact_ent=cae_model.module.fact_entropy.state_dict(),
         optimizer=optimizer.state_dict(),
         args=args.__dict__,
         best_val=best_valid_loss,
@@ -49,7 +49,7 @@ def checkpoint(step, cae_model, optimizer, scheduler, valid_loss, best_valid_los
     return best_valid_loss
 
 
-def valid(cae_model, data, criterion):
+def valid(cae_model, data, criterion, args):
     """ Validation step.
     Evaluates the performance of the network in its current state using the full set of validation elements.
 
@@ -69,23 +69,23 @@ def valid(cae_model, data, criterion):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    cae_model.encoder.eval()
-    cae_model.decoder.eval()
-    cae_model.fact_ent.eval()
+    cae_model.eval()
     sum_loss = 0
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
-            y_q, y = cae_model.encoder(x)
-            p_y = cae_model.fact_ent(y_q)
-            x_r = cae_model.decoder(y_q)
+            x_r, y, p_y = cae_model(x)
+            
+            synthesizer = DataParallel(cae_model.module.synthesis)
+            if args.gpu:
+                synthesizer.cuda()
 
-            loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=cae_model.decoder)
+            loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesizer)
 
             sum_loss += loss.item()
 
             if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}) [{:.4f}, {:.4f}]'.format(i, len(data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max()))
+                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(i, len(data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
 
     mean_loss = sum_loss / len(data)
 
@@ -137,17 +137,20 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
             # Training step
             optimizer.zero_grad()
-            y_q, y = cae_model.encoder(x)
-            p_y = cae_model.fact_ent(y_q)
-            x_r = cae_model.decoder(y_q)
 
-            loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=cae_model.decoder)
-
+            x_r, y, p_y = cae_model(x)
+            
+            synthesizer = DataParallel(cae_model.module.synthesis)
+            if args.gpu:
+                synthesizer.cuda()
+            
+            loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesizer)
+            
             loss.backward()
 
             optimizer.step()
             sum_loss += loss.item()
-                
+
             if scheduler is not None and 'metrics' not in dict(signature(scheduler.step).parameters).keys():
                 scheduler.step()
 
@@ -157,25 +160,26 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 stopping_criteria[1].update(iteration=step, metric=extra_info.item())
 
             # Log the training performance every 10% of the training set
-            # if i % max(1, int(0.001 * len(train_data))) == 0:
-            logger.debug('\t[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f}) [{:.4f}, {:.4f}]'.format(i, len(train_data), loss.item(), sum_loss / step, y.detach().min(), y.detach().max()))
-    
+            if i % max(1, int(0.01 * len(train_data))) == 0:
+                logger.debug('\t[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(i, len(train_data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
+
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
+
             if not keep_training or step % args.checkpoint_steps == 0:
                 train_loss = sum_loss / step
 
                 # Evaluate the model in the validation set
-                valid_loss = valid(cae_model, valid_data, criterion)
+                valid_loss = valid(cae_model, valid_data, criterion, args)
                 
-                cae_model.encoder.train()
-                cae_model.decoder.train()
-                cae_model.fact_ent.train()
+                cae_model.train()
+
+                stopping_info = ';'.join(map(lambda sc: sc.__repr__(), stopping_criteria))
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
-                logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}'.format(
-                    step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'])
+                logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
+                    step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
                 )
 
                 train_loss_history.append(train_loss)
@@ -200,24 +204,12 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
 def setup_network(args):
     # The autoencoder model contains all the modules
-    encoder = Analyzer(**args.__dict__)
-    decoder = Synthesizer(**args.__dict__)
-    fact_ent = FactorizedEntropy(**args.__dict__)
+    cae_model = AutoEncoder(**args.__dict__)
 
-    encoder = nn.DataParallel(encoder)
-    decoder = nn.DataParallel(decoder)
-    fact_ent = nn.DataParallel(fact_ent)
+    cae_model = nn.DataParallel(cae_model)
 
     if args.gpu:
-        encoder = encoder.cuda()
-        decoder = decoder.cuda()
-        fact_ent = fact_ent.cuda()
-
-    cae_model = dict(encoder=encoder,
-                    decoder=decoder,
-                    fact_ent=fact_ent)
-    Autoencoder = namedtuple('Autoencoder', cae_model.keys())
-    cae_model = Autoencoder(**cae_model)
+        cae_model.cuda()
 
     return cae_model
 
@@ -250,7 +242,7 @@ def setup_criteria(args):
 
 def setup_optim(cae_model, args):
     # Otpimizer:
-    optimizer = optim.Adam(params=chain(cae_model.encoder.parameters(), cae_model.decoder.parameters(), cae_model.fact_ent.parameters()), lr=args.learning_rate)
+    optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate)
     
     if args.scheduler == 'None':
         scheduler = None
@@ -268,9 +260,10 @@ def resume_checkpoint(cae_model, optimizer, scheduler, args):
     else:
         checkpoint_state = torch.load(args.resume)
     
-    cae_model.encoder.load_state_dict(checkpoint_state['encoder'])
-    cae_model.decoder.load_state_dict(checkpoint_state['decoder'])
-    cae_model.fact_ent.load_state_dict(checkpoint_state['fact_ent'])
+    cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
+    cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
+    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
+
     optimizer.load_state_dict(checkpoint_state['optimizer'])
 
     if scheduler is not None and checkpoint_state['scheduler'] is not None:

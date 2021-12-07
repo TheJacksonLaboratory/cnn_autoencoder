@@ -21,14 +21,15 @@ def compress(args):
 
     comp_model = Analyzer(**state['args'])
 
+    comp_model.load_state_dict(state['encoder'])
+
     comp_model = nn.DataParallel(comp_model)
     if torch.cuda.is_available():
         comp_model.cuda()
     
-    comp_model.load_state_dict(state['encoder'])
     comp_model.eval()
 
-    encoder = Encoder(1024)
+    encoder = Encoder(256)
 
     for i, fn in enumerate(args.input):
         x = open_image(fn, state['args']['compression_level'])
@@ -40,7 +41,7 @@ def compress(args):
         # Save the compressed representation as the output of the cnn autoencoder
         torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
 
-        y_q.clamp_(min=0.0, max=1023.0)
+        y_q.clamp_(min=0.0, max=255.0)
 
         y_b = encoder(y_q.cpu())
         

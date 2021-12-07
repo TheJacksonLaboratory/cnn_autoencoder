@@ -1,3 +1,5 @@
+import logging 
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -148,7 +150,7 @@ class Analyzer(nn.Module):
 
         # Final convolution in the analysis track
         down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
-        # down_track.append(nn.LeakyReLU(inplace=False))
+        down_track.append(nn.LeakyReLU(inplace=False))
         # down_track.append(nn.Hardtanh(min_val=0.0, max_val=1023.0, inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
@@ -159,6 +161,7 @@ class Analyzer(nn.Module):
 
     def forward(self, x):
         y = self.analysis_track(x)
+
         y_q = self.quantizer(y)
         return y_q, y
 
@@ -175,7 +178,7 @@ class Synthesizer(nn.Module):
         
         # Final color reconvertion
         up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias))
-        up_track.append(nn.LeakyReLU(inplace=False))
+        up_track.append(nn.Hardtanh(min_val=-1.0, max_val=1.0))
 
         self.synthesis_track = nn.Sequential(*up_track)
 
@@ -183,9 +186,6 @@ class Synthesizer(nn.Module):
 
     def forward(self, x):
         x = self.synthesis_track(x)
-
-        # Denormalize the result to be in the range [0, 1]
-        x = x * 0.5 + 0.5
         return x
 
 
@@ -198,8 +198,6 @@ class AutoEncoder(nn.Module):
         self.analysis = Analyzer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
         self.synthesis = Synthesizer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
         self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
-
-        self.apply(initialize_weights)
 
     def forward(self, x):
         y_q, y = self.analysis(x)
