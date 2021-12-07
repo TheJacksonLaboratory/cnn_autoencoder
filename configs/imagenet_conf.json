@@ -1,0 +1,21 @@
+{
+    "seed": 12445,
+    "batch_size": 16,
+    "val_batch_size": 64,
+    "print_log": false,
+    "steps": 2e5,
+    "checkpoint_steps": 5e3,
+    "resume": "/home/cervaf/NN_imaging/logs/best_ver0.5.3_45675.pth",
+    "log_dir": "/home/cervaf/NN_imaging/logs", 
+    "data_dir": "/mnt/imagenet",
+    "dataset": "ImageNet",
+    "download_data": false,
+    "workers": 8,
+    "channels_org": 3,
+    "learning_rate": 1e-4,
+    "channels_net": 128,
+    "channels_bn": 48,
+    "compression_level": 3,
+    "distorsion_lambda": 0.01,
+    "criterion": "RD"
+}
