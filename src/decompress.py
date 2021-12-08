@@ -12,7 +12,7 @@ from .utils import get_decompress_args, load_state, setup_logger, open_compresse
 
 
 def decompress(args):
-    """" Decompress a list of pytorch pickled files into images.
+    """ Decompress a list of pytorch pickled files into images.
     """
     logger = logging.getLogger(args.mode + '_log')
     
@@ -41,7 +41,7 @@ def decompress(args):
 
     decomp_model.eval()
 
-    decoder = Decoder(256)
+    decoder = Decoder(512)
     
     for i, fn in enumerate(args.input):
         y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
@@ -83,3 +83,5 @@ if __name__ == '__main__':
     setup_logger(args)
     
     decompress(args)
+
+    logging.shutdown()

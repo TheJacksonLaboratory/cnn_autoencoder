@@ -7,7 +7,7 @@ import argparse
 from ._info import DATASETS, CRITERIONS, SCHEDULERS
 
 
-def _override_config_file(parser):
+def override_config_file(parser):
     args = parser.parse_args()
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
@@ -71,7 +71,7 @@ def get_training_args():
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
     parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
 
-    args = _override_config_file(parser)
+    args = override_config_file(parser)
 
     args.mode = 'training'
 
@@ -95,7 +95,7 @@ def get_testing_args():
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
 
-    args = _override_config_file(parser)
+    args = override_config_file(parser)
     
     args.mode = 'testing'
 
@@ -114,8 +114,9 @@ def get_compress_args():
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input images to compress (list of images).')
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed image')
+    parser.add_argument('-pth', '--store-pth', action='store_true', dest='store_pth', help='Store the compressed representation of the image before the arithmetic encoding inside a .pth file?')
 
-    args = _override_config_file(parser)
+    args = override_config_file(parser)
     
     args.mode = 'compress'
 
@@ -136,7 +137,7 @@ def get_decompress_args():
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
     parser.add_argument('-f', '--format', type=str, dest='format', help='Format of the output image')
 
-    args = _override_config_file(parser)
+    args = override_config_file(parser)
 
     args.mode = 'decompress'
 

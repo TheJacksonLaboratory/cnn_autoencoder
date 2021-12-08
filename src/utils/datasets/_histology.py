@@ -3,13 +3,13 @@ import numpy as np
 import zarr
 
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 
 
-TEST_DATASIZE = 200000
 TRAIN_DATASIZE = 1200000
 VALID_DATASIZE = 50000
+TEST_DATASIZE = 200000
 
 
 class Histology_zarr(Dataset):
@@ -77,6 +77,12 @@ class Histology_zarr(Dataset):
 
 
 def get_Histology(args, normalize):
+    """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from histology images.
+    The size of the data queue can be virtually infinite, for that reason, a cnservative size has been defined using the following global variables.
+    1. TRAIN_DATASIZE
+    2. VALID_DATASIZE
+    3. TEST_DATASIZE
+    """
     prep_trans_list = [transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
@@ -99,7 +105,7 @@ def get_Histology(args, normalize):
     # If testing the model, return the test set from MNIST
     if args.mode != 'training':
         hist_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans)
-        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
+        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
         return test_queue
 
     hist_train_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='test', transform=prep_trans)
@@ -112,12 +118,10 @@ def get_Histology(args, normalize):
 
 
 if __name__ == '__main__':
-    from torch.utils.data import DataLoader
     import argparse
-    import os
     from time import perf_counter
 
-    parser = argparse.ArgumentParser('Test histology datasets')
+    parser = argparse.ArgumentParser('Test histology datasets generation and loading with a pytorch\'s DataLoader')
 
     parser.add_argument('-d', '--dir', dest='root_dir', help='Root directory where the zarr files are stored')
     parser.add_argument('-w', '--workers', type=int, dest='workers', help='Number of workers', default=0)

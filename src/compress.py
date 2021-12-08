@@ -12,7 +12,7 @@ from .utils import get_compress_args, load_state, setup_logger, open_image, save
 
 
 def compress(args):
-    """" Compress a list of images into pytorch pickled files.
+    """ Compress a list of images into binary files.
     The images can be provided as a lis of tensors, or a tensor stacked in the first dimension.
     """
     logger = logging.getLogger(args.mode + '_log')
@@ -29,20 +29,20 @@ def compress(args):
     
     comp_model.eval()
 
-    encoder = Encoder(256)
+    encoder = Encoder(512)
 
     for i, fn in enumerate(args.input):
         x = open_image(fn, state['args']['compression_level'])
 
         y_q, _ = comp_model(x)
-       
+
         logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
         
         # Save the compressed representation as the output of the cnn autoencoder
-        torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
+        if args.store_pth:
+            torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
 
-        y_q.clamp_(min=0.0, max=255.0)
-
+        y_q.clamp_(min=0.0, max=511.0)
         y_b = encoder(y_q.cpu())
         
         logger.info('Encoded repressentation size {} b'.format(len(y_b)))
@@ -62,3 +62,5 @@ if __name__ == '__main__':
     setup_logger(args)
     
     compress(args)
+    
+    logging.shutdown()

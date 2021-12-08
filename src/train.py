@@ -7,46 +7,12 @@ from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
 from models import AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
-from utils import save_state, get_training_args, setup_logger, get_data
+from utils import checkpoint, get_training_args, setup_logger, get_data
 
-from collections import namedtuple
-from itertools import chain
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-
-
-def checkpoint(step, cae_model, optimizer, scheduler, valid_loss, best_valid_loss, train_loss_history, valid_loss_history):
-    # Create a dictionary with the current state as checkpoint
-    training_state = dict(
-        encoder=cae_model.module.analysis.state_dict(),
-        decoder=cae_model.module.synthesis.state_dict(),
-        fact_ent=cae_model.module.fact_entropy.state_dict(),
-        optimizer=optimizer.state_dict(),
-        args=args.__dict__,
-        best_val=best_valid_loss,
-        step=step,
-        train_loss=train_loss_history,
-        valid_loss=valid_loss_history,
-        code_version=args.version
-    )
-    
-    if scheduler is not None:
-        if 'metrics' in dict(signature(scheduler.step).parameters).keys():
-            scheduler.step(metrics=valid_loss)
-
-        training_state['scheduler'] = scheduler.state_dict()
-    else:
-        training_state['scheduler'] = None
-    
-    save_state('last', training_state, args)
-    
-    if valid_loss < best_valid_loss:
-        best_valid_loss = valid_loss
-        save_state('best', training_state, args)
-    
-    return best_valid_loss
 
 
 def valid(cae_model, data, criterion, args):
@@ -61,6 +27,8 @@ def valid(cae_model, data, criterion, args):
         The validation dataset. Because the target is recosntruct the input, the label associated is ignored
     criterion : function or torch.nn.Module
         The loss criterion to evaluate the network's performance
+    args: Namespace
+        The input arguments passed at running time
     
     Returns
     -------
@@ -93,7 +61,8 @@ def valid(cae_model, data, criterion, args):
 
 
 def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
-    """ Training loop by steps
+    """ Training loop by steps.
+    This loop involves validation and network training checkpoint creation.
 
     Parameters
     ----------
@@ -105,14 +74,14 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         The validation data.
     criterion : function or torch.nn.Module
         The loss criterion to evaluate the network's performance
-    stopping_criteria : list[StoppingCriterion]
+    stopping_criteria : StoppingCriterion
         Stopping criteria tracker for different problem statements
     optimizer : torch.optim.Optimizer
         The parameter's optimizer method
     scheduler : torch.optim.lr_scheduler or None
         If provided, a learning rate scheduler for the optimizer
-    args : dict or Namespace
-        The dictionary of input arguments passed at running time
+    args : Namespace
+        The input arguments passed at running time
     
     Returns
     -------
@@ -135,7 +104,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         for i, (x, _) in enumerate(train_data):
             step += 1
 
-            # Training step
+            # Start of training step
             optimizer.zero_grad()
 
             x_r, y, p_y = cae_model(x)
@@ -153,6 +122,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
             if scheduler is not None and 'metrics' not in dict(signature(scheduler.step).parameters).keys():
                 scheduler.step()
+            # End of training step
 
             # When training with penalty on the energy of the compression representation, 
             # update the respective stopping criterion
@@ -169,7 +139,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             if not keep_training or step % args.checkpoint_steps == 0:
                 train_loss = sum_loss / step
 
-                # Evaluate the model in the validation set
+                # Evaluate the model with the validation set
                 valid_loss = valid(cae_model, valid_data, criterion, args)
                 
                 cae_model.train()
@@ -185,7 +155,8 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
 
-                best_valid_loss = checkpoint(step, cae_model, optimizer, scheduler, valid_loss, best_valid_loss, train_loss_history, valid_loss_history)
+                # Save the current training state in a checkpoint file
+                best_valid_loss = checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
@@ -203,11 +174,25 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
 
 def setup_network(args):
+    """ Setup a nerual network for image compression/decompression.
+
+    Parameters
+    ----------
+    args : Namespace
+        The input arguments passed at running time. All the parameters are passed directly to the model constructor.
+        This way, the constructor can take the parameters needed that have been passed by the user.
+    
+    Returns
+    -------
+    cae_model : nn.Module
+        The convolutional neural network autoencoder model.
+    """
+
     # The autoencoder model contains all the modules
     cae_model = AutoEncoder(**args.__dict__)
 
+    # If there are more than one GPU, DataParallel handles automatically the distribution of the work
     cae_model = nn.DataParallel(cae_model)
-
     if args.gpu:
         cae_model.cuda()
 
@@ -215,6 +200,23 @@ def setup_network(args):
 
 
 def setup_criteria(args):
+    """ Setup a loss function for the neural network optimization, and training stopping criteria.
+
+    Parameters
+    ----------
+    args : Namespace
+        The input arguments passed at running time. All the parameters are passed directly to the criteria constructors.
+            
+    Returns
+    -------
+    criterion : nn.Module
+        The loss function that is used as target to optimize the parameters of the nerual network.
+    
+    stopping_criteria : list[StoppingCriterion]
+        A list of stopping criteria. The first element is always set to stop the training after a fixed number of iterations.
+        Depending on the criterion used, additional stopping criteria is set.        
+    """
+
     # Early stopping criterion:
     stopping_criteria = [EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
 
@@ -240,25 +242,59 @@ def setup_criteria(args):
     return criterion, stopping_criteria
 
 
-def setup_optim(cae_model, args):
-    # Otpimizer:
+def setup_optim(cae_model, scheduler_type='None'):
+    """ Setup a loss function for the neural network optimization, and training stopping criteria.
+
+    Parameters
+    ----------
+    cae_model : torch.nn.Module
+        The convolutional autoencoder model to be optimized
+    scheduler_type : str
+        The type of learning rate scheduler used during the neural network training
+            
+    Returns
+    -------
+    optimizer : torch.optim.Optimizer
+        The neurla network optimizer method
+    scheduler : torch.optim.lr_scheduler
+        The learning rate scheduler for the optimizer
+    """
+
+    # By now, only the ADAM optimizer is used
     optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate)
     
-    if args.scheduler == 'None':
+    # Only the the reduce on plateau, or none at all scheduler are used
+    if scheduler_type == 'None':
         scheduler = None
-    elif args.scheduler in scheduler_options.keys():
-        scheduler = scheduler_options[args.scheduler](optimizer=optimizer, mode='min')
+    elif scheduler_type in scheduler_options.keys():
+        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min')
     else:
-        raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler)
+        raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
 
     return optimizer, scheduler
 
 
-def resume_checkpoint(cae_model, optimizer, scheduler, args):
-    if not args.gpu:
-        checkpoint_state = torch.load(args.resume, map_location=torch.device('cpu'))
+def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
+    """ Resume training from a previous checkpoint
+
+    Parameters
+    ----------
+    cae_model : torch.nn.Module
+        The convolutional autoencoder model to be optimized
+    optimizer : torch.optim.Optimizer
+        The neurla network optimizer method
+    scheduler : torch.optim.lr_scheduler or None
+        The learning rate scheduler for the optimizer
+    checkpoint : str
+        Path to a previous training checkpoint
+    gpu : bool
+        Wether use GPUs to train the neural network or not    
+    """
+
+    if not gpu:
+        checkpoint_state = torch.load(checkpoint, map_location=torch.device('cpu'))
     else:
-        checkpoint_state = torch.load(args.resume)
+        checkpoint_state = torch.load(checkpoint)
     
     cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
     cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
@@ -276,16 +312,16 @@ def main(args):
     Parameters
     ----------
     args : dict or Namespace
-
+        The set of parameters passed to the different constructors to set up the convolutional autoencoder training
     """
     logger = logging.getLogger(args.mode + '_log')
 
     cae_model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args)
-    optimizer, scheduler = setup_optim(cae_model, args)
+    optimizer, scheduler = setup_optim(cae_model, scheduler_type=args.scheduler)
 
     if args.resume is not None:
-        resume_checkpoint(cae_model, optimizer, scheduler, args)
+        resume_checkpoint(cae_model, optimizer, scheduler, args.resume, gpu=args.gpu)
 
     # Log the training setup
     logger.info('Network architecture:')
@@ -318,3 +354,5 @@ if __name__ == '__main__':
     setup_logger(args)
 
     main(args)
+    
+    logging.shutdown()
