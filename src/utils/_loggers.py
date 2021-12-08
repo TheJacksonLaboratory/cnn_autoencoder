@@ -109,7 +109,7 @@ def checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_los
     
     if scheduler is not None:
         if 'metrics' in dict(signature(scheduler.step).parameters).keys():
-            scheduler.step(metrics=valid_loss)
+            scheduler.step(metrics=valid_loss_history[-1])
 
         training_state['scheduler'] = scheduler.state_dict()
     else:

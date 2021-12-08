@@ -6,9 +6,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .models import Synthesizer, Decoder
+import models
 
-from .utils import get_decompress_args, load_state, setup_logger, open_compressed, save_image
+import utils
 
 
 def decompress(args):
@@ -28,9 +28,9 @@ def decompress(args):
     else:
         img_ext = args.format
     
-    state = load_state(args)
+    state = utils.load_state(args)
 
-    decomp_model = Synthesizer(**state['args'])
+    decomp_model = models.Synthesizer(**state['args'])
 
     decomp_model.load_state_dict(state['decoder'])
     
@@ -41,7 +41,7 @@ def decompress(args):
 
     decomp_model.eval()
 
-    decoder = Decoder(512)
+    decoder = models.Decoder(512)
     
     for i, fn in enumerate(args.input):
         y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
@@ -54,7 +54,7 @@ def decompress(args):
 
         x = 0.5*x + 0.5
 
-        save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
+        utils.save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
 
         with open(os.path.join(args.output_dir, '{:03d}.comp'.format(i)), mode='rb') as f:
             # Write the size of the image:
@@ -74,13 +74,13 @@ def decompress(args):
 
         x = 0.5*x + 0.5
         
-        save_image(os.path.join(args.output_dir, '{:03d}_ae_rec.{}'.format(i, img_ext)), x)
+        utils.save_image(os.path.join(args.output_dir, '{:03d}_ae_rec.{}'.format(i, img_ext)), x)
 
 
 if __name__ == '__main__':
-    args = get_decompress_args()
+    args = utils.get_decompress_args()
     
-    setup_logger(args)
+    utils.setup_logger(args)
     
     decompress(args)
 

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from src.models import FactorizedEntropy
+from models import FactorizedEntropy
 
 
 def test_factorized_entropy(size=1000, epochs=100):
@@ -61,8 +61,8 @@ def test_factorized_entropy(size=1000, epochs=100):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Test the Factorized prior based on an univariate non-parametric density model')
-    parser.add_argument('-s', '--size', dest='size', help='Size of the population drawn from a mix of two normal distributions', default=1000)
-    parser.add_argument('-e', '--epochs', dest='epochs', help='Number of epochs to train the factorized entropy model', default=100)
+    parser.add_argument('-s', '--size', type=int, dest='size', help='Size of the population drawn from a mix of two normal distributions', default=1000)
+    parser.add_argument('-e', '--epochs', type=int, dest='epochs', help='Number of epochs to train the factorized entropy model', default=100)
     args = parser.parse_args()
 
-    test_factorized_entropy(**args)
+    test_factorized_entropy(size=args.size, epochs=args.epochs)

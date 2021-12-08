@@ -105,7 +105,7 @@ def get_Histology(args, normalize):
     # If testing the model, return the test set from MNIST
     if args.mode != 'training':
         hist_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans)
-        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
+        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
         return test_queue
 
     hist_train_data = Histology_zarr(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='test', transform=prep_trans)

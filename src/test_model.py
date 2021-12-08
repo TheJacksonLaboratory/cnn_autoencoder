@@ -3,9 +3,9 @@ import argparse
 import os
 import json
 
-import src.utils as utils
-import src.compress as compress
-import src.decompress as decompress
+import utils
+import compress
+import decompress
 
 
 DATASETS = ['MNIST', 'ImageNet', 'Histology']
@@ -64,6 +64,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-n', '--nimgs', type=int, dest='n_imgs', help='Number of images to extract from the dataset and pass through the compression-decompression process', default=10)
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed and decompressed files', default='.')
+    parser.add_argument('-pth', '--store-pth', action='store_true', dest='store_pth', help='Store the compressed representation of the image before the arithmetic encoding inside a .pth file?')
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
 

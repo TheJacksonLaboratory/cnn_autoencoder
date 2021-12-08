@@ -6,9 +6,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .models import Analyzer, Encoder
+import models
 
-from .utils import get_compress_args, load_state, setup_logger, open_image, save_compressed
+import utils
 
 
 def compress(args):
@@ -17,9 +17,9 @@ def compress(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    state = load_state(args)
+    state = utils.load_state(args)
 
-    comp_model = Analyzer(**state['args'])
+    comp_model = models.Analyzer(**state['args'])
 
     comp_model.load_state_dict(state['encoder'])
 
@@ -29,15 +29,15 @@ def compress(args):
     
     comp_model.eval()
 
-    encoder = Encoder(512)
+    encoder = models.Encoder(512)
 
     for i, fn in enumerate(args.input):
-        x = open_image(fn, state['args']['compression_level'])
+        x = utils.open_image(fn, state['args']['compression_level'])
 
         y_q, _ = comp_model(x)
 
         logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
-        
+
         # Save the compressed representation as the output of the cnn autoencoder
         if args.store_pth:
             torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
@@ -57,9 +57,9 @@ def compress(args):
 
 
 if __name__ == '__main__':
-    args = get_compress_args()
+    args = utils.get_compress_args()
     
-    setup_logger(args)
+    utils.setup_logger(args)
     
     compress(args)
     
