@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 def open_compressed(filename):
     if '.pth' in filename:
         y_q = torch.load(filename)
+        y_q = y_q.detach()
+
     elif '.comp' in filename:
         decoder = models.Decoder(512)
         

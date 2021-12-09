@@ -34,7 +34,8 @@ def compress(args):
     for i, fn in enumerate(args.input):
         x = utils.open_image(fn, state['args']['compression_level'])
 
-        y_q, _ = comp_model(x)
+        with torch.no_grad():
+            y_q, _ = comp_model(x)
 
         logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
 

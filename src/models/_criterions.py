@@ -61,24 +61,21 @@ class RateDistorsionPenaltyB(nn.Module):
         # Compute B, the approximation to the variance introduced during the quntization and synthesis track
         _, K, H, W = y.size()
 
-        fake_codes = torch.cat([torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)        
+        fake_codes = torch.cat([torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)
         fake_rec = synth_net(fake_codes)
 
-        B = torch.var(fake_rec, dim=(2, 3))
-        max_e = torch.softmax(B, dim=1)
+        B = torch.var(fake_rec, dim=(1, 2, 3))
+        B = B / B.sum()
 
-        # Compute the hard max energy
-        with torch.no_grad():
-            max_energy = torch.max(B / torch.sum(B, dim=1).unsqueeze(dim=1))
-
-        P_B = torch.sum(max_e * B, dim=1)
-
+        P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K)
+        
         # Distorsion
         dist = F.mse_loss(x_r, x)
         
         # Rate of compression:
         rate = torch.sum(-p_y * torch.log2(p_y + 1e-10), dim=1)
-        return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * torch.mean(P_B), max_energy
+
+        return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * P_B, P_B.detach()
 
 
 class StoppingCriterion(object):
