@@ -224,11 +224,11 @@ def setup_criteria(args):
     # Loss function
     if args.criterion == 'RD_PA':
         criterion = RateDistorsionPenaltyA(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(mode='g', max_iterations=args.steps, target=args.energy_limit))
+        stopping_criteria.append(EarlyStoppingTarget(mode='le', max_iterations=args.steps, target=args.energy_limit))
 
     elif args.criterion == 'RD_PB':
         criterion = RateDistorsionPenaltyB(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(mode='l', max_iterations=args.steps, target=args.energy_limit))
+        stopping_criteria.append(EarlyStoppingTarget(mode='ge', max_iterations=args.steps, target=args.energy_limit))
 
     elif args.criterion == 'RD':
         criterion = RateDistorsion(**args.__dict__)

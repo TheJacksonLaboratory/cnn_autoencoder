@@ -22,7 +22,7 @@ def save_cdf(args):
 
     fact_ent = nn.DataParallel(fact_ent)
 
-    x = torch.arange(-1, 1, 2/512).reshape(1, 1, 512, 1).tile([1, 48, 1, 1]).float()
+    x = torch.arange(-1, 1, 2/513).reshape(1, 1, 1, 513).tile([1, 48, 1, 1]).float()
 
     if torch.cuda.is_available():
         fact_ent.cuda()
@@ -31,8 +31,14 @@ def save_cdf(args):
     fact_ent.eval()
 
     with torch.no_grad():
-        p_y = fact_ent(x+0.5) - fact_ent(x-0.5)
-        torch.save(p_y, args.output)
+        cdf = fact_ent(x)
+
+    # Reshape the cdf to be used by the encoder and decoder classes
+    cdf = cdf.unsqueeze(dim=3)
+    cdf.mul_(2**16)
+    cdf = cdf.round().to(torch.int16)
+
+    torch.save(cdf, args.output)
 
 
 if __name__ == '__main__':
