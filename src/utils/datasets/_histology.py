@@ -73,6 +73,8 @@ class Histology_zarr(Dataset):
         i, tl_y, tl_x = self._compute_grid(index)
         patch = self._z_list[i][..., tl_y:(tl_y + self._patch_size), tl_x:(tl_x + self._patch_size)].squeeze()
         patch = self._transform(patch.transpose(1, 2, 0))
+
+        # Returns anything as label, to prevent an error during training
         return patch, [0]
 
 

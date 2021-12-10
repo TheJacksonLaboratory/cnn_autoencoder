@@ -91,13 +91,14 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
     logger = logging.getLogger(args.mode + '_log')
 
     completed = False
+    keep_training = True
 
     best_valid_loss = float('inf')
     train_loss_history = []
     valid_loss_history = []
 
     step = 0
-    while stopping_criteria[0].check():
+    while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
 
@@ -137,7 +138,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
 
             if not keep_training or step % args.checkpoint_steps == 0:
-                train_loss = sum_loss / step
+                train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
                 valid_loss = valid(cae_model, valid_data, criterion, args)
@@ -223,11 +224,11 @@ def setup_criteria(args):
     # Loss function
     if args.criterion == 'RD_PA':
         criterion = RateDistorsionPenaltyA(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(mode='le', max_iterations=args.steps, target=args.energy_limit))
+        stopping_criteria.append(EarlyStoppingTarget(mode='g', max_iterations=args.steps, target=args.energy_limit))
 
     elif args.criterion == 'RD_PB':
         criterion = RateDistorsionPenaltyB(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(mode='ge', max_iterations=args.steps, target=args.energy_limit))
+        stopping_criteria.append(EarlyStoppingTarget(mode='l', max_iterations=args.steps, target=args.energy_limit))
 
     elif args.criterion == 'RD':
         criterion = RateDistorsion(**args.__dict__)

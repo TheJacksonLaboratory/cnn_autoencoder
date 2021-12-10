@@ -41,7 +41,7 @@ def decompress(args):
 
     decomp_model.eval()
 
-    decoder = models.Decoder(512)
+    decoder = utils.Decoder(512)
     
     for i, fn in enumerate(args.input):
         y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))

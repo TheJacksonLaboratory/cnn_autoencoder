@@ -20,12 +20,15 @@ def _get_uniform_cdf(n_symbols, precision=16):
 class Encoder(nn.Module):
     """ The encoder implements a uniform prior for the CDF of the quantized output of a cnn.
     """
-    def __init__(self, n_symbols):
+    def __init__(self, n_symbols, cdf=None):
         super(Encoder, self).__init__()
 
         self._n_symbols = n_symbols
 
-        self._cdf = _get_uniform_cdf(n_symbols)
+        if cdf is not None:
+            self._cdf = torch.load(cdf)
+        else:
+            self._cdf = _get_uniform_cdf(n_symbols)
 
     def forward(self, x):
         """ Encode x using an uniform cdf
@@ -42,12 +45,15 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     """ The encoder implements a uniform prior for the CDF of the quantized output of a cnn.
     """
-    def __init__(self, n_symbols):
+    def __init__(self, n_symbols, cdf=None):
         super(Decoder, self).__init__()
 
         self._n_symbols = n_symbols
 
-        self._cdf = _get_uniform_cdf(n_symbols)
+        if cdf is not None:
+            self._cdf = torch.load(cdf)
+        else:
+            self._cdf = _get_uniform_cdf(n_symbols)
 
     def forward(self, x, size):
         """ Decode x using an uniform cdf

@@ -29,7 +29,7 @@ def compress(args):
     
     comp_model.eval()
 
-    encoder = models.Encoder(512)
+    encoder = utils.Encoder(512)
 
     for i, fn in enumerate(args.input):
         x = utils.open_image(fn, state['args']['compression_level'])

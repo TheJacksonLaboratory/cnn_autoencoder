@@ -67,7 +67,7 @@ class RateDistorsionPenaltyB(nn.Module):
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / B.sum()
 
-        P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K)
+        P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
         
         # Distorsion
         dist = F.mse_loss(x_r, x)
@@ -81,18 +81,19 @@ class RateDistorsionPenaltyB(nn.Module):
 class StoppingCriterion(object):
     def __init__(self, max_iterations, **kwargs):
         self._max_iterations = max_iterations
-        self._curr_iteration = None
-        self._keep_training = True
+        self._curr_iteration = 0
 
-    def update(self, iteration, **kwargs):
+    def update(self, iteration, **kwargs):        
+        if iteration is None:
+            return
         self._curr_iteration = iteration
-        self._keep_training = self._curr_iteration <= self._max_iterations
 
     def check(self):
-        return self._keep_training
-
+        return self._curr_iteration <= self._max_iterations
+    
     def __repr__(self):
-        repr = 'StoppingCriterion(max-iterations: %d, current-iterations: %d)' % (self._max_iterations, self._curr_iteration)
+        decision = self.check()
+        repr = 'StoppingCriterion(max-iterations: %d, current-iterations: %d, decision: %s)' % (self._max_iterations, self._curr_iteration, 'Continue' if decision else 'Stop')
         return repr
 
 
@@ -118,41 +119,56 @@ class EarlyStoppingPatience(StoppingCriterion):
 
         if metric is None or self._curr_iteration < self._warmup:
             return
-
+        
         if self._best_metric >= (self._metric_sign * metric):
             self._bad_epochs = 0
             self._best_metric = self._metric_sign * metric
         else:
             self._bad_epochs += 1
 
-        self._keep_training &= self._bad_epochs <= self._patience
+    def check(self):
+        parent_decision = super().check()
+        decision = self._bad_epochs < self._patience
+        return parent_decision & decision
 
     def __repr__(self):
-        repr = 'EarlyStoppingPatience(target: %s, patience: %d, warmup: %d, bad-epochs: %d, best metric: %.4f)' % (self._target, self._patience, self._warmup, self._bad_epochs, self._best_metric)
+        repr = super(EarlyStoppingPatience, self).__repr__()
+        decision = self.check()
+        repr += '; EarlyStoppingPatience(target: %s, patience: %d, warmup: %d, bad-epochs: %d, best metric: %.4f, decision: %s)' % (self._target, self._patience, self._warmup, self._bad_epochs, self._best_metric, 'Continue' if decision else 'Stop')
         return repr
 
 
 class EarlyStoppingTarget(StoppingCriterion):
+    """ Keep training while the inequality holds.  
+    
+    """
     def __init__(self, target, comparison='l', **kwargs):
         super(EarlyStoppingTarget, self).__init__(**kwargs)
         self._target = target
         self._comparison = comparison
+        self._last_metric = -1
 
     def update(self, metric=None, **kwargs):
         super(EarlyStoppingTarget, self).update(**kwargs)
+        self._last_metric = metric
+
+    def check(self):
+        parent_decision = super(EarlyStoppingTarget, self).check()
 
         # If the criterion is met, the training is stopped
         if self._comparison == 'l':
-            res = metric >= self._target
+            decision = self._last_metric < self._target
         elif self._comparison == 'le':
-            res = metric > self._target
+            decision = self._last_metric <= self._target
         elif self._comparison == 'g':
-            res = metric <= self._target
+            decision = self._last_metric > self._target
         elif self._comparison == 'ge':
-            res = metric < self._target
+            decision = self._last_metric >= self._target
         
-        self._keep_training &= res
+        return parent_decision & decision
     
     def __repr__(self):
-        repr = 'EarlyStoppingTarget(comparison: %s, target: %s)' % (self._comparison, self._target)
+        repr = super(EarlyStoppingTarget, self).__repr__()
+        decision = self.check()
+        repr += '; EarlyStoppingTarget(comparison: %s, target: %s, last-metric: %.4f, decision: %s)' % (self._comparison, self._target, self._last_metric, 'Continue' if decision else 'Stop')
         return repr

@@ -201,7 +201,7 @@ class AutoEncoder(nn.Module):
 
     def forward(self, x):
         y_q, y = self.analysis(x)
-        p_y = self.fact_entropy(y_q)
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5)
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
