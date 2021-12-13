@@ -18,9 +18,9 @@ class Histology_zarr(Dataset):
         From that component, temporal and layer dimensions are discarded, keeping only channels, and spatial dimension.
     """
     def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', transform=None):
-        # Get all the filenames in the root folder
-        self._filenames = list(map(lambda fn: os.path.join(root, fn), filter(lambda fn: '.zarr' in fn, sorted(os.listdir(root)))))
-
+        # Get all the filenames in the root folder        
+        self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if '.zarr' in fn]))
+        
         if mode == 'train':
             self._filenames = self._filenames[:int(0.7 * len(self._filenames))]
         elif mode == 'val':

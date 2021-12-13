@@ -41,18 +41,19 @@ def decompress(args):
 
     decomp_model.eval()
 
-    decoder = utils.Decoder(512)
+    decoder = utils.Decoder(2048)
     
     for i, fn in enumerate(args.input):
-        y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
-        
+        y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))        
         logger.info('Decompressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
+
+        y_q = y_q.float()
         
-        x = decomp_model(y_q)
+        with torch.no_grad():
+            x = decomp_model(y_q)
+            x = 0.5*x + 0.5
         
         logger.info('Reconstruction in [{}, {}]'.format(x.min(), x.max()))
-
-        x = 0.5*x + 0.5
 
         utils.save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
 
@@ -67,12 +68,13 @@ def decompress(args):
         y_q = decoder(y_b, size)
 
         logger.info('Decompressed representation (AE): {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
-        
-        x = decomp_model(y_q)
+
+        with torch.no_grad():
+            x = decomp_model(y_q)
+            x = 0.5*x + 0.5
 
         logger.info('Reconstruction (AE) in [{}, {}]'.format(x.min(), x.max()))
 
-        x = 0.5*x + 0.5
         
         utils.save_image(os.path.join(args.output_dir, '{:03d}_ae_rec.{}'.format(i, img_ext)), x)
 

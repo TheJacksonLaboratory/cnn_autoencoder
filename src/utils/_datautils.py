@@ -27,7 +27,7 @@ def open_image(filename, compression_level):
     height_offset = (height % (2 ** compression_level))
     width_offset = (width % (2 ** compression_level))
 
-    trans_comp = [transforms.Pad([height_offset // 2, height_offset // 2 + height_offset % 2, width_offset // 2, width_offset // 2 + width_offset % 2]),
+    trans_comp = [transforms.Pad([0, height_offset, 0, width_offset]),
                   transforms.PILToTensor(),
                   transforms.ConvertImageDtype(torch.float32)
                 ]

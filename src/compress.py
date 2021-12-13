@@ -29,21 +29,22 @@ def compress(args):
     
     comp_model.eval()
 
-    encoder = utils.Encoder(512)
+    encoder = utils.Encoder(2048)
 
     for i, fn in enumerate(args.input):
         x = utils.open_image(fn, state['args']['compression_level'])
 
         with torch.no_grad():
             y_q, _ = comp_model(x)
+            y_q = y_q.round().to(torch.int16)
 
-        logger.info('Compressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
+        logger.info('Compressed representation: {} in [{}, {}], from [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max(), x.min(), x.max()))
 
         # Save the compressed representation as the output of the cnn autoencoder
         if args.store_pth:
             torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
 
-        y_q.clamp_(min=0.0, max=511.0)
+        y_q.clamp_(min=0.0, max=2048.0)
         y_b = encoder(y_q.cpu())
         
         logger.info('Encoded repressentation size {} b'.format(len(y_b)))
