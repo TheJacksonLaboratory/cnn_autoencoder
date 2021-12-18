@@ -11,7 +11,7 @@ def initialize_weights(m):
         nn.init.xavier_normal_(m.weight.data)
 
         if m.bias is not None:
-            nn.init.xavier_ormal_(m.bias.data)
+            nn.init.xavier_normal_(m.bias.data)
 
 
 class Quantizer(nn.Module):
@@ -25,7 +25,7 @@ class Quantizer(nn.Module):
 
     def forward(self, x):
         if self.training:
-            u = torch.rand_like(x) * (self._upper_bound - self._lower_bound) - self._lower_bound
+            u = torch.rand_like(x) * (self._upper_bound - self._lower_bound) + self._lower_bound
             q = x + u
         else:
             q = torch.round(x)
@@ -201,7 +201,7 @@ class AutoEncoder(nn.Module):
 
     def forward(self, x):
         y_q, y = self.analysis(x)
-        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5)
+        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5)
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
