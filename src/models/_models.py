@@ -11,7 +11,7 @@ def initialize_weights(m):
         nn.init.xavier_normal_(m.weight.data)
 
         if m.bias is not None:
-            nn.init.xavier_normal_(m.bias.data)
+            nn.init.constant_(m.bias.data, 0.0)
 
 
 class Quantizer(nn.Module):
@@ -33,6 +33,28 @@ class Quantizer(nn.Module):
         return q
 
 
+class FactorizedEntropyLayer(nn.Module):
+    def __init__(self, channels_bn, d=3, r=3):
+        super(FactorizedEntropyLayer, self).__init__()
+        self._channels = channels_bn
+
+        # The non-parametric density model is initialized with random normal distributed weights
+        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r, d, 1, 1), 0.0, 0.01))
+        self._b = nn.Parameter(torch.zeros(channels_bn * r))
+        self._a = nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r, 1, 1), 0.0, 0.01))
+
+    def forward(self, x):
+        # Reparametrerize the matrix H, and vector a to generate nonegative Jacobian matrices
+        H_k = F.softplus(self._H)
+        a_k = torch.tanh(self._a)
+            
+        # Using the 2d convolution instead of simple element-wise product allows to operate over all channels at the same time
+        fx = F.conv2d(x, weight=H_k, bias=self._b, groups=self._channels)
+        fx = fx + a_k * torch.tanh(fx)
+
+        return fx
+
+
 class FactorizedEntropy(nn.Module):
     """ Univariate non-parametric density model to approximate the factorized entropy prior
 
@@ -41,7 +63,7 @@ class FactorizedEntropy(nn.Module):
     """
     def __init__(self, channels_bn, K=4, r=3, **kwargs):
         super(FactorizedEntropy, self).__init__()
-        
+        self._channels = channels_bn
         self._K = K
         if isinstance(r, int):
             r = [r] * (K - 1) + [1]
@@ -49,32 +71,15 @@ class FactorizedEntropy(nn.Module):
         d = [1] + r[:-1]
 
         # The non-parametric density model is initialized with random normal distributed weights
-        self._H = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r_k, d_k, 1, 1), 0.0, 0.01))
-                                      for d_k, r_k in zip(d, r)
-                                     ])
-
-        self._b = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r_k), 0.0, 0.01))
-                                      for r_k in r
-                                     ])
-
-        self._a = nn.ParameterList([nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r_k, 1, 1), 0.0, 0.01))
-                                      for r_k in r[:-1]
-                                     ])
+        self._layers = nn.Sequential(*[FactorizedEntropyLayer(channels_bn=channels_bn, d=d_k, r=r_k) for d_k, r_k in zip(d[:-1], r[:-1])])
+        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r[-1], d[-1], 1, 1), 0.0, 0.01))
+        self._b = nn.Parameter(torch.zeros(channels_bn * r[-1]))
 
     def forward(self, x):
-        channels = x.size(1)
-        fx = x.clone()
-        for H_k, b_k, a_k in zip(self._H[:-1], self._b[:-1], self._a):
-            # Reparametrerize the matrix H, and vector a to generate nonegative Jacobian matrices
-            H_k = F.softplus(H_k)
-            a_k = torch.tanh(a_k)
-            
-            # Using the 2d convolution instead of simple element-wise product allows to operate over all channels at the same time
-            fx = F.conv2d(fx, weight=H_k, bias=b_k, groups=channels)
-            fx = fx + a_k * torch.tanh(fx)
+        fx = self._layers(x)
 
-        H_K = F.softplus(self._H[-1])
-        fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b[-1], groups=channels))
+        H_K = F.softplus(self._H)
+        fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels))
 
         return fx
 
@@ -88,14 +93,12 @@ class DownsamplingUnit(nn.Module):
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        # model.append(nn.ReLU(inplace=False))
         model.append(nn.LeakyReLU(inplace=False))
         model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        # model.append(nn.ReLU(inplace=False))
         model.append(nn.LeakyReLU(inplace=False))
 
         if dropout > 0.0:
@@ -117,14 +120,12 @@ class UpsamplingUnit(nn.Module):
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        # model.append(nn.ReLU(inplace=False))
         model.append(nn.LeakyReLU(inplace=False))
         model.append(nn.ConvTranspose2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        # model.append(nn.ReLU(inplace=False))
         model.append(nn.LeakyReLU(inplace=False))
 
         if dropout > 0.0:
@@ -150,8 +151,7 @@ class Analyzer(nn.Module):
 
         # Final convolution in the analysis track
         down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
-        down_track.append(nn.LeakyReLU(inplace=False))
-        # down_track.append(nn.Hardtanh(min_val=0.0, max_val=1023.0, inplace=False))
+        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5, inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
         
@@ -178,7 +178,6 @@ class Synthesizer(nn.Module):
         
         # Final color reconvertion
         up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias))
-        up_track.append(nn.Hardtanh(min_val=-1.0, max_val=1.0))
 
         self.synthesis_track = nn.Sequential(*up_track)
 
@@ -201,7 +200,8 @@ class AutoEncoder(nn.Module):
 
     def forward(self, x):
         y_q, y = self.analysis(x)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5)
+        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = torch.prod(p_y, dim=1) + 1e-10
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y

@@ -16,9 +16,8 @@ class RateDistorsion(nn.Module):
         dist = F.mse_loss(x_r, x)
         
         # Rate of compression:
-        rate = torch.sum(-p_y * torch.log2(p_y + 1e-10), dim=1)
-
-        return self._distorsion_lambda * dist + torch.mean(rate), None
+        rate = torch.mean(-p_y*torch.log2(p_y))
+        return self._distorsion_lambda * dist + rate, None
     
 
 class RateDistorsionPenaltyA(nn.Module):
@@ -46,7 +45,7 @@ class RateDistorsionPenaltyA(nn.Module):
         dist = F.mse_loss(x_r, x)
         
         # Rate of compression:
-        rate = torch.sum(-p_y * torch.log2(p_y + 1e-10), dim=1)
+        rate = torch.sum(-p_y * torch.log2(p_y), dim=1)
 
         return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * torch.mean(P_A), max_energy
 
@@ -73,7 +72,7 @@ class RateDistorsionPenaltyB(nn.Module):
         dist = F.mse_loss(x_r, x)
         
         # Rate of compression:
-        rate = torch.sum(-p_y * torch.log2(p_y + 1e-10), dim=1)
+        rate = torch.sum(-p_y * torch.log2(p_y), dim=1)
 
         return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * P_B, P_B.detach()
 
