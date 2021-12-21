@@ -22,7 +22,7 @@ def save_cdf(args):
 
     fact_ent = nn.DataParallel(fact_ent)
 
-    x = torch.arange(-0.5, 0.5, 1/512).reshape(1, 1, 1, 512).tile([1, 48, 1, 1]).float()
+    x = torch.linspace(-0.5, 0.5, 256).reshape(1, 1, 1, -1).tile([1, 48, 1, 1]).float()
     
     if torch.cuda.is_available():
         fact_ent.cuda()

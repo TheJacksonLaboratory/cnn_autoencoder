@@ -198,7 +198,10 @@ class AutoEncoder(nn.Module):
         self.synthesis = Synthesizer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
         self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
 
-    def forward(self, x):
+    def forward(self, x, synthesize_only=False):
+        if synthesize_only:
+            return self.synthesis(x)
+        
         y_q, y = self.analysis(x)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         p_y = torch.prod(p_y, dim=1) + 1e-10

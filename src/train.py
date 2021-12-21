@@ -43,13 +43,9 @@ def valid(cae_model, data, criterion, args):
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
             x_r, y, p_y = cae_model(x)
-            
-            synthesizer = DataParallel(cae_model.module.synthesis)
-            if args.gpu:
-                synthesizer.cuda()
 
-            loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesizer)
-
+            loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
+            loss = torch.mean(loss)
             sum_loss += loss.item()
 
             if i % max(1, int(0.1 * len(data))) == 0:
@@ -114,8 +110,10 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             if args.gpu:
                 synthesizer.cuda()
             
-            loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, synth_net=synthesizer)
-            
+            loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
+            if extra_info is not None:
+                extra_info = torch.mean(extra_info)
+            loss = torch.mean(loss)
             loss.backward()
 
             optimizer.step()

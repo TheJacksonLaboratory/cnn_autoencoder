@@ -41,10 +41,11 @@ def decompress(args):
 
     decomp_model.eval()
 
-    decoder = utils.Decoder(2048)
+    decoder = utils.Decoder(256)
     
     for i, fn in enumerate(args.input):
-        y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))        
+        y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))  
+        y_q = y_q - 127.5      
         logger.info('Decompressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
 
         y_q = y_q.float()
@@ -66,7 +67,7 @@ def decompress(args):
             y_b = f.read()
         
         y_q = decoder(y_b, size)
-
+        y_q = y_q - 127.5
         logger.info('Decompressed representation (AE): {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
 
         with torch.no_grad():

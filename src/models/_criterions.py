@@ -11,12 +11,12 @@ class RateDistorsion(nn.Module):
         super(RateDistorsion, self).__init__()
         self._distorsion_lambda = distorsion_lambda
 
-    def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distorsion
-        dist = F.mse_loss(x_r, x)
+        dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.mean(-p_y*torch.log2(p_y))
+        rate = torch.mean(-torch.log2(p_y))
         return self._distorsion_lambda * dist + rate, None
     
 
@@ -26,7 +26,7 @@ class RateDistorsionPenaltyA(nn.Module):
         self._distorsion_lambda = distorsion_lambda
         self._penalty_beta = penalty_beta
 
-    def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Compute A, the approximation to the variance introduced during the analysis track
         with torch.no_grad():
             x_mean = torch.mean(x, dim=1)
@@ -42,10 +42,10 @@ class RateDistorsionPenaltyA(nn.Module):
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
         # Distorsion
-        dist = F.mse_loss(x_r, x)
+        dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.sum(-p_y * torch.log2(p_y), dim=1)
+        rate = torch.sum(-torch.log2(p_y), dim=1)
 
         return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * torch.mean(P_A), max_energy
 
@@ -56,12 +56,12 @@ class RateDistorsionPenaltyB(nn.Module):
         self._distorsion_lambda = distorsion_lambda
         self._penalty_beta = penalty_beta
 
-    def forward(self, x=None, y=None, x_r=None, p_y=None, synth_net=None):
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Compute B, the approximation to the variance introduced during the quntization and synthesis track
         _, K, H, W = y.size()
 
         fake_codes = torch.cat([torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)
-        fake_rec = synth_net(fake_codes)
+        fake_rec = net(fake_codes, synthesize_only=True)
 
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / B.sum()
@@ -69,10 +69,10 @@ class RateDistorsionPenaltyB(nn.Module):
         P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
         
         # Distorsion
-        dist = F.mse_loss(x_r, x)
+        dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.sum(-p_y * torch.log2(p_y), dim=1)
+        rate = torch.sum(-torch.log2(p_y), dim=1)
 
         return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * P_B, P_B.detach()
 
