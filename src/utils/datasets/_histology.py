@@ -57,11 +57,11 @@ class Histology_zarr(Dataset):
         tl_x and tl_y are the top left coordinates of the patch in the original image.
         """
         # This allows to generate virtually infinite data from bootstrapping the same data
-        index %= (self._n_files * self._min_H * self._min_W // self._patch_size**2)
+        index %= (self._n_files * self._min_H * self._min_W) // self._patch_size**2
 
-        # Get the file index between among the available file names
-        i = index // (self._min_H * self._min_W // self._patch_size**2)
-        index %= (self._min_H * self._min_W // self._patch_size**2)
+        # Get the file index among the available file names
+        i = index // ((self._min_H * self._min_W) // self._patch_size**2)
+        index %= (self._min_H * self._min_W) // self._patch_size**2
 
         # Get the patch position in the file
         tl_y = index // (self._min_W // self._patch_size)
@@ -74,6 +74,12 @@ class Histology_zarr(Dataset):
         patch = self._z_list[i][..., tl_y:(tl_y + self._patch_size), tl_x:(tl_x + self._patch_size)].squeeze()
         patch = self._transform(patch.transpose(1, 2, 0))
 
+        if (tl_y + self._patch_size) > self._z_list[i].shape[-2] or (tl_x + self._patch_size) > self._z_list[i].shape[-1]:
+            print(f'Index {index} out of limits')
+        
+        if abs(patch.min() - patch.max()) < 1e-6:
+            print(f'Index {index} extracted a blank patch {i}, {tl_y}, {tl_x}: {self._filenames[i]}')
+            
         # Returns anything as label, to prevent an error during training
         return patch, [0]
 

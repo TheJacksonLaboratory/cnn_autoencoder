@@ -18,7 +18,7 @@ class RateDistorsion(nn.Module):
         # Rate of compression:
         rate = torch.mean(-torch.log2(p_y))
         return self._distorsion_lambda * dist + rate, None
-    
+
 
 class RateDistorsionPenaltyA(nn.Module):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
@@ -32,12 +32,12 @@ class RateDistorsionPenaltyA(nn.Module):
             x_mean = torch.mean(x, dim=1)
             x_var = torch.var(x_mean, dim=(1, 2)).unsqueeze(dim=1) + 1e-10
         
-        A = torch.var(y, dim=(2, 3)) / x_var
+        A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
         A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
 
         # Compute the maximum energy consentrated among the layers
         with torch.no_grad():
-            max_energy = A.max()
+            max_energy = A.max(dim=1)[0]
         
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
@@ -45,9 +45,9 @@ class RateDistorsionPenaltyA(nn.Module):
         dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y), dim=1)
+        rate = torch.mean(-torch.log2(p_y))
 
-        return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * torch.mean(P_A), max_energy
+        return self._distorsion_lambda * dist + rate + self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
 
 
 class RateDistorsionPenaltyB(nn.Module):
@@ -60,21 +60,32 @@ class RateDistorsionPenaltyB(nn.Module):
         # Compute B, the approximation to the variance introduced during the quntization and synthesis track
         _, K, H, W = y.size()
 
-        fake_codes = torch.cat([torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)
+        with torch.no_grad():
+            x_mean = torch.mean(x, dim=1)
+            x_var = torch.var(x_mean, dim=(1, 2)).unsqueeze(dim=1) + 1e-10
+        
+            A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
+            A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
+
+            # Select the maximum energy channel
+            max_energy_channel = A.argmax(dim=1)
+        
+        fake_codes = torch.cat([torch.zeros(1, K, 2, 2).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)
         fake_rec = net(fake_codes, synthesize_only=True)
 
         B = torch.var(fake_rec, dim=(1, 2, 3))
-        B = B / B.sum()
+        B = B / torch.sum(B)
 
-        P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
+        # P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
+        P_B = B[max_energy_channel]
         
         # Distorsion
         dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y), dim=1)
+        rate = torch.mean(-torch.log2(p_y))
 
-        return self._distorsion_lambda * dist + torch.mean(rate) + self._penalty_beta * P_B, P_B.detach()
+        return self._distorsion_lambda * dist + rate + self._penalty_beta * torch.mean(P_B), P_B.detach().mean()
 
 
 class StoppingCriterion(object):

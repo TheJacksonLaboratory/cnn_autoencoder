@@ -234,9 +234,9 @@ def setup_criteria(args):
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
 
-    criterion = nn.DataParallel(criterion)
-    if args.gpu:
-        criterion = criterion.cuda()
+    # criterion = nn.DataParallel(criterion)
+    # if args.gpu:
+    #     criterion = criterion.cuda()
 
     return criterion, stopping_criteria
 
