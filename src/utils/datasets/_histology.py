@@ -74,12 +74,6 @@ class Histology_zarr(Dataset):
         patch = self._z_list[i][..., tl_y:(tl_y + self._patch_size), tl_x:(tl_x + self._patch_size)].squeeze()
         patch = self._transform(patch.transpose(1, 2, 0))
 
-        if (tl_y + self._patch_size) > self._z_list[i].shape[-2] or (tl_x + self._patch_size) > self._z_list[i].shape[-1]:
-            print(f'Index {index} out of limits')
-        
-        if abs(patch.min() - patch.max()) < 1e-6:
-            print(f'Index {index} extracted a blank patch {i}, {tl_y}, {tl_x}: {self._filenames[i]}')
-            
         # Returns anything as label, to prevent an error during training
         return patch, [0]
 
@@ -100,10 +94,10 @@ def get_Histology(args, normalize):
             
     prep_trans = transforms.Compose(prep_trans_list)
 
-    if hasattr(args, 'patch_size'):
-        patch_size = args.patch_size
-    else:
+    if not hasattr(args, 'patch_size') or args.patch_size < 0:
         patch_size = 512
+    else:
+        patch_size = args.patch_size
     
     if hasattr(args, 'pyramid_level'):
         level = args.pyramid_level
