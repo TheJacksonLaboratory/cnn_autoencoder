@@ -1,0 +1,19 @@
+{
+    "batch_size": 8,
+    "val_batch_size": 16,
+    "print_log": false,
+    "steps": 1e3,
+    "checkpoint_steps": 1e1,
+    "log_dir": "/home/cervaf/NN_imaging/logs/segmentation_logs", 
+    "data_dir": "/mnt/data/Kidney_data/labeled_data/",
+    "dataset": "Histology",
+    "download_data": false,
+    "workers": 48,
+    "channels_org": 3,
+    "learning_rate": 1e-4,
+    "scheduler": "ReduceOnPlateau",
+    "channels_net": 128,
+    "channels_bn": 48,
+    "compression_level": 3,
+    "criterion": "CE"
+}

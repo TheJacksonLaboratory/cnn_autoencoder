@@ -1,7 +1,10 @@
-VER = '0.5.3'
+VER = '0.5.4'
 
 DATASETS = ['MNIST', 'ImageNet', 'Histology']
 
-CRITERIONS = ['RD', 'RD_PA', 'RD_PB']
+AE_CRITERIONS = ['RD', 'RD_PA', 'RD_PB']
+SEG_CRITERIONS = ['CE']
 
 SCHEDULERS = ['None', 'ReduceOnPlateau']
+
+SEG_MODELS = ['DecoderUNet', 'UNet']

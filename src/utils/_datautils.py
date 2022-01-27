@@ -3,18 +3,18 @@ from PIL import Image
 import torch
 import torchvision.transforms as transforms
 
-from .datasets import get_Histology, get_MNIST, get_ImageNet
+from .datasets import get_Histology, get_histo_transform, Histology_zarr, Histology_seg_zarr, get_MNIST, get_ImageNet
 
 
-def get_data(args, normalize=True):
+def get_data(args, offset=0, normalize=True):
     if args.dataset == 'MNIST':
-        return get_MNIST(args, normalize)
+        return get_MNIST(args, normalize=normalize)
 
     elif args.dataset == 'ImageNet':
-        return get_ImageNet(args, normalize)
+        return get_ImageNet(args, normalize=normalize)
 
     elif args.dataset == 'Histology':
-        return get_Histology(args, normalize)
+        return get_Histology(args, offset=offset, normalize=normalize)
 
     else:
         raise ValueError('The dataset \'%s\' is not available for training.' % args.dataset)

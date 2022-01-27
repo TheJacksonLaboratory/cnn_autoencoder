@@ -1,2 +1,2 @@
 from ._criterions import RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, StoppingCriterion, EarlyStoppingPatience, EarlyStoppingTarget
-from ._models import Analyzer, Synthesizer, FactorizedEntropy, AutoEncoder
+from .tasks import Analyzer, Synthesizer, FactorizedEntropy, AutoEncoder, UNet, DecoderUNet

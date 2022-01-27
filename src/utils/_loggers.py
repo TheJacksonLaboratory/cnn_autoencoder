@@ -65,14 +65,14 @@ def save_state(name, model_state, args):
     logger.info('Saved model in %s' % save_fn)
 
 
-def checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args):
+def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args):
     """ Creates a checkpoint with the current trainig state
 
     Parameters
     ----------
     step : int
         The current training step    
-    cae_model : torch.nn.Module
+    model : torch.nn.Module
         The network model in the current state    
     optimizer : torch.optim.Optimizer
         The parameter's optimizer method
@@ -95,9 +95,6 @@ def checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_los
 
     # Create a dictionary with the current state as checkpoint
     training_state = dict(
-        encoder=cae_model.module.analysis.state_dict(),
-        decoder=cae_model.module.synthesis.state_dict(),
-        fact_ent=cae_model.module.fact_entropy.state_dict(),
         optimizer=optimizer.state_dict(),
         args=args.__dict__,
         best_val=best_valid_loss,
@@ -107,6 +104,14 @@ def checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_los
         code_version=args.version
     )
     
+    if args.task == 'autoencoder':
+        training_state['encoder'] = model.module.analysis.state_dict()
+        training_state['decoder'] = model.module.synthesis.state_dict()
+        training_state['fact_ent'] = model.module.fact_entropy.state_dict()
+
+    elif args.task == 'segmentation':
+        training_state['model'] = model.module.state_dict()
+
     if scheduler is not None:
         if 'metrics' in dict(signature(scheduler.step).parameters).keys():
             scheduler.step(metrics=valid_loss_history[-1])

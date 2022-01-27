@@ -4,11 +4,10 @@ import os
 import json
 
 import utils
-import compress
-import decompress
+import models
 
 
-DATASETS = ['MNIST', 'ImageNet', 'Histology']
+DATASETS = ['Histology']
 
 
 def main(args):
@@ -16,11 +15,7 @@ def main(args):
 
     data_queue = utils.get_data(args, normalize=False)
 
-    if args.dataset == 'MNIST':
-        img_ext = 'pgm'
-    elif args.dataset == 'ImageNet':
-        img_ext = 'jpg'
-    elif args.dataset == 'Histology':
+    if args.dataset == 'Histology':
         img_ext = 'png'
     else:
         raise ValueError('The dataset \'%s\' is not supported.' % args.dataset)
@@ -35,7 +30,7 @@ def main(args):
         logger.info('Input image {}, of size: {}'.format(i, x.size()))
 
         save_fn = os.path.join(args.output_dir, '{:03d}.{}'.format(i, img_ext))
-        comp_fn = os.path.join(args.output_dir, '{:03d}.comp'.format(i))
+        comp_fn = os.path.join(args.output_dir, '{:03d}.zarr'.format(i))
         utils.save_image(save_fn, x)
         fn_list.append(save_fn)
         comp_list.append(comp_fn)

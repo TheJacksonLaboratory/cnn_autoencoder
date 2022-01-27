@@ -1,4 +1,4 @@
-import struct
+import zarr
 import logging
 import os
 
@@ -41,7 +41,7 @@ def decompress(args):
 
     decomp_model.eval()
 
-    decoder = utils.Decoder(256)
+    decoder = utils.Decoder()
     
     for i, fn in enumerate(args.input):
         y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))  
@@ -58,15 +58,8 @@ def decompress(args):
 
         utils.save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
 
-        with open(os.path.join(args.output_dir, '{:03d}.comp'.format(i)), mode='rb') as f:
-            # Write the size of the image:
-            size_b = f.read(16)
-            size = struct.unpack('IIII', size_b)
-
-            # Write the compressed bitstream
-            y_b = f.read()
-        
-        y_q = decoder(y_b, size)
+        y_b = zarr.open(os.path.join(args.output_dir, '{:03d}.zarr'.format(i)), mode='r')
+        y_q = decoder(y_b)
         y_q = y_q - 127.5
         logger.info('Decompressed representation (AE): {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
 
@@ -75,8 +68,6 @@ def decompress(args):
             x = 0.5*x + 0.5
 
         logger.info('Reconstruction (AE) in [{}, {}]'.format(x.min(), x.max()))
-
-        
         utils.save_image(os.path.join(args.output_dir, '{:03d}_ae_rec.{}'.format(i, img_ext)), x)
 
 

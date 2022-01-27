@@ -1,10 +1,12 @@
-import struct
 import logging
 import os
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+import zarr
+from numcodecs import Blosc
 
 import models
 
@@ -29,7 +31,7 @@ def compress(args):
     
     comp_model.eval()
 
-    encoder = utils.Encoder(256)
+    encoder = utils.Encoder()
 
     for i, fn in enumerate(args.input):
         x = utils.open_image(fn, state['args']['compression_level'])
@@ -46,16 +48,8 @@ def compress(args):
             torch.save(y_q, os.path.join(args.output_dir, '{:03d}.pth'.format(i)))
 
         y_b = encoder(y_q.cpu())
-        
-        logger.info('Encoded repressentation size {} b'.format(len(y_b)))
-
-        # save_compressed(os.path.join(args.output_dir, '{:03d}.pth'.format(i)), y_q)
-        with open(os.path.join(args.output_dir, '{:03d}.comp'.format(i)), mode='wb') as f:
-            # Write the size of the image:
-            f.write(struct.pack('IIII', *y_q.size()))
-
-            # Write the compressed bitstream
-            f.write(y_b)
+                
+        zarr.save(os.path.join(args.output_dir, '{:03d}.zarr'.format(i)), y_b)
 
 
 if __name__ == '__main__':

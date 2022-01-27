@@ -4,7 +4,7 @@ import torch
 import json
 import argparse
 
-from ._info import DATASETS, CRITERIONS, SCHEDULERS
+from ._info import DATASETS, SEG_MODELS, AE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS
 
 
 def override_config_file(parser):
@@ -34,7 +34,7 @@ def override_config_file(parser):
     return args
 
 
-def get_training_args():
+def get_training_args(task='autoencoder'):
     parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
 
@@ -47,6 +47,7 @@ def get_training_args():
     parser.add_argument('-rm', '--resume', type=str, dest='resume', help='Resume training from an existing checkpoint')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
 
@@ -54,17 +55,24 @@ def get_training_args():
     parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
     parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
-    parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=CRITERIONS[0], choices=CRITERIONS)
-    parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
-
     parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
     parser.add_argument('-nch', '--netch', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)
     parser.add_argument('-bch', '--bnch', type=int, dest='channels_bn', help='Number of channels of the compressed representation', default=16)
     parser.add_argument('-ech', '--expch', type=int, dest='channels_expansion', help='Rate of expansion of the number of channels in the analysis and synthesis tracks', default=1)
+    
     parser.add_argument('-cl', '--compl', type=int, dest='compression_level', help='Level of compression', default=3)
-    parser.add_argument('-dl', '--distl', type=float, dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
-    parser.add_argument('-eK', '--entK', type=float, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
-    parser.add_argument('-er', '--entr', type=float, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
+    if task == 'autoencoder':
+        parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=AE_CRITERIONS[0], choices=AE_CRITERIONS)
+        parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
+
+        parser.add_argument('-dl', '--distl', type=float, dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
+        parser.add_argument('-eK', '--entK', type=float, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
+        parser.add_argument('-er', '--entr', type=float, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
+
+    elif task == 'segmentation':
+        parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the segmentation evaluation', default=SEG_CRITERIONS[0], choices=SEG_CRITERIONS)
+        parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
+        parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of segmetnation model', choices=SEG_MODELS)
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
@@ -74,6 +82,7 @@ def get_training_args():
     args = override_config_file(parser)
 
     args.mode = 'training'
+    args.task = task
 
     return args
 
@@ -110,6 +119,7 @@ def get_compress_args():
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input images to compress (list of images).')
@@ -131,6 +141,7 @@ def get_decompress_args():
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
