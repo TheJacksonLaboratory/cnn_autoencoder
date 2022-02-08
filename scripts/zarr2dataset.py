@@ -16,8 +16,8 @@ def save_group(fn, z, label, dst_dir):
     z_label = group.create_group('1', overwrite=True)
 
     comp = Blosc(cname='zlib', clevel=5)
-    z_input.create_dataset('0', data=z, compressor=comp)
-    z_label.create_dataset('0', data=label)
+    z_input.create_dataset('0', data=z, dtype='u1', compressor=comp)
+    z_label.create_dataset('0', data=label, dtype='u1')
 
 
 def main(inputs_fn, labels_fn, dst_dir):

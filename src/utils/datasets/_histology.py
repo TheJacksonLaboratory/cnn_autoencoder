@@ -95,26 +95,21 @@ class Histology_zarr(Dataset):
         if c == 1:
             patch = patch[np.newaxis, ...]
 
-        print('*' * 10, 'Padding', self._offset, '*' * 10)
         # Fill the remaining offset with zeros
         if (tl_y - tl_y_offset) > 0:
             padding_top = np.zeros((c, tl_y - tl_y_offset, br_x - tl_x), dtype=patch.dtype)
-            print('Padding top', tl_y_offset, tl_y, padding_top.shape, patch.shape)
             patch = np.concatenate((padding_top, patch), axis=1)
 
         if (br_y_offset - br_y) > 0:
             padding_bottom = np.zeros((c, br_y_offset - br_y, br_x - tl_x), dtype=patch.dtype)
-            print('Padding bottom', br_y_offset, br_y, padding_bottom.shape, patch.shape)
             patch = np.concatenate((patch, padding_bottom), axis=1)
 
         if (tl_x - tl_x_offset) > 0:
             padding_left = np.zeros((c, self._patch_size + 2*self._offset, tl_x - tl_x_offset), dtype=patch.dtype)
-            print('Padding left', tl_x_offset, tl_x, padding_left.shape, patch.shape)
             patch = np.concatenate((padding_left, patch), axis=2)
 
         if (br_x_offset - br_x) > 0:
             padding_right = np.zeros((c, self._patch_size + 2*self._offset, br_x_offset - br_x), dtype=patch.dtype)
-            print('Padding right', br_x_offset, br_x, padding_right.shape, patch.shape)
             patch = np.concatenate((patch, padding_right), axis=2)
 
         return patch
@@ -204,7 +199,7 @@ def get_Histology(args, offset=0, normalize=False):
         test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
         return test_queue
 
-    hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='test', transform=prep_trans, offset=offset)
+    hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='train', transform=prep_trans, offset=offset)
     hist_valid_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans, offset=offset)
 
     train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)

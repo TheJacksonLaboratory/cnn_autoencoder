@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 import numpy as np
 import torch
@@ -24,10 +25,16 @@ def segment(args):
     if state['args']['model_type'] == 'DecoderUNet':
         seg_model = models.DecoderUNet(**state['args'])
         transform = utils.get_histo_transform(normalize=False)
+        in_patch_size = state['args']['patch_size']
+        compression_level = state['args']['compression_level']
     
     elif state['args']['model_type'] == 'UNet':
         seg_model = models.UNet(**state['args'])
         transform = utils.get_histo_transform(normalize=True)
+        in_patch_size = args.patch_size
+        compression_level = 0
+    
+    out_patch_size = args.patch_size
     
     seg_model.load_state_dict(state['model'])
 
@@ -40,39 +47,48 @@ def segment(args):
     # Conver the single zarr file into a dataset to be iterated    
     logger.info('Openning zarr file from {}'.format(args.input))
 
-    offset = 2**state['args']['compression_level']
-    histo_ds = utils.Histology_seg_zarr(root=args.input, patch_size=args.patch_size, offset=offset, transform=transform)
-    data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
-    
-    H, W = histo_ds._z_list[0].shape[-2:]
-    compressor = Blosc(cname='zlib', clevel=1, shuffle=Blosc.BITSHUFFLE)
-    
-    # Output dir is actually the absolute path to the file where to store the compressed representation
-    group = zarr.group(args.output_dir, overwrite=True)
-    seg_group = group.create_group('0', overwrite=True)
+    offset = 0 # 2**state['args']['compression_level']
 
-    z_seg = zarr.zeros((1, state['args']['classes'], H, W), chunks=(1, state['args']['classes'], state['args']['patch_size'], state['args']['patch_size']), compressor=compressor, dtype=np.float32)
-    
-    with torch.no_grad():
-        for i, (x, _) in enumerate(data_queue):
-            y = seg_model(x)
+    if not args.input[0].endswith('.zarr'):
+        # If a directory has been passed, get all zarr files inside to compress
+        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith('.zarr'), os.listdir(args.input[0]))))
+        output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_seg.zarr'), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
+    else:
+        input_fn_list = args.input
+        output_fn_list = [args.output_dir]
+        
+    for in_fn, out_fn in zip(input_fn_list, output_fn_list):
+        histo_ds = utils.Histology_seg_zarr(root=in_fn, patch_size=in_patch_size, offset=offset, transform=transform)
+        data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
+        
+        H, W = histo_ds._z_list[0].shape[-2:]
+        H *= 2**compression_level
+        W *= 2**compression_level
+        
+        compressor = Blosc(cname='zlib', clevel=1, shuffle=Blosc.BITSHUFFLE)
+        
+        # Output dir is actually the absolute path to the file where to store the compressed representation
+        group = zarr.group(out_fn, overwrite=True)
+        seg_group = group.create_group('0', overwrite=True)
 
-            y = y.detach().cpu().numpy()
-            if offset > 0:
-                y = y[..., offset:-offset, offset:-offset]
-            
-            _, tl_y, tl_x = histo_ds._compute_grid(i)
-            z_seg[..., tl_y:(tl_y+state['args']['patch_size']), tl_x:(tl_x+state['args']['patch_size'])] = y
+        z_seg = zarr.zeros((1, state['args']['classes'], H, W), chunks=(1, state['args']['classes'], out_patch_size, out_patch_size), compressor=compressor, dtype=np.float32)
+        
+        with torch.no_grad():
+            for i, (x, _) in enumerate(data_queue):
+                y = seg_model(x)
 
-    logger.info('Segmentation of file of size {} into {}'.format(histo_ds._z_list[0].shape, z_seg.shape))
-    seg_group.create_dataset('0', data=z_seg, compression=compressor)
-    
-    # Save the zarr metadata
-    store = group.store
-    for key in filter(lambda key: key.endswith(('.zarray', '.zgroup')), store.keys()):
-        json_struct = store[key].decode()
-        with open(os.path.join(args.output_dir, key), 'w') as f:
-            f.write(json_struct)
+                y = y.detach().cpu().numpy()
+                if offset > 0:
+                    y = y[..., offset:-offset, offset:-offset]
+                
+                _, tl_y, tl_x = histo_ds._compute_grid(i)
+                tl_y *= out_patch_size
+                tl_x *= out_patch_size
+
+                z_seg[..., tl_y:(tl_y+out_patch_size), tl_x:(tl_x+out_patch_size)] = y
+
+        seg_group.create_dataset('0', data=z_seg, compression=compressor)
+        logger.info('Segmentation of file of size {} into {}, saved in {}'.format(histo_ds._z_list[0].shape, z_seg.shape, out_fn))
 
 
 if __name__ == '__main__':

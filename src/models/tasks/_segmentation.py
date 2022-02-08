@@ -1,7 +1,7 @@
 import argparse
 import logging 
 
-import numpy as np
+#import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +19,7 @@ class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, normalize=False, dropout=0.5, bias=False):
         super(DownsamplingUnit, self).__init__()
 
+        self.downsample = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias)]
 
         if normalize:
@@ -36,12 +37,11 @@ class DownsamplingUnit(nn.Module):
             model.append(nn.Dropout2d(dropout))
             
         self.model = nn.Sequential(*model)
-        self.downsample = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
 
     def forward(self, x):
-        fx_brg = self.model(x)
-        fx = self.downsample(fx_brg)
-        return fx_brg, fx
+        fx = self.downsample(x)
+        fx = self.model(fx)
+        return fx
     
 
 class UpsamplingUnit(nn.Module):
@@ -82,13 +82,11 @@ class Analyzer(nn.Module):
         super(Analyzer, self).__init__()        
 
         # Initial color convertion
-        self.embedding = nn.Conv2d(channels_org, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias)
+        self.embedding = nn.Sequential(nn.Conv2d(channels_org, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias),
+                                       nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias),
+                                       nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias))
 
-        down_track = [DownsamplingUnit(channels_in=channels_net, channels_out=channels_net, 
-                                     groups=groups, normalize=normalize, dropout=dropout, bias=bias)
-                     ]
-
-        down_track += [DownsamplingUnit(channels_in=channels_net * channels_expansion ** i, channels_out=channels_net * channels_expansion ** (i+1), 
+        down_track = [DownsamplingUnit(channels_in=channels_net * channels_expansion ** i, channels_out=channels_net * channels_expansion ** (i+1), 
                                      groups=groups, normalize=normalize, dropout=dropout, bias=bias)
                         for i in range(compression_level)
                       ]
@@ -103,9 +101,9 @@ class Analyzer(nn.Module):
 
         # Store the output of each layer as bridge connection to the synthesis track
         fx_brg_list = []
-        for i, layer in enumerate(self.analysis_track):            
-            fx_brg, fx = layer(fx)
-            fx_brg_list.append(fx_brg)
+        for i, layer in enumerate(self.analysis_track):
+            fx_brg_list.append(fx)
+            fx = layer(fx)
             
         return fx, fx_brg_list
 
@@ -116,12 +114,12 @@ class Synthesizer(nn.Module):
         
         input_channels_mult = 2 if bridge else 1
         
-        self.embedding = nn.ConvTranspose2d(channels_bn, channels_net * channels_expansion**compression_level, kernel_size=2, stride=2, padding=0, groups=channels_bn if groups else 1, bias=bias)
+        self.embedding = nn.ConvTranspose2d(channels_bn, channels_net * channels_expansion**(compression_level-1), kernel_size=2, stride=2, padding=0, groups=channels_bn if groups else 1, bias=bias)
 
         # Initial deconvolution in the synthesis track
         up_track = [UpsamplingUnit(channels_in=input_channels_mult * channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
                                      groups=groups, normalize=normalize, dropout=dropout, bias=bias)
-                    for i in reversed(range(compression_level))]
+                    for i in reversed(range(compression_level-1))]
         
         self.synthesis_track = nn.ModuleList(up_track)
 
@@ -134,6 +132,7 @@ class Synthesizer(nn.Module):
 
     def forward(self, x, x_brg):
         fx = self.embedding(x)
+
         for i, (layer, x_k) in enumerate(zip(self.synthesis_track, reversed(x_brg))):
             fx = torch.cat((fx, x_k), dim=1)
             fx = layer(fx)
@@ -192,7 +191,6 @@ class UNet(nn.Module):
         return y
 
 
-
 class DecoderUNet(nn.Module):
     """ Synthesis track from the U-Net model.
     """
@@ -204,29 +202,29 @@ class DecoderUNet(nn.Module):
 
     def forward(self, x):
         b, c, h, w = x.size()
-        x_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level+1, 0, -1)]
-        
+        x_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level, 0, -1)]        
         y = self.synthesis(x, x_brg)
         return y
     
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Test implementation of segmentation models')
-    parser.add_argument('-m', '--model', type=str, dest='model_type', help='Type of model to test', choices=['UNet', 'DecoderUNet'])
+    parser.add_argument('-m', '--model', type=str, dest='model_type', help='Type of model to test', choices=['UNet', 'DecoderUNet'], default='UNet')
     parser.add_argument('-ce', '--channels-expansion', type=int, dest='channels_expansion', help='Multiplier of channels expansion in the analysis track', default=1)
-    parser.add_argument('-cbn', '--channels-bottleneck', type=int, dest='channels_bn', help='Channels in the bottleneck', default=1024)
-    parser.add_argument('-cn', '--channels-net', type=int, dest='channels_net', help='Channels in the first layer of the network', default=64)
+    parser.add_argument('-cbn', '--channels-bottleneck', type=int, dest='channels_bn', help='Channels in the bottleneck', default=48)
+    parser.add_argument('-cn', '--channels-net', type=int, dest='channels_net', help='Channels in the first layer of the network', default=8)
+    parser.add_argument('-cl', '--compression', type=int, dest='compression_level', help='Compression level at the deepest layer', default=3)
     
     args = parser.parse_args()
     
     models = {'UNet': UNet, 'DecoderUNet':DecoderUNet}
     
-    net = models[args.model_type](compression_level=3, channels_net=args.channels_net, channels_bn=args.channels_bn, channels_expansion=args.channels_expansion)
+    net = models[args.model_type](compression_level=args.compression_level, channels_net=args.channels_net, channels_bn=args.channels_bn, channels_expansion=args.channels_expansion)
     
     if args.model_type == 'UNet':
         x = torch.rand([10, 3, 64, 64])
     elif args.model_type == 'DecoderUNet':
-        x = torch.rand([10, args.channels_bn, 4, 4])
+        x = torch.rand([10, args.channels_bn, 64//2**args.compression_level, 64//2**args.compression_level])
     
     y = net(x)
 

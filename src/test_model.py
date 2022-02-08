@@ -14,6 +14,7 @@ DATASETS = ['MNIST', 'ImageNet', 'Histology']
 def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
+    args.task = 'autoencoder'
     data_queue = utils.get_data(args, normalize=False)
 
     if args.dataset == 'MNIST':
@@ -35,7 +36,7 @@ def main(args):
         logger.info('Input image {}, of size: {}'.format(i, x.size()))
 
         save_fn = os.path.join(args.output_dir, '{:03d}.{}'.format(i, img_ext))
-        comp_fn = os.path.join(args.output_dir, '{:03d}_comp.zarr'.format(i))
+        comp_fn = os.path.join(args.output_dir, '{:03d}.zarr'.format(i))
         utils.save_image(save_fn, x)
         fn_list.append(save_fn)
         comp_list.append(comp_fn)
@@ -85,7 +86,6 @@ if __name__ == '__main__':
     args.seed = -1
     args.batch_size = 1
     args.mode = 'models_testing'
-    args.task = 'autoencoder'
 
     utils.setup_logger(args)
 

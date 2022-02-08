@@ -40,35 +40,18 @@ def decompress(args):
         decomp_model.cuda()
 
     decomp_model.eval()
-
-    decoder = utils.Decoder()
     
-    for i, fn in enumerate(args.input):
-        y_q = torch.load(os.path.join(args.output_dir, '{:03d}.pth'.format(i)))  
-        y_q = y_q - 127.5      
-        logger.info('Decompressed representation: {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
-
-        y_q = y_q.float()
+    for i, fn in enumerate(args.input):        
+        y_q = zarr.open(fn, 'r')
+        y_q = torch.from_numpy(y_q['0/0'][:].astype(np.float32))
+        y_q = y_q - 127.5
         
         with torch.no_grad():
             x = decomp_model(y_q)
             x = 0.5*x + 0.5
         
         logger.info('Reconstruction in [{}, {}]'.format(x.min(), x.max()))
-
         utils.save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
-
-        y_b = zarr.open(os.path.join(args.output_dir, '{:03d}.zarr'.format(i)), mode='r')
-        y_q = decoder(y_b)
-        y_q = y_q - 127.5
-        logger.info('Decompressed representation (AE): {} in [{}, {}]'.format(y_q.size(), y_q.min(), y_q.max()))
-
-        with torch.no_grad():
-            x = decomp_model(y_q)
-            x = 0.5*x + 0.5
-
-        logger.info('Reconstruction (AE) in [{}, {}]'.format(x.min(), x.max()))
-        utils.save_image(os.path.join(args.output_dir, '{:03d}_ae_rec.{}'.format(i, img_ext)), x)
 
 
 if __name__ == '__main__':

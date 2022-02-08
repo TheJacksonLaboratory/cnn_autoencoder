@@ -129,7 +129,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 stopping_criteria[1].update(iteration=step, metric=extra_info.item())
 
             # Log the training performance every 10% of the training set
-            if i % max(1, int(0.1 * len(train_data))) == 0:
+            if i % max(1, int(0.01 * len(train_data))) == 0:
                 logger.debug('\t[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(i, len(train_data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
 
             # Checkpoint step

@@ -80,6 +80,7 @@ if __name__ == '__main__':
     args.seed = -1
     args.batch_size = 1
     args.mode = 'models_testing'
+    args.task = 'segmentation'
 
     utils.setup_logger(args)
 
