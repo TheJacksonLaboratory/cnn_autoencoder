@@ -20,13 +20,13 @@ class DownsamplingUnit(nn.Module):
         super(DownsamplingUnit, self).__init__()
 
         self.downsample = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias)]
+        model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias, padding_mode='reflect')]
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
         model.append(nn.LeakyReLU(inplace=False))
-        model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias))
+        model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias, padding_mode='reflect'))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -48,7 +48,7 @@ class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, normalize=False, dropout=0.5, bias=True):
         super(UpsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_out, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias)]
+        model = [nn.Conv2d(channels_in, channels_out, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias, padding_mode='reflect')]
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -58,7 +58,7 @@ class UpsamplingUnit(nn.Module):
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
         
-        model.append(nn.Conv2d(channels_out, channels_out, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias))
+        model.append(nn.Conv2d(channels_out, channels_out, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_in if groups else 1, bias=bias, padding_mode='reflect'))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -82,9 +82,9 @@ class Analyzer(nn.Module):
         super(Analyzer, self).__init__()        
 
         # Initial color convertion
-        self.embedding = nn.Sequential(nn.Conv2d(channels_org, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias),
-                                       nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias),
-                                       nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias))
+        self.embedding = nn.Sequential(nn.Conv2d(channels_org, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias, padding_mode='reflect'),
+                                       nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias, padding_mode='reflect'),
+                                       nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1, padding=1, dilation=1, groups=channels_org if groups else 1, bias=bias, padding_mode='reflect'))
 
         down_track = [DownsamplingUnit(channels_in=channels_net * channels_expansion ** i, channels_out=channels_net * channels_expansion ** (i+1), 
                                      groups=groups, normalize=normalize, dropout=dropout, bias=bias)
@@ -124,8 +124,8 @@ class Synthesizer(nn.Module):
         self.synthesis_track = nn.ModuleList(up_track)
 
         # Final class prediction
-        self.predict = nn.Sequential(nn.Conv2d(input_channels_mult * channels_net, channels_net, 3, 1, 1, 1, classes if groups else 1, bias=bias),
-                                     nn.Conv2d(channels_net, channels_net, 3, 1, 1, 1, classes if groups else 1, bias=bias),
+        self.predict = nn.Sequential(nn.Conv2d(input_channels_mult * channels_net, channels_net, 3, 1, 1, 1, classes if groups else 1, bias=bias, padding_mode='reflect'),
+                                     nn.Conv2d(channels_net, channels_net, 3, 1, 1, 1, classes if groups else 1, bias=bias, padding_mode='reflect'),
                                      nn.Conv2d(channels_net, classes, 1, 1, 0, 1, classes if groups else 1, bias=bias))
 
         self.apply(initialize_weights)
@@ -146,7 +146,7 @@ class BottleNeck(nn.Module):
     def __init__(self, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.5, bias=False, **kwargs):
         super(BottleNeck, self).__init__()
         
-        bottleneck = [nn.Conv2d(channels_net * channels_expansion ** compression_level, channels_bn, 3, 1, 1, 1, (channels_net * channels_expansion ** compression_level) if groups else 1, bias=bias)]
+        bottleneck = [nn.Conv2d(channels_net * channels_expansion ** compression_level, channels_bn, 3, 1, 1, 1, (channels_net * channels_expansion ** compression_level) if groups else 1, bias=bias, padding_mode='reflect')]
 
         if normalize:
             bottleneck.append(nn.BatchNorm2d(channels_bn, affine=True))
@@ -156,7 +156,7 @@ class BottleNeck(nn.Module):
         if dropout > 0.0:
             bottleneck.append(nn.Dropout2d(dropout))
         
-        bottleneck.append(nn.Conv2d(channels_bn, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
+        bottleneck.append(nn.Conv2d(channels_bn, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect'))
 
         if normalize:
             bottleneck.append(nn.BatchNorm2d(channels_bn, affine=True))

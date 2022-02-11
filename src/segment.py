@@ -58,7 +58,7 @@ def segment(args):
         output_fn_list = [args.output_dir]
         
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        histo_ds = utils.Histology_seg_zarr(root=in_fn, patch_size=in_patch_size, offset=offset, transform=transform)
+        histo_ds = utils.Histology_zarr(root=in_fn, patch_size=in_patch_size, offset=offset, transform=transform)
         data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
         
         H, W = histo_ds._z_list[0].shape[-2:]

@@ -14,7 +14,7 @@ DATASETS = ['MNIST', 'ImageNet', 'Histology']
 def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
-    data_queue = utils.get_data(args, normalize=False)
+    data_queue = utils.get_data(args, normalize=True)
 
     if args.dataset == 'MNIST':
         img_ext = 'pgm'

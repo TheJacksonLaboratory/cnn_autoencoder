@@ -12,18 +12,17 @@ class Histology_zarr(Dataset):
         The structure of the zarr file is considered fixed. For this reason, only the component '0/0' is used.
         From that component, temporal and layer dimensions are discarded, keeping only channels, and spatial dimension.
     """
-    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None):
-        # Get all the filenames in the root folder        
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, **kwargs):
+        # Get all the filenames in the root folder
         if isinstance(root, list):
             self._filenames = root
-            
+        
         elif root.endswith('.zarr'):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
         
-        else:
+        else:            
             self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if '.zarr' in fn]))
-            
             if mode == 'train':
                 self._filenames = self._filenames[:int(0.7 * len(self._filenames))]
             elif mode == 'val':
@@ -35,7 +34,7 @@ class Histology_zarr(Dataset):
         self._dataset_size = dataset_size
         self._transform = transform
         self._offset = offset
-
+        
         self._n_files = len(self._filenames)
 
         # Open the tile downscaled to 'level'      
@@ -44,12 +43,12 @@ class Histology_zarr(Dataset):
         # Get the lower bound of patches that can be obtained from all zarr files
         min_H = min([z.shape[-2] for z in self._z_list])
         min_W = min([z.shape[-1] for z in self._z_list])
-
-        self._min_H = patch_size * (min_H // patch_size)
-        self._min_W = patch_size * (min_W // patch_size)
-
+        
+        self._min_H = self._patch_size * (min_H // self._patch_size)
+        self._min_W = self._patch_size * (min_W // self._patch_size)
+        
         if dataset_size < 0:
-            self._dataset_size = int(np.ceil(self._min_H * self._min_W / patch_size**2)) * self._n_files
+            self._dataset_size = int(np.ceil(self._min_H * self._min_W / self._patch_size**2)) * self._n_files
         else:
             self._dataset_size = dataset_size
 
@@ -59,8 +58,9 @@ class Histology_zarr(Dataset):
     def _compute_grid(self, index):
         """ Compute the coordinate on a grid of indices corresponding to 'index'.
         The indices are in the form of [i, tl_x, tl_y], where 'i' is the file index.
-        tl_x and tl_y are the top left coordinates of the patch in the original image.
+        tl_x and tl_y are the top left coordinates of the patched image.
         """
+                
         # This allows to generate virtually infinite data from bootstrapping the same data
         index %= (self._n_files * self._min_H * self._min_W) // self._patch_size**2
 
@@ -72,19 +72,24 @@ class Histology_zarr(Dataset):
         tl_y = index // (self._min_W // self._patch_size)
         tl_x = index % (self._min_W // self._patch_size)
 
-        return i, tl_y * self._patch_size, tl_x * self._patch_size
+        return i, tl_y, tl_x
 
-    def _get_patch(self, i, tl_y, tl_x, z_list):        
+    def _get_patch(self, i, tl_y, tl_x, patch_size, z_list, offset_patch=True):
+        
+        tl_y *= patch_size
+        tl_x *= patch_size
+        
         # TODO extract this information from the zarr metadata
         c_axis = 1 if len(z_list[i].shape) > 3 else 0
         c = z_list[i].shape[c_axis]
         H, W = z_list[i].shape[-2:]
 
+        offset = self._offset if offset_patch else 0
         tl_y_offset = tl_y - self._offset
         tl_x_offset = tl_x - self._offset
-        br_y_offset = tl_y + self._patch_size + self._offset
-        br_x_offset = tl_x + self._patch_size + self._offset
-            
+        br_y_offset = tl_y + patch_size + self._offset
+        br_x_offset = tl_x + patch_size + self._offset
+        
         tl_y = max(tl_y_offset, 0)
         tl_x = max(tl_x_offset, 0)
         br_y = min(br_y_offset, H)
@@ -95,29 +100,16 @@ class Histology_zarr(Dataset):
         if c == 1:
             patch = patch[np.newaxis, ...]
 
-        # Fill the remaining offset with zeros
-        if (tl_y - tl_y_offset) > 0:
-            padding_top = np.zeros((c, tl_y - tl_y_offset, br_x - tl_x), dtype=patch.dtype)
-            patch = np.concatenate((padding_top, patch), axis=1)
-
-        if (br_y_offset - br_y) > 0:
-            padding_bottom = np.zeros((c, br_y_offset - br_y, br_x - tl_x), dtype=patch.dtype)
-            patch = np.concatenate((patch, padding_bottom), axis=1)
-
-        if (tl_x - tl_x_offset) > 0:
-            padding_left = np.zeros((c, self._patch_size + 2*self._offset, tl_x - tl_x_offset), dtype=patch.dtype)
-            patch = np.concatenate((padding_left, patch), axis=2)
-
-        if (br_x_offset - br_x) > 0:
-            padding_right = np.zeros((c, self._patch_size + 2*self._offset, br_x_offset - br_x), dtype=patch.dtype)
-            patch = np.concatenate((patch, padding_right), axis=2)
+        # Pad the patch using the reflect mode
+        if offset_patch:
+            patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
 
         return patch
 
     def __getitem__(self, index):        
         i, tl_y, tl_x = self._compute_grid(index)
 
-        patch = self._get_patch(i, tl_y, tl_x, self._z_list).squeeze()
+        patch = self._get_patch(i, tl_y, tl_x, self._patch_size, self._z_list).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
@@ -131,21 +123,24 @@ class Histology_seg_zarr(Histology_zarr):
         The structure of the zarr file is considered fixed. For this reason, only the component '0/0' is used.
         The labels are extracted from group '1'.
     """
-    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None):
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, compression_level=0, compressed_input=False):
         super(Histology_seg_zarr, self).__init__(root, patch_size, dataset_size, level, mode, offset, transform)
         
         # Open the labels from group 1
         self._lab_list = [zarr.open(fn, mode='r')['1/0'] for fn in self._filenames]
-    
+        self._compression_level = compression_level
+        self._compressed_input = compressed_input
+        
     def __getitem__(self, index):
         i, tl_y, tl_x = self._compute_grid(index)
 
-        patch = self._get_patch(i, tl_y, tl_x, self._z_list).squeeze()
+        patch = self._get_patch(i, tl_y, tl_x, self._patch_size, self._z_list).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
-                
-        target = self._get_patch(i, tl_y, tl_x, self._lab_list)
+        
+        patch_size = self._patch_size * ((2**self._compression_level) if self._compressed_input else 1)
+        target = self._get_patch(i, tl_y, tl_x, patch_size, self._lab_list, offset_patch=False).astype(np.float32)
 
         # Returns anything as label, to prevent an error during training
         return patch, target
@@ -180,6 +175,16 @@ def get_Histology(args, offset=0, normalize=False):
     else:
         level = 0
 
+    if not hasattr(args, 'compressed_input'):
+        compressed_input = False
+    else:
+        compressed_input = args.compressed_input
+    
+    if not hasattr(args, 'compression_level'):
+        compression_level = 0
+    else:
+        compression_level = args.compression_level
+    
     if args.task == 'autoencoder':
         prep_trans = get_histo_transform(normalize=normalize)
         histo_dataset = Histology_zarr
@@ -189,18 +194,21 @@ def get_Histology(args, offset=0, normalize=False):
         
     elif args.task == 'segmentation':
         prep_trans = get_histo_transform(normalize=normalize)
-        histo_dataset = Histology_seg_zarr
+        if args.mode == 'training':
+            histo_dataset = Histology_seg_zarr
+        else:
+            histo_dataset = Histology_zarr
         TRAIN_DATASIZE = -1
         VALID_DATASIZE = -1
         TEST_DATASIZE = -1
             
     if args.mode != 'training':
-        hist_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans, offset=offset)
+        hist_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
         test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
         return test_queue
 
-    hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='train', transform=prep_trans, offset=offset)
-    hist_valid_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans, offset=offset)
+    hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
+    hist_valid_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
     train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
     valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
@@ -223,6 +231,7 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--task', dest='task', help='Task for what the data is used', choices=['autoencoder', 'segmentation'])
     parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test'])
     parser.add_argument('-o', '--offset', type=int, dest='offset', help='Offset added to the patches', default=0)
+    parser.add_argument('-cl', '--comp-level', type=int, dest='compression_level', help='Compression level of the input', default=0)
     
     args = parser.parse_args()
 
@@ -231,7 +240,8 @@ if __name__ == '__main__':
     else:
         histo_dataset = Histology_seg_zarr
 
-    ds = histo_dataset(args.root_dir, args.patch_size, mode=args.mode, dataset_size=-1, level=0, offset=args.offset)
+    compressed_input = args.compression_level > 0
+    ds = histo_dataset(args.root_dir, args.patch_size, mode=args.mode, dataset_size=-1, level=0, offset=args.offset, compression_level=args.compression_level, compressed_input=compressed_input)
 
     print('Dataset size:', len(ds))
 
@@ -240,6 +250,7 @@ if __name__ == '__main__':
     t_ini = perf_counter()
 
     for i, (x, t) in enumerate(dl):
+        x = x.cuda()
         print('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size() if isinstance(t, torch.torch.Tensor) else None))
         if i >= args.n_batches:
             break

@@ -88,13 +88,13 @@ class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, normalize=False, dropout=0.0, bias=False):
         super(DownsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias)]
+        model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias, padding_mode='reflect')]
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
         model.append(nn.LeakyReLU(inplace=False))
-        model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias))
+        model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias, padding_mode='reflect'))
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -115,7 +115,7 @@ class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, normalize=False, dropout=0.0, bias=True):
         super(UpsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias)]
+        model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias, padding_mode='reflect')]
 
         if normalize:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
@@ -143,14 +143,14 @@ class Analyzer(nn.Module):
         super(Analyzer, self).__init__()
 
         # Initial color convertion
-        down_track = [nn.Conv2d(channels_org, channels_net, 3, 1, 1, 1, channels_org if groups else 1, bias=bias)]
+        down_track = [nn.Conv2d(channels_org, channels_net, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect')]
 
         down_track += [DownsamplingUnit(channels_in=channels_net * channels_expansion ** i, channels_out=channels_net * channels_expansion ** (i+1), 
                                      groups=groups, normalize=normalize, dropout=dropout, bias=bias)
                     for i in range(compression_level)]
 
         # Final convolution in the analysis track
-        down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias))
+        down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect'))
         down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5, inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
@@ -171,13 +171,13 @@ class Synthesizer(nn.Module):
         super(Synthesizer, self).__init__()
 
         # Initial deconvolution in the synthesis track
-        up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias)]
+        up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect')]
         up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
                                      groups=groups, normalize=normalize, dropout=dropout, bias=bias)
                     for i in reversed(range(compression_level))]
         
         # Final color reconvertion
-        up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias))
+        up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect'))
 
         self.synthesis_track = nn.Sequential(*up_track)
 
@@ -203,8 +203,8 @@ class AutoEncoder(nn.Module):
             return self.synthesis(x)
         
         y_q, y = self.analysis(x)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
-        p_y = torch.prod(p_y, dim=1) + 1e-10
+        p_y = self.fact_entropy(y_q.detach()) # - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = torch.mean(p_y, dim=1)
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
