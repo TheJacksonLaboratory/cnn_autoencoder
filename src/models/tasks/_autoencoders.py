@@ -14,6 +14,29 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.0)
 
 
+class RandMasking(nn.Module):
+    def __init__(self, n_masks=1, masks_size=64):
+        super(RandMasking, self).__init__()
+
+        self._n_masks = n_masks
+        self._masks_size = masks_size
+
+    def forward(self, x):        
+        if not self.training:
+            return x
+        
+        b, _, h, w = x.size()
+
+        mask_w = w // self._masks_size
+        mask_h = h // self._masks_size
+        m = torch.ones((b, mask_h*mask_w), requires_grad=False)
+        m_indices = torch.randint(0, mask_w*mask_h, (b, self._n_masks))
+        m[(torch.arange(b).view(-1, 1).repeat(1, self._n_masks), m_indices)] = 0
+        m = F.interpolate(m.view(b, 1, mask_h, mask_w), size=(h, w), mode='nearest')
+
+        return x * m
+
+
 class Quantizer(nn.Module):
     """ Quantizer implements the additive uniform noise quantization method 
         from Balle et al. END-TO-END OPTIMIZED IMAGE COMPRESSION. ICLR 2017
@@ -208,3 +231,68 @@ class AutoEncoder(nn.Module):
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
+
+
+class MaskedAutoEncoder(nn.Module):
+    """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
+    """
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.0, bias=False, K=4, r=3, n_masks=1, masks_size=64, **kwargs):
+        super(MaskedAutoEncoder, self).__init__()
+
+        self.masking = RandMasking(n_masks, masks_size)
+        self.analysis = Analyzer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
+        self.synthesis = Synthesizer(channels_org, channels_net, channels_bn, compression_level, channels_expansion, groups, normalize, dropout, bias)
+        self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
+
+    def forward(self, x, synthesize_only=False):        
+        x = self.masking(x)
+
+        if synthesize_only:
+            return self.synthesis(x)
+        
+        y_q, y = self.analysis(x)
+        p_y = self.fact_entropy(y_q.detach()) # - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = torch.mean(p_y, dim=1)
+        x_r = self.synthesis(y_q)
+
+        return x_r, y, p_y
+
+
+if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    from torchvision.transforms import ToTensor, Normalize, Compose
+    
+    print('Testing random crop masking')
+
+    im = Image.open(r'C:\Users\cervaf\Documents\Datasets\Kodak\kodim21.png')
+    transform = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+    x = transform(im).unsqueeze(0)
+
+    checkpoint = torch.load(r'C:\Users\cervaf\Documents\Logging\tested\autoencoder\best_ver0.5.4_74691.pth', map_location='cpu')
+
+    masker = MaskedAutoEncoder(n_masks=20, masks_size=64, **checkpoint['args'])
+    masker.analysis.load_state_dict(checkpoint['encoder'])
+    masker.synthesis.load_state_dict(checkpoint['decoder'])
+    masker.fact_entropy.load_state_dict(checkpoint['fact_ent'])
+
+    x_m, _, _ = masker(x)
+
+    print('Masked tensor', x_m.size())
+
+    plt.subplot(2, 2, 1)
+    plt.imshow(x[0].permute(1, 2, 0)*0.5 + 0.5)
+    plt.subplot(2, 2, 2)
+    plt.imshow(x_m[0].detach().permute(1, 2, 0)*0.5 + 0.5)
+
+    masker.eval()
+    x_m, _, _ = masker(x)
+
+    print('Masked tensor', x_m.size())
+
+    plt.subplot(2, 2, 3)
+    plt.imshow(x[0].permute(1, 2, 0)*0.5 + 0.5)
+    plt.subplot(2, 2, 4)
+    plt.imshow(x_m[0].detach().permute(1, 2, 0)*0.5 + 0.5)
+    plt.show()

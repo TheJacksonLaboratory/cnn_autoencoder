@@ -4,7 +4,7 @@ import torch
 import json
 import argparse
 
-from ._info import DATASETS, SEG_MODELS, AE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS
+from ._info import DATASETS, SEG_MODELS, CAE_MODELS, CAE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS
 
 
 def override_config_file(parser):
@@ -63,17 +63,22 @@ def get_training_args(task='autoencoder'):
     
     parser.add_argument('-cl', '--compl', type=int, dest='compression_level', help='Level of compression', default=3)
     if task == 'autoencoder':
-        parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=AE_CRITERIONS[0], choices=AE_CRITERIONS)
+        parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=CAE_CRITERIONS[0], choices=CAE_CRITERIONS)
         parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
 
         parser.add_argument('-dl', '--distl', type=float, dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
         parser.add_argument('-eK', '--entK', type=float, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
         parser.add_argument('-er', '--entr', type=float, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
 
+        parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=CAE_MODELS)
+
+        parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
+        parser.add_argument('-ms', '--masks-size', type=int, dest='masks_size', help='Standard size of the patched masks for the masked autoencoder training', default=4)
+        
     elif task == 'segmentation':
         parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the segmentation evaluation', default=SEG_CRITERIONS[0], choices=SEG_CRITERIONS)
         parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
-        parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of segmetnation model', choices=SEG_MODELS)
+        parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of segmentation model', choices=SEG_MODELS)
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
