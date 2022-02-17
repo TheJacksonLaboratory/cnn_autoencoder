@@ -105,6 +105,7 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
     )
     
     if args.task == 'autoencoder':
+        training_state['embedding'] = model.module.embedding.state_dict()
         training_state['encoder'] = model.module.analysis.state_dict()
         training_state['decoder'] = model.module.synthesis.state_dict()
         training_state['fact_ent'] = model.module.fact_entropy.state_dict()

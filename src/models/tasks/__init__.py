@@ -1,2 +1,2 @@
-from ._autoencoders import Analyzer, Synthesizer, FactorizedEntropy, AutoEncoder
-from ._segmentation import UNet, DecoderUNet
+from ._autoencoders import ColorEmbedding, Analyzer, Synthesizer, FactorizedEntropy, AutoEncoder, MaskedAutoEncoder
+from ._segmentation import UNet, UNetNoBridge, DecoderUNet

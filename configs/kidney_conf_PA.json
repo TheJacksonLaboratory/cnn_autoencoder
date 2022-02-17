@@ -1,15 +1,15 @@
 {
     "seed": 88741,
-    "batch_size": 16,
-    "val_batch_size": 64,
+    "batch_size": 4,
+    "val_batch_size": 8,
     "print_log": false,
     "steps": 5e5,
     "checkpoint_steps": 5e3,
-    "log_dir": "/home/cervaf/NN_imaging/logs", 
-    "data_dir": "/mnt/kidney",
+    "log_dir": "C:\\Users\\cervaf\\Documents\\Logging\\autoencoder_training", 
+    "data_dir": "C:\\Users\\cervaf\\Documents\\Datasets\\Kidney\\Labeled_examples",
     "dataset": "Histology",
     "download_data": false,
-    "workers": 8,
+    "workers": 4,
     "channels_org": 3,
     "learning_rate": 1e-4,
     "scheduler": "None",
@@ -18,5 +18,6 @@
     "compression_level": 3,
     "distorsion_lambda":0.01,
     "criterion": "RD_PA",
-    "energy_limit": 0.7
+    "energy_limit": 0.7,
+    "model_type": "AutoEncoder"
 }

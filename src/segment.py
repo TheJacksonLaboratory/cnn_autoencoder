@@ -14,6 +14,7 @@ import models
 
 import utils
 
+seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
 
 def segment(args):
     """ Segment the objects in the images into a set of learned classes.    
@@ -22,22 +23,21 @@ def segment(args):
 
     state = utils.load_state(args)
     
+    out_patch_size = args.patch_size
+
     if state['args']['model_type'] == 'DecoderUNet':
-        seg_model = models.DecoderUNet(**state['args'])
         transform = utils.get_histo_transform(normalize=False)
         in_patch_size = state['args']['patch_size']
         compression_level = state['args']['compression_level']
     
-    elif state['args']['model_type'] == 'UNet':
-        seg_model = models.UNet(**state['args'])
+    elif state['args']['model_type'] in ['UNet', 'UNetNoBridge']:
         transform = utils.get_histo_transform(normalize=True)
         in_patch_size = args.patch_size
         compression_level = 0
     
-    out_patch_size = args.patch_size
-    
+    seg_model = seg_model_types[state['args']['model_type']](**state['args'])
     seg_model.load_state_dict(state['model'])
-
+    
     seg_model = nn.DataParallel(seg_model)
     if torch.cuda.is_available():
         seg_model.cuda()
@@ -47,7 +47,7 @@ def segment(args):
     # Conver the single zarr file into a dataset to be iterated    
     logger.info('Openning zarr file from {}'.format(args.input))
 
-    offset = 0 # 2**state['args']['compression_level']
+    offset = 2**state['args']['compression_level']
 
     if not args.input[0].endswith('.zarr'):
         # If a directory has been passed, get all zarr files inside to compress

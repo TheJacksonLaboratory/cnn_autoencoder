@@ -23,21 +23,27 @@ def compress(args):
 
     state = utils.load_state(args)
 
+    embedding = models.ColorEmbedding(**state['args'])
     comp_model = models.Analyzer(**state['args'])
 
+    embedding.load_state_dict(state['embedding'])
     comp_model.load_state_dict(state['encoder'])
 
+    embedding = nn.DataParallel(embedding)
     comp_model = nn.DataParallel(comp_model)
     if torch.cuda.is_available():
+        embedding.cuda()
         comp_model.cuda()
     
+    embedding.eval()
     comp_model.eval()
 
     for i, fn in enumerate(args.input):
         x = utils.open_image(fn, state['args']['compression_level'])
 
         with torch.no_grad():
-            y_q, _ = comp_model(x)
+            fx = embedding(x)
+            y_q, _ = comp_model(fx)
             y_q = y_q + 127.5
             y_q = y_q.round().to(torch.uint8)
 
