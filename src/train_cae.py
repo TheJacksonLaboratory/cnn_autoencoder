@@ -266,7 +266,7 @@ def setup_optim(cae_model, scheduler_type='None'):
     if scheduler_type == 'None':
         scheduler = None
     elif scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min')
+        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min', patience=2)
     else:
         raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
 
