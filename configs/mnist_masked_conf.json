@@ -1,9 +1,9 @@
 {
-    "batch_size": 128,
-    "val_batch_size": 256,
+    "batch_size": 64,
+    "val_batch_size": 128,
     "print_log": false,
     "steps": 1e4,
-    "checkpoint_steps": 5e2,
+    "checkpoint_steps": 1e2,
     "log_dir": "C:\\Users\\cervaf\\Documents\\Logging\\autoencoder_training", 
     "data_dir": "C:\\Users\\cervaf\\Documents\\Datasets",
     "dataset": "MNIST",

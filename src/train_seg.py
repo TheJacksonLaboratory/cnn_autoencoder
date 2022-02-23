@@ -1,4 +1,5 @@
 import logging
+from functools import partial
 
 import numpy as np
 import torch
@@ -6,13 +7,14 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import EarlyStoppingPatience, UNet, DecoderUNet
+from models import EarlyStoppingPatience, UNet, UNetNoBridge, DecoderUNet
 from utils import checkpoint, get_training_args, setup_logger, get_data
 
 from functools import reduce
 from inspect import signature
 
-scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
+scheduler_options = {"ReduceOnPlateau": partial(optim.lr_scheduler.ReduceLROnPlateau, mode='min', patience=2)}
+seg_model_types = {"UNetNoBridge": UNetNoBridge, "UNet": UNet, "DecoderUNet": DecoderUNet}
 
 
 def valid(seg_model, data, criterion, args):
@@ -181,10 +183,14 @@ def setup_network(args):
         The segmentation mode implemented by a convolutional neural network
     """
 
-    if args.model_type == 'DecoderUNet':
-        seg_model = DecoderUNet(**args.__dict__)
-    elif args.model_type == 'UNet':
-        seg_model = UNet(**args.__dict__)
+    seg_model_class = seg_model_types.get(args.model_type, None)
+    if seg_model_class is None:
+        raise ValueError('Model type %s not supported' % args.model_type)
+    
+    seg_model = seg_model_class(**args.__dict__)
+    
+    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
+    args.compressed_input = 'Decoder' in args.model_type
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
     seg_model = nn.DataParallel(seg_model)
@@ -254,7 +260,7 @@ def setup_optim(seg_model, scheduler_type='None'):
     if scheduler_type == 'None':
         scheduler = None
     elif scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min')
+        scheduler = scheduler_options[scheduler_type](optimizer=optimizer)
     else:
         raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
 

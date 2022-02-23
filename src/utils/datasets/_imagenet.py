@@ -6,13 +6,27 @@ import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
 
 
+class AddGaussianNoise(object):
+    def __init__(self, mean=0., std=1.):
+        self.std = std
+        self.mean = mean
+        
+    def __call__(self, tensor):
+        return tensor + torch.randn(tensor.size()) * self.std + self.mean
+    
+    def __repr__(self):
+        return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
+
+
 def get_ImageNet(args, normalize=True):
     prep_trans_list = [
          transforms.PILToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
-
+    
+        
     if args.mode == 'training':
+        prep_trans_list.append(AddGaussianNoise(0., 0.1))
         prep_trans_list.append(transforms.RandomCrop((128, 128), pad_if_needed=True))
 
     if normalize:

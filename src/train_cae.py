@@ -15,7 +15,7 @@ from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-
+model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
 
 def valid(cae_model, data, criterion, args):
     """ Validation step.
@@ -190,14 +190,7 @@ def setup_network(args):
     """
 
     # The autoencoder model contains all the modules
-    if args.model_type == 'MaskedAutoEncoder':
-        cae_model_class = MaskedAutoEncoder
-    elif args.model_type == 'AutoEncoder':
-        cae_model_class = AutoEncoder
-    else:
-        raise ValueError('Model type %s not supported' % args.model_type)
-    
-    cae_model = cae_model_class(**args.__dict__)
+    cae_model = model_options[args.model_type](**args.__dict__)
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
     cae_model = nn.DataParallel(cae_model)
@@ -275,7 +268,7 @@ def setup_optim(cae_model, scheduler_type='None'):
     if scheduler_type == 'None':
         scheduler = None
     elif scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min')
+        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min', patience=2)
     else:
         raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
 
@@ -304,6 +297,7 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
     else:
         checkpoint_state = torch.load(checkpoint)
     
+    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
     cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
     cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
     cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])

@@ -1,4 +1,4 @@
-VER = '0.5.4'
+VER = '0.5.5'
 
 DATASETS = ['MNIST', 'ImageNet', 'Histology']
 
@@ -7,5 +7,5 @@ SEG_CRITERIONS = ['CE']
 
 SCHEDULERS = ['None', 'ReduceOnPlateau']
 
-SEG_MODELS = ['DecoderUNet', 'UNet']
+SEG_MODELS = ['DecoderUNet', 'UNet', 'UNetNoBridge']
 CAE_MODELS = ['MaskedAutoEncoder', 'AutoEncoder']

@@ -75,20 +75,18 @@ class Histology_zarr(Dataset):
         return i, tl_y, tl_x
 
     def _get_patch(self, i, tl_y, tl_x, patch_size, z_list, offset_patch=True):
-        
         tl_y *= patch_size
         tl_x *= patch_size
         
         # TODO extract this information from the zarr metadata
-        c_axis = 1 if len(z_list[i].shape) > 3 else 0
-        c = z_list[i].shape[c_axis]
+        c = max(z_list[i].shape[:-2])
         H, W = z_list[i].shape[-2:]
 
         offset = self._offset if offset_patch else 0
-        tl_y_offset = tl_y - self._offset
-        tl_x_offset = tl_x - self._offset
-        br_y_offset = tl_y + patch_size + self._offset
-        br_x_offset = tl_x + patch_size + self._offset
+        tl_y_offset = tl_y - offset
+        tl_x_offset = tl_x - offset
+        br_y_offset = tl_y + patch_size + offset
+        br_x_offset = tl_x + patch_size + offset
         
         tl_y = max(tl_y_offset, 0)
         tl_x = max(tl_x_offset, 0)
@@ -101,13 +99,14 @@ class Histology_zarr(Dataset):
             patch = patch[np.newaxis, ...]
 
         # Pad the patch using the reflect mode
-        if offset_patch:
+        if offset > 0:
             patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
 
         return patch
 
-    def __getitem__(self, index):        
+    def __getitem__(self, index):
         i, tl_y, tl_x = self._compute_grid(index)
+        print('Retrieving %d, (%d, %d), from: %s' % (i, tl_y, tl_x, self._filenames[i]))
 
         patch = self._get_patch(i, tl_y, tl_x, self._patch_size, self._z_list).squeeze()
 
@@ -138,10 +137,10 @@ class Histology_seg_zarr(Histology_zarr):
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
-        
+            
         patch_size = self._patch_size * ((2**self._compression_level) if self._compressed_input else 1)
         target = self._get_patch(i, tl_y, tl_x, patch_size, self._lab_list, offset_patch=False).astype(np.float32)
-
+        
         # Returns anything as label, to prevent an error during training
         return patch, target
 
@@ -185,6 +184,11 @@ def get_Histology(args, offset=0, normalize=False):
     else:
         compression_level = args.compression_level
     
+    if not hasattr(args, 'normalize'):
+        normalize = True
+    else:
+        normalize = args.normalize
+    
     if args.task == 'autoencoder':
         prep_trans = get_histo_transform(normalize=normalize)
         histo_dataset = Histology_zarr
@@ -203,15 +207,16 @@ def get_Histology(args, offset=0, normalize=False):
         TEST_DATASIZE = -1
             
     if args.mode != 'training':
+        print('Files\n', args.data_dir[:10])        
         hist_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
-        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
+        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu)
         return test_queue
 
     hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
     hist_valid_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
-    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
-    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
+    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=args.gpu)
+    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu)
 
     return train_queue, valid_queue
 
