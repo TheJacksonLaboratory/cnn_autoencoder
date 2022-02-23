@@ -104,8 +104,9 @@ class Histology_zarr(Dataset):
 
         return patch
 
-    def __getitem__(self, index):        
+    def __getitem__(self, index):
         i, tl_y, tl_x = self._compute_grid(index)
+        print('Retrieving %d, (%d, %d), from: %s' % (i, tl_y, tl_x, self._filenames[i]))
 
         patch = self._get_patch(i, tl_y, tl_x, self._patch_size, self._z_list).squeeze()
 
@@ -206,15 +207,16 @@ def get_Histology(args, offset=0, normalize=False):
         TEST_DATASIZE = -1
             
     if args.mode != 'training':
+        print('Files\n', args.data_dir[:10])        
         hist_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
-        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
+        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu)
         return test_queue
 
     hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
     hist_valid_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
-    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True)
-    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=True)
+    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=args.gpu)
+    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu)
 
     return train_queue, valid_queue
 

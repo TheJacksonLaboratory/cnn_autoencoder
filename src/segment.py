@@ -23,20 +23,39 @@ def segment(args):
 
     state = utils.load_state(args)
     
+    # The argument passed defines the size of the patches that will form the final segmentation
     out_patch_size = args.patch_size
+    input_offset = 0
 
     if state['args']['model_type'] == 'DecoderUNet':
+        # The compressed representation does not require normalization into the [0, 1] range
         transform = utils.get_histo_transform(normalize=False)
+        
+        # Find the size of the compressed patches in the checkpoint file
         in_patch_size = state['args']['patch_size']
-        compression_level = state['args']['compression_level']
-    
+        decompression_level = state['args']['compression_level']
+        
+        if args.add_offset:
+            input_offset = 1
+                    
     elif state['args']['model_type'] in ['UNet', 'UNetNoBridge']:
         transform = utils.get_histo_transform(normalize=True)
         in_patch_size = args.patch_size
-        compression_level = 0
+        
+        # The segmentation output is the same size of the input
+        decompression_level = 0
+        
+        if args.add_offset:
+            input_offset = 2 ** state['args']['compression_level']
+        
+    if args.add_offset:
+        # Find the compression level in the checkpoint file
+        output_offset = 2 ** state['args']['compression_level']
     
     seg_model = seg_model_types[state['args']['model_type']](**state['args'])
     seg_model.load_state_dict(state['model'])
+    
+    logger.debug(seg_model)
     
     seg_model = nn.DataParallel(seg_model)
     if torch.cuda.is_available():
@@ -47,8 +66,6 @@ def segment(args):
     # Conver the single zarr file into a dataset to be iterated    
     logger.info('Openning zarr file from {}'.format(args.input))
 
-    offset = 2**state['args']['compression_level']
-
     if not args.input[0].endswith('.zarr'):
         # If a directory has been passed, get all zarr files inside to compress
         input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith('.zarr'), os.listdir(args.input[0]))))
@@ -58,12 +75,12 @@ def segment(args):
         output_fn_list = [args.output_dir]
         
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        histo_ds = utils.Histology_zarr(root=in_fn, patch_size=in_patch_size, offset=offset, transform=transform)
+        histo_ds = utils.Histology_zarr(root=in_fn, patch_size=in_patch_size, offset=input_offset, transform=transform)
         data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
         
         H, W = histo_ds._z_list[0].shape[-2:]
-        H *= 2**compression_level
-        W *= 2**compression_level
+        H_seg = H * 2**decompression_level
+        W_seg = W * 2**decompression_level
         
         compressor = Blosc(cname='zlib', clevel=1, shuffle=Blosc.BITSHUFFLE)
         
@@ -71,15 +88,17 @@ def segment(args):
         group = zarr.group(out_fn, overwrite=True)
         seg_group = group.create_group('0', overwrite=True)
 
-        z_seg = zarr.zeros((1, state['args']['classes'], H, W), chunks=(1, state['args']['classes'], out_patch_size, out_patch_size), compressor=compressor, dtype=np.float32)
+        z_seg = zarr.zeros((1, state['args']['classes'], H_seg, W_seg), chunks=(1, state['args']['classes'], out_patch_size, out_patch_size), compressor=compressor, dtype=np.float32)
         
         with torch.no_grad():
             for i, (x, _) in enumerate(data_queue):
                 y = seg_model(x)
-
+                
+                logger.info('Network prediction shape: {}'.format(y.size()))
                 y = y.detach().cpu().numpy()
-                if offset > 0:
-                    y = y[..., offset:-offset, offset:-offset]
+                if args.add_offset > 0:
+                    logger.info('Offsetted prediction shape: {}'.format(y[..., output_offset:-output_offset, output_offset:-output_offset].shape))
+                    y = y[..., output_offset:-output_offset, output_offset:-output_offset]
                 
                 _, tl_y, tl_x = histo_ds._compute_grid(i)
                 tl_y *= out_patch_size

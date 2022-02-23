@@ -18,7 +18,7 @@ def setup_logger(args):
     """
     args.version = VER
 
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and args.use_gpu:
         args.gpu = True
     else:
         args.gpu = False
@@ -35,7 +35,9 @@ def setup_logger(args):
         fh = logging.FileHandler(logger_fn)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-        logger.setLevel(logging.DEBUG)
+    
+    # Change the mode before deploy
+    logger.setLevel(logging.DEBUG)
 
     if args.print_log:
         console = logging.StreamHandler()
@@ -151,7 +153,7 @@ def load_state(args):
     else:
         save_fn = os.path.join(args.trained_model)
 
-    if not torch.cuda.is_available():
+    if not torch.cuda.is_available() or not args.gpu:
         state = torch.load(save_fn, map_location=torch.device('cpu'))
     
     else:

@@ -264,14 +264,15 @@ class AutoEncoder(nn.Module):
         self.fact_entropy = FactorizedEntropy(channels_bn, K=K, r=r)
 
     def forward(self, x, synthesize_only=False):
-        fx = self.embedding(x)
-
         if synthesize_only:
-            return self.synthesis(fx)
+            return self.synthesis(x)
+        
+        fx = self.embedding(x)
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         p_y = torch.prod(p_y, dim=1) + 1e-10
+        
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -294,17 +295,17 @@ class MaskedAutoEncoder(nn.Module):
         self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
 
     def forward(self, x, synthesize_only=False):
-        fx = self.embedding(x)
+        if synthesize_only:
+            return self.synthesis(x)
 
+        fx = self.embedding(x)
         fx = self.masking(fx)
         fx = self.pos_enc(fx)
-
-        if synthesize_only:
-            return self.synthesis(fx)
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         p_y = torch.prod(p_y, dim=1) + 1e-10
+
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -317,12 +318,14 @@ if __name__ == '__main__':
     
     print('Testing random crop masking')
 
-    im = torch.randint(low=0, high=256, size=(5, 3, 480, 640))
+    im = Image.open(r'C:\Users\cervaf\Documents\Datasets\Kodak\kodim21.png')
     transform = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
     x = transform(im).unsqueeze(0)
 
-    masker = MaskedAutoEncoder(n_masks=20, masks_size=64)
+    checkpoint = torch.load(r'C:\Users\cervaf\Documents\Logging\tested\autoencoder\best_ver0.5.4_74691.pth', map_location='cpu')
+
+    masker = MaskedAutoEncoder(n_masks=20, masks_size=64, **checkpoint['args'])
     
     x_m, _, _ = masker(x)
 

@@ -13,7 +13,7 @@ from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-
+model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
 
 def valid(cae_model, data, criterion, args):
     """ Validation step.
@@ -188,7 +188,7 @@ def setup_network(args):
     """
 
     # The autoencoder model contains all the modules
-    cae_model = AutoEncoder(**args.__dict__)
+    cae_model = model_options[args.model_type](**args.__dict__)
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
     cae_model = nn.DataParallel(cae_model)
@@ -295,6 +295,7 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
     else:
         checkpoint_state = torch.load(checkpoint)
     
+    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
     cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
     cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
     cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
