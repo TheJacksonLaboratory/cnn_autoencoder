@@ -16,6 +16,7 @@ import utils
 
 seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
 
+
 def segment(args):
     """ Segment the objects in the images into a set of learned classes.    
     """
@@ -29,7 +30,7 @@ def segment(args):
 
     if state['args']['model_type'] == 'DecoderUNet':
         # The compressed representation does not require normalization into the [0, 1] range
-        transform = utils.get_histo_transform(normalize=False)
+        transform = utils.get_histology_transform(normalize=False)
         
         # Find the size of the compressed patches in the checkpoint file
         in_patch_size = state['args']['patch_size']
@@ -39,7 +40,7 @@ def segment(args):
             input_offset = 1
                     
     elif state['args']['model_type'] in ['UNet', 'UNetNoBridge']:
-        transform = utils.get_histo_transform(normalize=True)
+        transform = utils.get_histology_transform(normalize=True)
         in_patch_size = args.patch_size
         
         # The segmentation output is the same size of the input

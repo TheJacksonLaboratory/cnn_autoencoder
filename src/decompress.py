@@ -12,11 +12,13 @@ from numcodecs import Blosc
 import models
 
 import utils
-import sys
+
 
 def decompress_zarr(args):
     """ Decmpress a compressed representation stored in zarr format.
     """
+    compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
+
     logger = logging.getLogger(args.mode + '_log')
 
     state = utils.load_state(args)
@@ -30,12 +32,12 @@ def decompress_zarr(args):
     
     decomp_model.eval()
     
+    logger.debug('Model')
     logger.debug(decomp_model)
 
-    # Conver the single zarr file into a dataset to be iterated
-    comp_level = state['args']['compression_level']    
+    # Get the compression level from the model checkpoint
+    comp_level = state['args']['compression_level']
     offset = (2**comp_level) if args.add_offset else 0
-
     comp_patch_size = args.patch_size//2**comp_level
     
     if not args.input[0].endswith('.zarr'):
@@ -45,9 +47,7 @@ def decompress_zarr(args):
         input_fn_list = args.input
     
     output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_rec.zarr'), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
-    
-    print(input_fn_list[:5])
-    print(output_fn_list[:5])
+
     for fn_in, fn_out in zip(input_fn_list, output_fn_list):
         histo_ds = utils.Histology_zarr(root=fn_in, patch_size=comp_patch_size, offset=1 if args.add_offset else 0)
         data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
@@ -55,8 +55,6 @@ def decompress_zarr(args):
         _, _, H, W = histo_ds._z_list[0].shape
         H *= 2**comp_level
         W *= 2**comp_level
-
-        compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
         group = zarr.group(fn_out, overwrite=True)
         decomp_group = group.create_group('0', overwrite=True)
@@ -71,7 +69,9 @@ def decompress_zarr(args):
                 x = decomp_model(y_b)
                 x = 255 * (0.5*x + 0.5)
 
-                x = x.detach().cpu().numpy().astype(np.uint8)
+                x = x.round().astype(np.uint8)
+                x = x.detach().cpu().numpy()
+
                 if offset > 0:
                     x = x[..., offset:-offset, offset:-offset]
 
@@ -79,7 +79,6 @@ def decompress_zarr(args):
                 tl_y *= args.patch_size
                 tl_x *= args.patch_size
                 z_decomp[..., tl_y:(tl_y+args.patch_size), tl_x:(tl_x+args.patch_size)] = x
-                logger.info('Stitching patch {}, ({}, {})'.format(i, tl_y, tl_x))
 
         # Output dir is actually the absolute path to the file where to store the decompressed image
         decomp_group.create_dataset('0', data=z_decomp, dtype='u1', compression=compressor)
@@ -119,7 +118,7 @@ def decompress(args):
         y_q = zarr.open(fn, 'r')
         y_q = torch.from_numpy(y_q['0/0'][:].astype(np.float32))
         
-        logger.info('Reconstructing {}'.format(fn))
+        logger.debug('Reconstructing {}'.format(fn))
         
         # y_q =  torch.load(fn)
         y_q = y_q - 127.5
@@ -128,7 +127,7 @@ def decompress(args):
             x = decomp_model(y_q)
             x = 0.5*x + 0.5
         
-        logger.info('Reconstruction in [{}, {}]'.format(x.min(), x.max()))
+        logger.debug('Reconstruction in [{}, {}]'.format(x.min(), x.max()))
         
         utils.save_image(os.path.join(args.output_dir, '{:03d}_rec.{}'.format(i, img_ext)), x)
 
