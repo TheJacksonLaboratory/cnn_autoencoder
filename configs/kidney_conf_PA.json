@@ -19,5 +19,6 @@
     "distorsion_lambda":0.01,
     "criterion": "RD_PA",
     "energy_limit": 0.7,
-    "model_type": "AutoEncoder"
+    "model_type": "AutoEncoder",
+    "use_gpu": true
 }

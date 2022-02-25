@@ -14,5 +14,7 @@
     "channels_net": 128,
     "channels_bn": 48,
     "compression_level": 4,
-    "criterion": "RD_PA"
+    "criterion": "RD_PA",
+    "model_type": "AutoEncoder",
+    "use_gpu": true
 }

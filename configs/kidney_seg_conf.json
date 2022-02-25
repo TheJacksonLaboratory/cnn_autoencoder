@@ -15,5 +15,7 @@
     "channels_net": 128,
     "channels_bn": 48,
     "compression_level": 3,
-    "criterion": "CE"
+    "criterion": "CE",
+    "model_type": "UNet",
+    "use_gpu": true
 }
