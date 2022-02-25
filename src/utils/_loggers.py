@@ -36,8 +36,7 @@ def setup_logger(args):
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     
-    # Change the mode before deploy
-    logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
 
     if args.print_log:
         console = logging.StreamHandler()

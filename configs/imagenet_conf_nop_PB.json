@@ -17,5 +17,6 @@
     "compression_level": 3,
     "distorsion_lambda": 0.01,
     "criterion": "RD_PB",
-    "energy_limit": 0.001
+    "energy_limit": 0.001,
+    "use_gpu": true
 }

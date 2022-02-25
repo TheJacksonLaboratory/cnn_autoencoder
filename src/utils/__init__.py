@@ -1,3 +1,4 @@
 from ._arguments import get_training_args, get_testing_args, get_compress_args, get_decompress_args
-from ._datautils import get_data, open_compressed, open_image, save_image, save_compressed, Histology_zarr, Histology_seg_zarr, get_histo_transform
+from ._datautils import get_data, open_image, save_image
 from ._loggers import setup_logger, checkpoint, load_state
+from .datasets import ZarrDataset, LabeledZarrDataset, get_zarr_transform, get_mnist_transform, get_imagenet_transform, compute_grid

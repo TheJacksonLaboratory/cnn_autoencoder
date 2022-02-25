@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
+from models import MaskedAutoEncoder, AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
 from utils import checkpoint, get_training_args, setup_logger, get_data
 
 from functools import reduce

@@ -16,6 +16,7 @@
     "compression_level": 4,
     "criterion": "RD",
     "model_type": "MaskedAutoEncoder" ,
-    "n_masks": 5,
-    "masks_size": 4
+    "n_masks": 30,
+    "masks_size": 4,
+    "use_gpu": true
 }

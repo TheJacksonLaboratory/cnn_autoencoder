@@ -2,11 +2,11 @@
     "seed": 45675,
     "batch_size": 16,
     "val_batch_size": 64,
-    "print_log": false,
-    "steps": 2e5,
-    "checkpoint_steps": 1e3,
-    "resume": "/home/cervaf/NN_imaging/logs/best_ver0.5.2_51257.pth",
-    "log_dir": "/home/cervaf/NN_imaging/logs",
+    "print_log": true,
+    "steps": 5e5,
+    "checkpoint_steps": 5e3,
+    "resume": "/home/cervaf/NN_imaging/logs/autoencoder/best_ver0.5.5_51257.pth",
+    "log_dir": "/home/cervaf/NN_imaging/logs/autoencoder",
     "data_dir": "/mnt/imagenet",
     "dataset": "ImageNet",
     "download_data": false,
@@ -18,5 +18,7 @@
     "compression_level": 3,
     "distorsion_lambda": 0.01,
     "criterion": "RD_PB",
-    "energy_limit": 0.001
+    "energy_limit": 0.001,
+    "model_type": "AutoEncoder",
+    "use_gpu": true
 }

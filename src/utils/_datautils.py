@@ -3,18 +3,20 @@ from PIL import Image
 import torch
 import torchvision.transforms as transforms
 
-from .datasets import get_Histology, get_histo_transform, Histology_zarr, Histology_seg_zarr, get_MNIST, get_ImageNet
+from .datasets import get_zarr_dataset, get_MNIST, get_ImageNet
 
 
-def get_data(args, offset=0, normalize=True):
+def get_data(args):
+    args_dict = args if isinstance(args, dict) else args.__dict__
+
     if args.dataset == 'MNIST':
-        return get_MNIST(args, normalize=normalize)
+        return get_MNIST(**args_dict)
 
     elif args.dataset == 'ImageNet':
-        return get_ImageNet(args, normalize=normalize)
+        return get_ImageNet(**args_dict)
 
-    elif args.dataset == 'Histology':
-        return get_Histology(args, offset=offset, normalize=normalize)
+    elif args.dataset == 'Zarr':
+        return get_zarr_dataset(**args_dict)
 
     else:
         raise ValueError('The dataset \'%s\' is not available for training.' % args.dataset)
@@ -58,12 +60,3 @@ def save_image(filename, img):
     img = post_trans(img.squeeze().to(torch.uint8))
     img.save(filename)
     return img
-
-
-def open_compressed(filename):
-    img = torch.load(filename).to(torch.float32)
-    return img
-
-
-def save_compressed(filename, img):
-    torch.save(img, filename)

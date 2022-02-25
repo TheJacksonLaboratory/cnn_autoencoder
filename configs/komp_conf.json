@@ -15,5 +15,7 @@
     "channels_net": 128,
     "channels_bn": 48,
     "compression_level": 3,
-    "criterion": "RD"
+    "criterion": "RD",
+    "distorsion_lambda": 1.0,
+    "use_gpu": true
 }
