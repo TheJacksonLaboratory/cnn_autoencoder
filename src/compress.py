@@ -14,7 +14,7 @@ import models
 import utils
 
 
-def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, workers, source_format, is_labeled=False):
+def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, workers, is_labeled=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
@@ -96,7 +96,7 @@ def compress(args):
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        compress_image(comp_model, in_fn, out_fn, state['args']['channels_bn'], comp_level, args.patch_size, offset, transform, args.workers, source_format=args.source_format, is_labeled=args.is_labeled)
+        compress_image(comp_model=comp_model, filename=in_fn, output_dir=out_fn, channels_bn=state['args']['channels_bn'], comp_level=comp_level, patch_size=args.patch_size, offset=offset, transform=transform, source_format=args.source_format, workers=args.workers, is_labeled=args.is_labeled)
 
 
 if __name__ == '__main__':
