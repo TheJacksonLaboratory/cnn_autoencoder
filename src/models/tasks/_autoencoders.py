@@ -255,7 +255,7 @@ class AutoEncoder(nn.Module):
         super(AutoEncoder, self).__init__()
         
         # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, channels_bn=channels_bn, groups=groups, bias=bias)
+        self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
 
         self.analysis = Analyzer(channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
         
@@ -285,7 +285,7 @@ class MaskedAutoEncoder(nn.Module):
         super(MaskedAutoEncoder, self).__init__()
 
         # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org, channels_net, groups, batch_norm, dropout, bias)
+        self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
 
         self.masking = RandMasking(n_masks, masks_size)
         self.pos_enc = PositionalEncoding(channels_net, max_dim=1024, dropout=dropout)
