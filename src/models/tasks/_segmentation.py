@@ -218,22 +218,29 @@ class DecoderUNet(nn.Module):
     This architecture does not implement the bridge connections.
     It is intended to work on compressed representations obtained from a compressor encoder.
     """
-    def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.5, bias=True, **kwargs):
+    def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.5, bias=True, use_bridge=False, **kwargs):
         super(DecoderUNet, self).__init__()
 
-        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, False, groups, normalize, dropout, bias)
+        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, use_bridge, groups, normalize, dropout, bias)
         self._compression_level = compression_level
 
-    def forward(self, x):
+    def inflate(self, x, color=False):
+        """ Mimics the inflate function of a trained decoder/synthesizer model
+        """
         b, _, h, w = x.size()
         fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level, 0, -1)]
+        return fx_brg
+
+    def forward(self, x, fx_brg):        
         y = self.synthesis(x, fx_brg)
         return y
     
     
 if __name__ == '__main__':
+    from _autoencoders import Synthesizer as DecoderSynthesizer
+
     parser = argparse.ArgumentParser('Test implementation of segmentation models')
-    parser.add_argument('-m', '--model', type=str, dest='model_type', help='Type of model to test', choices=['UNet', 'UNetNoBridge', 'DecoderUNet'], default='UNetNoBridge')
+    parser.add_argument('-m', '--model', type=str, dest='model_type', help='Type of model to test', choices=['UNet', 'UNetNoBridge', 'DecoderUNet'], default='DecoderUNet')
     parser.add_argument('-ce', '--channels-expansion', type=int, dest='channels_expansion', help='Multiplier of channels expansion in the analysis track', default=1)
     parser.add_argument('-cbn', '--channels-bottleneck', type=int, dest='channels_bn', help='Channels in the bottleneck', default=48)
     parser.add_argument('-cn', '--channels-net', type=int, dest='channels_net', help='Channels in the first layer of the network', default=8)
@@ -243,14 +250,21 @@ if __name__ == '__main__':
     
     models = {'UNet': UNet, 'UNetNoBridge': UNetNoBridge, 'DecoderUNet':DecoderUNet}
     
-    net = models[args.model_type](compression_level=args.compression_level, channels_net=args.channels_net, channels_bn=args.channels_bn, channels_expansion=args.channels_expansion)
+    net = models[args.model_type](compression_level=args.compression_level, channels_net=args.channels_net, channels_bn=args.channels_bn, channels_expansion=args.channels_expansion, use_bridge=False)
     
     if args.model_type in ['UNet', 'UNetNoBridge']:
         x = torch.rand([10, 3, 64, 64])
     elif args.model_type == 'DecoderUNet':
         x = torch.rand([10, args.channels_bn, 64//2**args.compression_level, 64//2**args.compression_level])
+        x_brg = net.compute_empty_bridge(x)
+        
+        for i, brg in enumerate(x_brg):
+            print(i, brg.size())
     
-    y = net(x)
+    if isinstance(net, DecoderUNet):
+        y = net(x, x_brg)
+    else:
+        y = net(x)
 
     t = torch.randint_like(y, high=2)
     
@@ -261,4 +275,20 @@ if __name__ == '__main__':
     loss = criterion(y, t)
     
     print('Loss: shape {}, value {}'.format(loss.size(), torch.mean(loss)))
+    
+    ### Test using the DecoderUNet with he bridges computed from the decompression model
+    net = DecoderUNet(compression_level=args.compression_level, channels_net=args.channels_net, channels_bn=args.channels_bn, channels_expansion=args.channels_expansion, use_bridge=True)
+    dec_synth = DecoderSynthesizer(**args.__dict__)
+
+    rec, rec_brg = dec_synth.inflate(x, color=True)
+
+    print('Reconstruction {}'.format(rec.size()))
+    for i, brg in enumerate(rec_brg):
+        print(i, brg.size())
+
+    y = net(x, rec_brg[:0:-1])
+    
+    print('Segmentation using decoder\'s bridges: {}'.format(y.size()))
+
+    
     

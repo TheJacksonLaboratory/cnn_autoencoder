@@ -4,11 +4,11 @@
     "print_log": false,
     "steps": 1e3,
     "checkpoint_steps": 1e1,
-    "log_dir": "/home/cervaf/NN_imaging/logs/segmentation_logs", 
-    "data_dir": "/mnt/data/Kidney_data/labeled_data/",
+    "autoencoder_model": "C:\\Users\\cervaf\\Documents\\Logging\\autoencoder_training\\tested\\best_ver0.5.5_124450.pth",
+    "log_dir": "C:\\Users\\cervaf\\Documents\\Logging\\segmentation_training", 
+    "data_dir": "C:\\Users\\cervaf\\Documents\\Datasets\\Kidney\\Labeled_examples_comp",
     "dataset": "Histology",
-    "download_data": false,
-    "workers": 48,
+    "workers": 4,
     "channels_org": 3,
     "learning_rate": 1e-4,
     "scheduler": "ReduceOnPlateau",
@@ -16,6 +16,8 @@
     "channels_bn": 48,
     "compression_level": 3,
     "criterion": "CE",
-    "model_type": "UNet",
-    "use_gpu": true
+    "model_type": "DecoderUNet",
+    "normalize": false,
+    "use_gpu": false,
+    "patch_size": 32
 }

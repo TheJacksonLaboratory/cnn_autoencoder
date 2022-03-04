@@ -1,10 +1,28 @@
+from functools import reduce
 import os
+import math
 import numpy as np
 import zarr
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, IterableDataset, DataLoader
 import torchvision.transforms as transforms
+
+
+# TODO: Using a worker initializer function solves the problem of having all zarr files open on the master node. However, it looks like something is hanging up when running on a cluster. For now, use workers = 1, or 0
+def _unlabeled_worker_init_fn(worker_id):
+    worker_info = torch.utils.data.get_worker_info()
+    dataset = worker_info.dataset
+
+    dataset._z_list = [zarr.open(fn, mode='r')['0/%s' % dataset._level] for fn in dataset._filenames]
+
+
+def _labeled_worker_init_fn(worker_id):
+    worker_info = torch.utils.data.get_worker_info()
+    dataset = worker_info.dataset
+
+    dataset._z_list = [zarr.open(fn, mode='r')['0/%s' % dataset._level] for fn in dataset._filenames]
+    dataset._lab_list = [zarr.open(fn, mode='r')['1/%s' % dataset._level] for fn in dataset._filenames]
 
 
 class Histology_zarr(Dataset):
@@ -13,6 +31,8 @@ class Histology_zarr(Dataset):
         From that component, temporal and layer dimensions are discarded, keeping only channels, and spatial dimension.
     """
     def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, **kwargs):
+        super(Histology_zarr, self).__init__()
+
         # Get all the filenames in the root folder
         if isinstance(root, list):
             self._filenames = root
@@ -34,16 +54,17 @@ class Histology_zarr(Dataset):
         self._dataset_size = dataset_size
         self._transform = transform
         self._offset = offset
+        self._level = level
         
         self._n_files = len(self._filenames)
 
         # Open the tile downscaled to 'level'      
-        self._z_list = [zarr.open(fn, mode='r')['0/%s' % level] for fn in self._filenames]
+        self._z_list = [zarr.open(fn, mode='r')['0/%s' % self._level] for fn in self._filenames]
 
         # Get the lower bound of patches that can be obtained from all zarr files
-        min_H = min([z.shape[-2] for z in self._z_list])
-        min_W = min([z.shape[-1] for z in self._z_list])
-        
+        min_H = reduce(min, map(lambda fn: zarr.open(fn, mode='r')['0/%s' % level].shape[-2], self._filenames))
+        min_W = reduce(min, map(lambda fn: zarr.open(fn, mode='r')['0/%s' % level].shape[-1], self._filenames))
+                
         self._min_H = self._patch_size * (min_H // self._patch_size)
         self._min_W = self._patch_size * (min_W // self._patch_size)
         
@@ -74,13 +95,13 @@ class Histology_zarr(Dataset):
 
         return i, tl_y, tl_x
 
-    def _get_patch(self, i, tl_y, tl_x, patch_size, z_list, offset_patch=True):
+    def _get_patch(self, z, tl_y, tl_x, patch_size, offset_patch=True):
         tl_y *= patch_size
         tl_x *= patch_size
         
         # TODO extract this information from the zarr metadata
-        c = max(z_list[i].shape[:-2])
-        H, W = z_list[i].shape[-2:]
+        c = max(z.shape[:-2])
+        H, W = z.shape[-2:]
 
         offset = self._offset if offset_patch else 0
         tl_y_offset = tl_y - offset
@@ -93,7 +114,7 @@ class Histology_zarr(Dataset):
         br_y = min(br_y_offset, H)
         br_x = min(br_x_offset, W)
 
-        patch = z_list[i][..., tl_y:br_y, tl_x:br_x].squeeze()
+        patch = z[..., tl_y:br_y, tl_x:br_x].squeeze()
 
         if c == 1:
             patch = patch[np.newaxis, ...]
@@ -106,16 +127,15 @@ class Histology_zarr(Dataset):
 
     def __getitem__(self, index):
         i, tl_y, tl_x = self._compute_grid(index)
-        print('Retrieving %d, (%d, %d), from: %s' % (i, tl_y, tl_x, self._filenames[i]))
 
-        patch = self._get_patch(i, tl_y, tl_x, self._patch_size, self._z_list).squeeze()
+        patch = self._get_patch(self._z_list[i], tl_y, tl_x, self._patch_size).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
         
         # Returns anything as label, to prevent an error during training
         return patch, [0]
-
+    
 
 class Histology_seg_zarr(Histology_zarr):
     """ A histology dataset that has been converted from raw data to zarr using the convolutional autoencoder.
@@ -126,20 +146,20 @@ class Histology_seg_zarr(Histology_zarr):
         super(Histology_seg_zarr, self).__init__(root, patch_size, dataset_size, level, mode, offset, transform)
         
         # Open the labels from group 1
-        self._lab_list = [zarr.open(fn, mode='r')['1/0'] for fn in self._filenames]
         self._compression_level = compression_level
         self._compressed_input = compressed_input
-        
+        self._lab_list = [zarr.open(fn, mode='r')['1/%s' % self._level] for fn in self._filenames]
+    
     def __getitem__(self, index):
         i, tl_y, tl_x = self._compute_grid(index)
 
-        patch = self._get_patch(i, tl_y, tl_x, self._patch_size, self._z_list).squeeze()
+        patch = self._get_patch(self._z_list[i], tl_y, tl_x, self._patch_size).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
             
         patch_size = self._patch_size * ((2**self._compression_level) if self._compressed_input else 1)
-        target = self._get_patch(i, tl_y, tl_x, patch_size, self._lab_list, offset_patch=False).astype(np.float32)
+        target = self._get_patch(self._lab_list[i], tl_y, tl_x, patch_size, offset_patch=False).astype(np.float32)
         
         # Returns anything as label, to prevent an error during training
         return patch, target
@@ -192,6 +212,7 @@ def get_Histology(args, offset=0, normalize=False):
     if args.task == 'autoencoder':
         prep_trans = get_histo_transform(normalize=normalize)
         histo_dataset = Histology_zarr
+        worker_init_fn = _unlabeled_worker_init_fn
         TRAIN_DATASIZE = 1200000
         VALID_DATASIZE = 50000
         TEST_DATASIZE = 200000
@@ -200,23 +221,24 @@ def get_Histology(args, offset=0, normalize=False):
         prep_trans = get_histo_transform(normalize=normalize)
         if args.mode == 'training':
             histo_dataset = Histology_seg_zarr
+            worker_init_fn = _labeled_worker_init_fn
         else:
             histo_dataset = Histology_zarr
+            worker_init_fn = _unlabeled_worker_init_fn
         TRAIN_DATASIZE = -1
         VALID_DATASIZE = -1
         TEST_DATASIZE = -1
-            
+    
     if args.mode != 'training':
-        print('Files\n', args.data_dir[:10])        
         hist_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=level, mode='test', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
-        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu)
+        test_queue = DataLoader(hist_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu, persistent_workers=True, worker_init_fn=worker_init_fn)
         return test_queue
 
     hist_train_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
     hist_valid_data = histo_dataset(args.data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
-    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=args.gpu)
-    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu)
+    train_queue = DataLoader(hist_train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=args.gpu, persistent_workers=True, worker_init_fn=worker_init_fn)
+    valid_queue = DataLoader(hist_valid_data, batch_size=args.val_batch_size, shuffle=False, num_workers=args.workers, pin_memory=args.gpu, persistent_workers=True, worker_init_fn=worker_init_fn)
 
     return train_queue, valid_queue
 

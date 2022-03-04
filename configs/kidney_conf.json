@@ -6,7 +6,12 @@
     "steps": 1e3,
     "checkpoint_steps": 2e2,
     "log_dir": "C:\\Users\\cervaf\\Documents\\Logging\\autoencoder_training", 
-    "data_dir": "C:\\Users\\cervaf\\Documents\\Datasets\\Kidney\\DO_DNN",
+    "data_dir": [
+        "http://s3-far.jax.org/gtexdata/BrainCortex/GTEX-13CZV-3125.zarr",
+        "http://s3-far.jax.org/gtexdata/BrainCortex/GTEX-15CHS-2725.zarr",
+        "http://s3-far.jax.org/gtexdata/BrainCortex/GTEX-1GPI6-2225.zarr",
+        "http://s3-far.jax.org/gtexdata/BrainCortex/GTEX-1N5O9-2925.zarr"
+    ],
     "dataset": "Histology",
     "download_data": false,
     "workers": 4,

@@ -50,7 +50,7 @@ def get_training_args(task='autoencoder'):
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
     parser.add_argument('-nn', '--no-normal', action='store_false', dest='normalize', help='Do not normalize input data', default=True)
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
-    parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
+    parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory where the data is stored')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
@@ -81,6 +81,8 @@ def get_training_args(task='autoencoder'):
         parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of segmetnation model', choices=SEG_MODELS)
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
         parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
+        
+        parser.add_argument('-dm', '--decoder', type=str, dest='autoencoder_model', help='Pre-trained decoder model')
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
