@@ -1,3 +1,4 @@
+from functools import partial
 import logging
 import os
 import sys
@@ -15,6 +16,86 @@ import models
 import utils
 
 seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
+
+
+def forward_undecoded_step(x, seg_model, decoder_model=None):
+    y = seg_model(x)
+    return y
+
+
+def forward_decoded_step(x, seg_model, decoder_model=None):
+    with torch.no_grad():
+        _, x_brg = decoder_model.inflate(x, color=False)
+    y = seg_model(x, x_brg[:0:-1])
+
+    return y
+
+
+def setup_network(args):
+    """ Setup a nerual network for object segmentation.
+
+    Parameters
+    ----------
+    args : Namespace
+        The input arguments passed at running time. All the parameters are passed directly to the model constructor.
+        This way, the constructor can take the parameters needed that have been passed by the user.
+    
+    Returns
+    -------
+    seg_model : nn.Module
+        The segmentation mode implemented by a convolutional neural network
+    
+    forward_function : function
+        The function to used for the feed-forward step
+    """
+    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
+    if 'Decoder' in args['model_type']:
+        args['compressed_input'] = True
+
+    # If a decoder model is passed as argument, use the decoded step version of the feed-forward step
+    if args['autoencoder_model'] is not None:
+        if not args['gpu']:
+            checkpoint_state = torch.load(args['autoencoder_model'], map_location=torch.device('cpu'))
+        
+        else:
+            checkpoint_state = torch.load(args['autoencoder_model'])
+       
+        decoder_model = models.Synthesizer(**checkpoint_state['args'])
+        decoder_model.load_state_dict(checkpoint_state['decoder'])
+
+        if args['gpu']:
+            decoder_model = nn.DataParallel(decoder_model)        
+            decoder_model.cuda()
+
+        decoder_model.eval()
+        args['use_bridge'] = True
+    else:
+        args['use_bridge'] = False
+    
+    seg_model_class = seg_model_types.get(args['model_type'], None)
+    if seg_model_class is None:
+        raise ValueError('Model type %s not supported' % args['model_type'])
+    
+    seg_model = seg_model_class(**args)
+
+    # If there are more than one GPU, DataParallel handles automatically the distribution of the work
+    seg_model = nn.DataParallel(seg_model)
+    if args['gpu']:
+        seg_model.cuda()
+
+    # Define what funtion use in the feed-forward step
+    if args['autoencoder_model'] is not None:
+        forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
+
+    elif 'Decoder' in args['model_type']:
+        # If no decoder is loaded, use the inflate function inside the segmentation model
+        forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=seg_model)
+    
+    else:
+        forward_function = partial(forward_undecoded_step, seg_model=seg_model, decoder_model=None)
+
+    return seg_model, forward_function
+
 
 def segment(args):
     """ Segment the objects in the images into a set of learned classes.    
@@ -47,20 +128,18 @@ def segment(args):
         
         if args.add_offset:
             input_offset = 2 ** state['args']['compression_level']
-        
+    
     if args.add_offset:
         # Find the compression level in the checkpoint file
         output_offset = 2 ** state['args']['compression_level']
     
-    seg_model = seg_model_types[state['args']['model_type']](**state['args'])
-    seg_model.load_state_dict(state['model'])
+    # Override the checkpoint arguments with the passed when running the segmentation module
+    for k in args.__dict__.keys():
+        state['args'][k] = args.__dict__[k]
+    
+    seg_model, forward_function = setup_network(state['args'])
     
     logger.debug(seg_model)
-    
-    seg_model = nn.DataParallel(seg_model)
-    if torch.cuda.is_available():
-        seg_model.cuda()
-    
     seg_model.eval()
     
     # Conver the single zarr file into a dataset to be iterated    
@@ -92,7 +171,7 @@ def segment(args):
         
         with torch.no_grad():
             for i, (x, _) in enumerate(data_queue):
-                y = seg_model(x)
+                y = forward_function(x)
                 
                 logger.info('Network prediction shape: {}'.format(y.size()))
                 y = y.detach().cpu().numpy()
@@ -111,7 +190,7 @@ def segment(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_compress_args()
+    args = utils.get_segment_args()
     
     utils.setup_logger(args)
     

@@ -184,3 +184,30 @@ def get_decompress_args():
     args.mode = 'decompress'
 
     return args
+
+
+def get_segment_args():
+    parser = argparse.ArgumentParser('Testing of an image segmentation model')
+    parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
+
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
+    parser.add_argument('-dm', '--decoder', type=str, dest='autoencoder_model', help='Pre-trained decoder model')
+    
+    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
+    parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
+    
+    parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
+
+    parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
+    parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input images to compress (list of images).')
+    parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed image')
+    
+    parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
+
+    args = override_config_file(parser)
+    
+    args.mode = 'segment'
+
+    return args

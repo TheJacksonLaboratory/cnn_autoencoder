@@ -64,7 +64,7 @@ class Histology_zarr(Dataset):
         # Get the lower bound of patches that can be obtained from all zarr files
         min_H = reduce(min, map(lambda fn: zarr.open(fn, mode='r')['0/%s' % level].shape[-2], self._filenames))
         min_W = reduce(min, map(lambda fn: zarr.open(fn, mode='r')['0/%s' % level].shape[-1], self._filenames))
-                
+        
         self._min_H = self._patch_size * (min_H // self._patch_size)
         self._min_W = self._patch_size * (min_W // self._patch_size)
         
@@ -165,12 +165,15 @@ class Histology_seg_zarr(Histology_zarr):
         return patch, target
 
 
-def get_histo_transform(normalize=True):
+def get_histo_transform(normalize=True, compressed_input=False):
     prep_trans_list = [transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
     
-    if normalize:
+    if normalize and compressed_input:
+        prep_trans_list.append(transforms.Normalize(mean=127.5, std=1.0))
+        
+    else:
         prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
             
     return transforms.Compose(prep_trans_list)
@@ -209,8 +212,8 @@ def get_Histology(args, offset=0, normalize=False):
     else:
         normalize = args.normalize
     
+    prep_trans = get_histo_transform(normalize=normalize, compressed_input=compressed_input)
     if args.task == 'autoencoder':
-        prep_trans = get_histo_transform(normalize=normalize)
         histo_dataset = Histology_zarr
         worker_init_fn = _unlabeled_worker_init_fn
         TRAIN_DATASIZE = 1200000
@@ -218,7 +221,6 @@ def get_Histology(args, offset=0, normalize=False):
         TEST_DATASIZE = 200000
         
     elif args.task == 'segmentation':
-        prep_trans = get_histo_transform(normalize=normalize)
         if args.mode == 'training':
             histo_dataset = Histology_seg_zarr
             worker_init_fn = _labeled_worker_init_fn
