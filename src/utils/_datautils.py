@@ -7,6 +7,11 @@ from .datasets import get_Histology, get_histo_transform, Histology_zarr, Histol
 
 
 def get_data(args, offset=0, normalize=True):
+    # The arguments parser stores the data dir path as a list in case that more than one path is given
+    # However, when a directory is given, it should be taken directly as the root directory of the dataset
+    if isinstance(args.data_dir, list) and len(args.data_dir) == 1:
+        args.data_dir = args.data_dir[0]
+    
     if args.dataset == 'MNIST':
         return get_MNIST(args, normalize=normalize)
 

@@ -8,6 +8,9 @@ from ._info import DATASETS, SEG_MODELS, CAE_MODELS, CAE_CRITERIONS, SEG_CRITERI
 
 
 def override_config_file(parser):
+    """ Overrides the parameters passed through a configuration file with those passed thriught the console interface.
+    This function also generates a random seed for the random number generation if it was not set by the user.
+    """
     args = parser.parse_args()
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
@@ -120,7 +123,7 @@ def get_testing_args():
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
-    parser.add_argument('-z', '--zarr', action='store_true', dest='use_zarr', help='Input and output should be stored as zarr files')
+    parser.add_argument('-z', '--zarr', action='store_true', dest='use_zarr', help='The output should be stored as zarr files')
     
     parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
     
