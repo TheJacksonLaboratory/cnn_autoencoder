@@ -218,15 +218,19 @@ class DecoderUNet(nn.Module):
     This architecture does not implement the bridge connections.
     It is intended to work on compressed representations obtained from a compressor encoder.
     """
-    def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.5, bias=True, **kwargs):
+    def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, normalize=False, dropout=0.5, bias=True, use_bridge=False, **kwargs):
         super(DecoderUNet, self).__init__()
-
-        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, False, groups, normalize, dropout, bias)
+        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, use_bridge, groups, normalize, dropout, bias)
         self._compression_level = compression_level
 
-    def forward(self, x):
+    def inflate(self, x, color=False):
+        """ Mimics the inflate function of a trained decoder/synthesizer model
+        """
         b, _, h, w = x.size()
-        fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level, 0, -1)]
+        fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level+1)]
+        return fx_brg
+
+    def forward(self, x, fx_brg):        
         y = self.synthesis(x, fx_brg)
         return y
     

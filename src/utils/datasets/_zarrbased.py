@@ -11,6 +11,20 @@ import torchvision.transforms as transforms
 
 
 def load_image(filename, patch_size):
+    """ Load the image at \'filename\' using the Image class from the PIL library and returns it as a numpy array.
+    The image is padded to have a size (height and width) multiple of \'patch_size\'
+
+    Parameters:
+    ----------
+    filename : str
+        Path to the image
+    patch_size : int
+        The size of each squared patch
+    
+    Returns
+    -------
+    arr : numpy.array
+    """
     im = Image.open(filename, mode="r")
     arr = np.array(im)
     
@@ -125,17 +139,30 @@ class ZarrDataset(Dataset):
         Only two-dimensional (+color channels) data is supported by now.
     """
     def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, source_format='zarr', **kwargs):
-        # Get all the filenames in the root folder
+        self._patch_size = patch_size
+        self._dataset_size = dataset_size
+        self._transform = transform
+        self._offset = offset
+        
+        self._level = level
+        self._source_format = source_format
+
+        self._split_dataset(root, mode)
+        self._z_list = self._preload_files(group='0')
+        self._compute_size()
+
+    def _split_dataset(self, root, mode):
+        """ Identify are the inputs being passed and split the data according to the mode.
+        The datasets will be splitted into 70% training, 10% validation, and 20% testing.
+        """
         if isinstance(root, list):
             self._filenames = root
-        
-        elif root.lower().endswith(source_format):
+        elif root.lower().endswith(self._source_format):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
-        
         else:
             # If a root directory was provided, create a dataset from the images contained by splitting the set into training, validation, and testing subsets.
-            self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if fn.lower().endswith(source_format)]))
+            self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if fn.lower().endswith(self._source_format)]))
 
             if mode == 'train':
                 # Use 70% of the data for traning
@@ -147,28 +174,8 @@ class ZarrDataset(Dataset):
                 # Use 20% of the data for testing
                 self._filenames = self._filenames[int(0.8 * len(self._filenames)):]
 
-        self._patch_size = patch_size
-        self._dataset_size = dataset_size
-        self._transform = transform
-        self._offset = offset
-        
+        # Get the number of files in the current dataset
         self._n_files = len(self._filenames)
-        self._level = level
-        self._source_format = source_format
-
-        self._z_list = self._preload_files()
-
-        # Get the lower bound of patches that can be obtained from all zarr files
-        min_H = min([z.shape[-2] for z in self._z_list])
-        min_W = min([z.shape[-1] for z in self._z_list])
-        
-        self._min_H = self._patch_size * (min_H // self._patch_size)
-        self._min_W = self._patch_size * (min_W // self._patch_size)
-        
-        if dataset_size < 0:
-            self._dataset_size = int(np.ceil(self._min_H * self._min_W / self._patch_size**2)) * self._n_files
-        else:
-            self._dataset_size = dataset_size
 
     def _preload_files(self, group='0'):
         if self._source_format == 'zarr':
@@ -182,9 +189,20 @@ class ZarrDataset(Dataset):
             z_list = [zarr.array(load_image(fn, self._patch_size), chunks=(3, self._patch_size, self._patch_size), compressor=compressor)
                             for fn in self._filenames
                     ]
-
         return z_list
 
+    def _compute_size(self):
+        # Get the lower bound of patches that can be obtained from all zarr files
+        min_H = min([z.shape[-2] for z in self._z_list])
+        min_W = min([z.shape[-1] for z in self._z_list])
+        
+        self._min_H = self._patch_size * (min_H // self._patch_size)
+        self._min_W = self._patch_size * (min_W // self._patch_size)
+        
+        # Compute the size of the dataset from the valid patches
+        if self._dataset_size < 0:
+            self._dataset_size = int(np.ceil(self._min_H * self._min_W / self._patch_size**2)) * self._n_files
+    
     def __len__(self):
         return self._dataset_size
 
@@ -204,8 +222,8 @@ class ZarrDataset(Dataset):
 
 
 class LabeledZarrDataset(ZarrDataset):
-    """ A labeled dataset based on the zarr dataset class.        
-        The dense labels are extracted from group '1'.
+    """ A labeled dataset based on the zarr dataset class.
+        The densely labeled targets are extracted from group '1'.
     """
     def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, compression_level=0, compressed_input=False):
         super(LabeledZarrDataset, self).__init__(root, patch_size, dataset_size, level, mode, offset, transform)
@@ -231,34 +249,40 @@ class LabeledZarrDataset(ZarrDataset):
         return patch, target
 
 
-def get_zarr_transform(normalize=True):
+def get_zarr_transform(normalize=True, compressed_input=False):
+    """ Define the transformations that are commonly applied to zarr-based datasets.
+    When the input is compressed, it has a range of [0, 255], which is convenient to shift into a range of [-127.5, 127.5].
+    If the input is a color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
+    """
     prep_trans_list = [transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
     
-    if normalize:
+    if normalize and compressed_input:
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=1.0/127.5))        
+    else:
         prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
-            
+    
     return transforms.Compose(prep_trans_list)
 
 
-def get_zarr_dataset(data_dir, task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, **kwargs):
-    """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from histology images.
-    The size of the data queue can be virtually infinite, for that reason, a cnservative size has been defined using the following global variables.
-    1. TRAIN_DATASIZE
-    2. VALID_DATASIZE
-    3. TEST_DATASIZE
+def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, **kwargs):
+    """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
+    The size of the data queue can be virtually infinite, for that reason, a conservative size has been defined using the following variables.
+    1. TRAIN_DATASIZE: 1200000 for autoencoder models, and all available patches for segmenetation models
+    2. VALID_DATASIZE: 50000 for autoencoder models, and all available patches for segmenetation models
+    3. TEST_DATASIZE: 200000 for autoencoder models, and all available patches for segmenetation models
     """
 
     if task == 'autoencoder':
-        prep_trans = get_zarr_transform(normalize=normalize)
+        prep_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input)
         histo_dataset = ZarrDataset
         TRAIN_DATASIZE = 1200000
         VALID_DATASIZE = 50000
         TEST_DATASIZE = 200000
         
     elif task == 'segmentation':
-        prep_trans = get_zarr_transform(normalize=normalize)
+        prep_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input)
         if mode == 'training':
             histo_dataset = LabeledZarrDataset
         else:
@@ -267,6 +291,7 @@ def get_zarr_dataset(data_dir, task='autoencoder', patch_size=128, batch_size=1,
         VALID_DATASIZE = -1
         TEST_DATASIZE = -1
     
+    # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if mode != 'training':
         hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
         test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
@@ -275,7 +300,8 @@ def get_zarr_dataset(data_dir, task='autoencoder', patch_size=128, batch_size=1,
     hist_train_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
     hist_valid_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
-    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=gpu)
+    # train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=gpu)
+    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
     valid_queue = DataLoader(hist_valid_data, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
 
     return train_queue, valid_queue
