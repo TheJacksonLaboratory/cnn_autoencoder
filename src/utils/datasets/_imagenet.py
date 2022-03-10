@@ -32,7 +32,7 @@ def get_imagenet_transform(mode='training', normalize=True):
     return transforms.Compose(prep_trans_list)
 
 
-def get_ImageNet(data_dir, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
+def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
     prep_trans = get_imagenet_transform(mode, normalize)
 
     # If testing the model, return the validation set from MNIST

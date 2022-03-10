@@ -243,6 +243,21 @@ class Synthesizer(nn.Module):
         self.synthesis_track = nn.Sequential(*up_track)
 
         self.apply(initialize_weights)
+        
+    def inflate(self, x, color=True):
+        x_brg = []
+        # DataParallel only sends 'x' to the GPU memory when the forward method is used and not for other methods
+        fx = x.clone().to(self.synthesis_track[0].weight.device)
+        for layer in self.synthesis_track[:-1]:
+            fx = layer(fx)
+            x_brg.append(fx)
+        
+        if not color:
+            return x_brg
+        
+        fx = self.synthesis_track[-1](fx)
+        
+        return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)

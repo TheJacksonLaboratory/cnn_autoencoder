@@ -56,6 +56,8 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
             tl_x *= patch_size
             z_decomp[..., tl_y:(tl_y+patch_size), tl_x:(tl_x+patch_size)] = x
 
+    # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
+    # It should be used with care since this can generate a large image file.
     if destination_format != 'zarr':
         im = Image.fromarray(z_decomp[0].transpose(1, 2, 0))
         im.save(output_dir, destination_format)
@@ -86,9 +88,9 @@ def decompress(args):
     comp_level = state['args']['compression_level']
     offset = (2 ** comp_level) if args.add_offset else 0
 
-    if not args.input[0].endswith('zarr'):
+    if not args.input[0].lower().endswith('zarr'):
         # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith(args.source_format), os.listdir(args.input[0]))))
+        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.lower().endswith('zarr'), os.listdir(args.input[0]))))
     else:
         input_fn_list = args.input
             

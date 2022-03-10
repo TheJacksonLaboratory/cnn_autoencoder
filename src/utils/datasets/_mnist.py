@@ -11,13 +11,12 @@ def get_mnist_transform(mode='training', normalize=True):
         ]
     
     if normalize:
-        # prep_trans_list.append(transforms.Normalize(mean=0.0, std=1.0))
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
-            
+
     return transforms.Compose(prep_trans_list)
 
 
-def get_MNIST(data_dir, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
+def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
     prep_trans = get_mnist_transform(mode, normalize)
 
     # If testing the model, return the test set from MNIST
