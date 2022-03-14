@@ -1,12 +1,15 @@
 import math
 import os
+
+import random
+
 import numpy as np
 import zarr
 from PIL import Image
 from numcodecs import Blosc
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import IterableDataset, Dataset, DataLoader
 import torchvision.transforms as transforms
 
 
@@ -148,7 +151,7 @@ class ZarrDataset(Dataset):
         self._source_format = source_format
 
         self._split_dataset(root, mode)
-        self._z_list = self._preload_files(group='0')
+        self._z_list = self._preload_files(self._filenames, group='0')
         self._compute_size()
 
     def _split_dataset(self, root, mode):
@@ -160,6 +163,11 @@ class ZarrDataset(Dataset):
         elif root.lower().endswith(self._source_format):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
+        elif root.lower().endswith('.txt'):
+            # If the input is a text file with a list of url/paths, create the filenames list from it
+            with open(root, mode='r') as f:
+                self._filenames = [l.strip('\n\r') for l in f.readlines()]
+                
         else:
             # If a root directory was provided, create a dataset from the images contained by splitting the set into training, validation, and testing subsets.
             self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if fn.lower().endswith(self._source_format)]))
@@ -174,20 +182,17 @@ class ZarrDataset(Dataset):
                 # Use 20% of the data for testing
                 self._filenames = self._filenames[int(0.8 * len(self._filenames)):]
 
-        # Get the number of files in the current dataset
-        self._n_files = len(self._filenames)
-
-    def _preload_files(self, group='0'):
+    def _preload_files(self, filenames, group='0'):
         if self._source_format == 'zarr':
             # Open the tile downscaled to 'level'      
-            z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in self._filenames]
+            z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in filenames]
 
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
             compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
             
             z_list = [zarr.array(load_image(fn, self._patch_size), chunks=(3, self._patch_size, self._patch_size), compressor=compressor)
-                            for fn in self._filenames
+                            for fn in filenames
                     ]
         return z_list
 
@@ -201,13 +206,13 @@ class ZarrDataset(Dataset):
         
         # Compute the size of the dataset from the valid patches
         if self._dataset_size < 0:
-            self._dataset_size = int(np.ceil(self._min_H * self._min_W / self._patch_size**2)) * self._n_files
+            self._dataset_size = int(np.ceil(self._min_H * self._min_W / self._patch_size**2)) * len(self._filenames)
     
     def __len__(self):
         return self._dataset_size
 
     def __getitem__(self, index):
-        i, tl_y, tl_x = compute_grid(index, self._n_files, self._min_H, self._min_W, self._patch_size)
+        i, tl_y, tl_x = compute_grid(index, len(self._z_list), self._min_H, self._min_W, self._patch_size)
 
         patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
@@ -225,17 +230,17 @@ class LabeledZarrDataset(ZarrDataset):
     """ A labeled dataset based on the zarr dataset class.
         The densely labeled targets are extracted from group '1'.
     """
-    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, compression_level=0, compressed_input=False):
-        super(LabeledZarrDataset, self).__init__(root, patch_size, dataset_size, level, mode, offset, transform)
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, compression_level=0, compressed_input=False, source_format='zarr', **kwargs):
+        super(LabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format)
         
         # Open the labels from group 1
-        self._lab_list = self._preload_files(group='1')
+        self._lab_list = self._preload_files(self._filenames, group='1')
 
         self._compression_level = compression_level
         self._compressed_input = compressed_input
         
     def __getitem__(self, index):
-        i, tl_y, tl_x = compute_grid(index, self._n_files, self._min_H, self._min_W, self._patch_size)
+        i, tl_y, tl_x = compute_grid(index, len(self._z_list), self._min_H, self._min_W, self._patch_size)
 
         patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
@@ -247,6 +252,62 @@ class LabeledZarrDataset(ZarrDataset):
         
         # Returns anything as label, to prevent an error during training
         return patch, target
+
+
+class IterableZarrDataset(IterableDataset, ZarrDataset):
+    """ A zarr-based dataset.
+        The structure of the zarr file is considered fixed, and only the component '0/0' is used.
+        Only two-dimensional (+color channels) data is supported by now.
+    """
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, source_format='zarr', **kwargs):
+        super(IterableZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format)
+        self._shuffle = mode == 'train'        
+        self.start = 0
+        self.end = len(self._filenames)
+
+    def _generator(self, files_iter_start, files_iter_end, examples_iter_start, examples_iter_end):
+        self._z_list = self._preload_files(self._filenames[files_iter_start:files_iter_end], group='0')
+
+        if self._shuffle:
+            for _ in range(examples_iter_start, examples_iter_end):
+                # Generate a random index from the range [0, max_examples-1]
+                index = random.randint(examples_iter_start, examples_iter_end)
+                yield self.__getitem__(index)
+        else:
+            for index in range(examples_iter_start, examples_iter_end):
+                yield self.__getitem__(index)
+    
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            files_iter_start = self.start
+            files_iter_end = self.end
+            examples_iter_start = 0
+            examples_iter_end = self._dataset_size
+
+        else:  # in a worker process
+            files_per_worker = np.round(np.linspace(self.start, self.end, worker_info.num_workers + 1)).astype(np.uint64)
+            examples_per_worker = np.round(np.linspace(0, self._dataset_size, worker_info.num_workers + 1)).astype(np.uint64)
+
+            worker_id = worker_info.id
+
+            files_iter_start = files_per_worker[worker_id]
+            files_iter_end = files_per_worker[worker_id + 1]
+
+            examples_iter_start = examples_per_worker[worker_id]
+            examples_iter_end = examples_per_worker[worker_id + 1]
+
+        return self._generator(files_iter_start, files_iter_end, examples_iter_start, examples_iter_end)
+
+
+class IterableLabeledZarrDataset(IterableZarrDataset, LabeledZarrDataset):
+    """ A labeled zarr-based dataset.
+        The structure of the zarr file is considered fixed, and only the component '0/0' is used.
+        The densely labeled targets are extracted from group '1'.
+        Only two-dimensional (+color channels) data is supported by now.
+    """
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, compression_level=0, compressed_input=False, source_format='zarr', **kwargs):
+        super(IterableLabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format, compression_level=compression_level, compressed_input=compressed_input)
 
 
 def get_zarr_transform(normalize=True, compressed_input=False):
@@ -324,21 +385,21 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test'])
     parser.add_argument('-o', '--offset', type=int, dest='offset', help='Offset added to the patches', default=0)
     parser.add_argument('-cl', '--comp-level', type=int, dest='compression_level', help='Compression level of the input', default=0)
-    parser.add_argument('-ex', '--extension', type=str, dest='source_format', help='Format of the input files', default='.zarr')
+    parser.add_argument('-ex', '--extension', type=str, dest='source_format', help='Format of the input files', default='zarr')
     
     args = parser.parse_args()
 
     if args.task == 'autoencoder':
         dataset = ZarrDataset
     else:
-        dataset = LabeledZarrDataset
+        dataset = IterableLabeledZarrDataset
 
     args.compressed_input = args.compression_level > 0
     ds = dataset(**args.__dict__)
 
     print('Dataset size:', len(ds))
     
-    dl = DataLoader(ds, shuffle=args.shuffled, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers)
+    dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers)
     print('Min image size: (%d, %d)' % (ds._min_H, ds._min_W))
 
     t_ini = perf_counter()
