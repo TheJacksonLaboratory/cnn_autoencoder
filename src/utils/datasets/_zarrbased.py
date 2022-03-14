@@ -265,16 +265,16 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
         self.start = 0
         self.end = len(self._filenames)
 
-    def _generator(self, files_iter_start, files_iter_end, examples_iter_start, examples_iter_end):
+    def _generator(self, files_iter_start, files_iter_end, num_examples):
         self._z_list = self._preload_files(self._filenames[files_iter_start:files_iter_end], group='0')
 
         if self._shuffle:
-            for _ in range(examples_iter_start, examples_iter_end):
+            for _ in range(num_examples):
                 # Generate a random index from the range [0, max_examples-1]
-                index = random.randint(examples_iter_start, examples_iter_end)
+                index = random.randint(0, num_examples)
                 yield self.__getitem__(index)
         else:
-            for index in range(examples_iter_start, examples_iter_end):
+            for index in range(num_examples):
                 yield self.__getitem__(index)
     
     def __iter__(self):
@@ -282,22 +282,20 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
         if worker_info is None:
             files_iter_start = self.start
             files_iter_end = self.end
-            examples_iter_start = 0
-            examples_iter_end = self._dataset_size
+            num_examples = self._dataset_size
 
         else:  # in a worker process
-            files_per_worker = np.round(np.linspace(self.start, self.end, worker_info.num_workers + 1)).astype(np.uint64)
-            examples_per_worker = np.round(np.linspace(0, self._dataset_size, worker_info.num_workers + 1)).astype(np.uint64)
+            files_per_worker = int(math.ceil(len(self._filenames) / worker_info.num_workers))
+            examples_per_worker = int(math.ceil(self._dataset_size / worker_info.num_workers))
 
             worker_id = worker_info.id
+            
+            files_iter_start = files_per_worker * worker_id
+            files_iter_end = min(len(self._filenames), files_per_worker + files_iter_start)
 
-            files_iter_start = files_per_worker[worker_id]
-            files_iter_end = files_per_worker[worker_id + 1]
+            num_examples = min(examples_per_worker, self._dataset_size - examples_per_worker * worker_id)
 
-            examples_iter_start = examples_per_worker[worker_id]
-            examples_iter_end = examples_per_worker[worker_id + 1]
-
-        return self._generator(files_iter_start, files_iter_end, examples_iter_start, examples_iter_end)
+        return self._generator(files_iter_start, files_iter_end, num_examples)
 
 
 class IterableLabeledZarrDataset(IterableZarrDataset, LabeledZarrDataset):
