@@ -1,6 +1,5 @@
 import math
 import os
-
 import random
 
 import numpy as np
@@ -184,7 +183,7 @@ class ZarrDataset(Dataset):
 
     def _preload_files(self, filenames, group='0'):
         if self._source_format == 'zarr':
-            # Open the tile downscaled to 'level'      
+            # Open the tile downscaled to 'level'
             z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in filenames]
 
         else:
@@ -299,7 +298,7 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
 
 
 class IterableLabeledZarrDataset(IterableZarrDataset, LabeledZarrDataset):
-    """ A labeled zarr-based dataset.
+    """ A labeled iterable zarr-based dataset.
         The structure of the zarr file is considered fixed, and only the component '0/0' is used.
         The densely labeled targets are extracted from group '1'.
         Only two-dimensional (+color channels) data is supported by now.
