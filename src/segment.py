@@ -190,9 +190,9 @@ def segment(args):
     # Conver the single zarr file into a dataset to be iterated
     transform = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
 
-    if not args.input[0].endswith(args.source_format):
+    if not args.input[0].lower().endswith(args.source_format.lower()):
         # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith(args.source_format), os.listdir(args.input[0]))))
+        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.lower().endswith(args.source_format.lower()), os.listdir(args.input[0]))))
     else:
         input_fn_list = args.input
         
