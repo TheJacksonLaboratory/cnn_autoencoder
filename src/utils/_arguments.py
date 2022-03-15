@@ -116,7 +116,8 @@ def get_testing_args():
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
-    parser.add_argument('-z', '--zarr', action='store_true', dest='use_zarr', help='Input and output should be stored as zarr files')
+    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+    parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
     
     parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
     
