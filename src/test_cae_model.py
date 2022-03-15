@@ -31,7 +31,7 @@ def main(args):
         logger.info('All %s images decompressed successfully' % args.n_imgs)
         
     else:
-        data_queue = utils.get_data(args, normalize=False)
+        data_queue = utils.get_data(args)
 
         if args.dataset == 'MNIST':
             img_ext = 'pgm'
