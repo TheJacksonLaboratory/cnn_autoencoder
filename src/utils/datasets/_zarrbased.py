@@ -264,9 +264,7 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
         self.start = 0
         self.end = len(self._filenames)
 
-    def _generator(self, files_iter_start, files_iter_end, num_examples):
-        self._z_list = self._preload_files(self._filenames[files_iter_start:files_iter_end], group='0')
-
+    def _generator(self, num_examples):
         if self._shuffle:
             for _ in range(num_examples):
                 # Generate a random index from the range [0, max_examples-1]
@@ -279,8 +277,6 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
-            files_iter_start = self.start
-            files_iter_end = self.end
             num_examples = self._dataset_size
 
         else:  # in a worker process
@@ -294,7 +290,9 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
 
             num_examples = min(examples_per_worker, self._dataset_size - examples_per_worker * worker_id)
 
-        return self._generator(files_iter_start, files_iter_end, num_examples)
+            self._z_list = self._preload_files(self._filenames[files_iter_start:files_iter_end], group='0')
+
+        return self._generator(num_examples)
 
 
 class IterableLabeledZarrDataset(IterableZarrDataset, LabeledZarrDataset):
@@ -389,7 +387,7 @@ if __name__ == '__main__':
     if args.task == 'autoencoder':
         dataset = ZarrDataset
     else:
-        dataset = IterableLabeledZarrDataset
+        dataset = IterableZarrDataset
 
     args.compressed_input = args.compression_level > 0
     ds = dataset(**args.__dict__)
@@ -403,8 +401,8 @@ if __name__ == '__main__':
 
     for i, (x, t) in enumerate(dl):
         print('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size() if isinstance(t, torch.torch.Tensor) else None))
-        plt.imshow(x[0].permute(1, 2, 0))
-        plt.show()
+        # plt.imshow(x[0].permute(1, 2, 0))
+        # plt.show()
 
         if i >= args.n_batches:
             break
