@@ -48,7 +48,7 @@ def get_training_args(task='autoencoder'):
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=128)
-    parser.add_argument('-nn', '--no-normal', action='store_false', dest='normalize', help='Do not normalize input data', default=True)
+    
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
 
@@ -100,7 +100,6 @@ def get_training_args(task='autoencoder'):
 def get_testing_args():
     parser = argparse.ArgumentParser('Testing of an image compression-decompression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
-
     
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
