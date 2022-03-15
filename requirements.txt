@@ -1,0 +1,7 @@
+fsspec
+imagecodecs
+matplotlib
+numcodecs
+s3fs
+tqdm
+zarr

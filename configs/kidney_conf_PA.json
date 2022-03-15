@@ -20,6 +20,5 @@
     "criterion": "RD_PA",
     "energy_limit": 0.7,
     "model_type": "AutoEncoder",
-    "patch_size": 128,
     "use_gpu": true
 }

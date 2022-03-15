@@ -20,6 +20,5 @@
     "distorsion_lambda": 0.01,
     "criterion": "RD",
     "model_type": "AutoEncoder",
-    "patch_size": 128,
     "use_gpu": true
 }
