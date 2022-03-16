@@ -5,7 +5,8 @@
     "print_log": false,
     "steps": 2e6,
     "checkpoint_steps": 5e3,
-    "resume": "C:\\Users\\cervaf\\Documents\\Logging\\segmentation_training\\best_ver0.5.5_7744820.pth", 
+    "resume": "C:\\Users\\cervaf\\Documents\\Logging\\segmentation_training\\tested\\best_ver0.5.5_64820.pth", 
+    "autoencoder_model": "C:\\Users\\cervaf\\Documents\\Logging\\autoencoder_training\\tested\\best_ver0.5.5_124450.pth", 
     "log_dir": "C:\\Users\\cervaf\\Documents\\Logging\\segmentation_training", 
     "data_dir": "C:\\Users\\cervaf\\Documents\\Datasets\\Kidney\\Labeled_examples",
     "dataset": "Histology",
@@ -19,7 +20,7 @@
     "compression_level": 3,
     "criterion": "CE",
     "patch_size": 512,
-    "model_type": "UNet",
+    "model_type": "DecoderUNet",
     "warmup": 1e4,
     "patience": 10,
     "use_gpu": true

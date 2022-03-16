@@ -162,7 +162,7 @@ class ZarrDataset(Dataset):
         elif root.lower().endswith(self._source_format):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
-        elif root.lower().endswith('.txt'):
+        elif root.lower().endswith('txt'):
             # If the input is a text file with a list of url/paths, create the filenames list from it
             with open(root, mode='r') as f:
                 self._filenames = [l.strip('\n\r') for l in f.readlines()]
@@ -185,6 +185,7 @@ class ZarrDataset(Dataset):
         if self._source_format == 'zarr':
             # Open the tile downscaled to 'level'
             z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in filenames]
+
 
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
@@ -387,7 +388,7 @@ if __name__ == '__main__':
     if args.task == 'autoencoder':
         dataset = ZarrDataset
     else:
-        dataset = IterableZarrDataset
+        dataset = LabeledZarrDataset
 
     args.compressed_input = args.compression_level > 0
     ds = dataset(**args.__dict__)
