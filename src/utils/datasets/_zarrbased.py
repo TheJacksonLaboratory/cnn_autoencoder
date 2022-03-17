@@ -315,10 +315,12 @@ def get_zarr_transform(normalize=True, compressed_input=False):
          transforms.ConvertImageDtype(torch.float32)
         ]
     
-    if normalize and compressed_input:
-        prep_trans_list.append(transforms.Normalize(mean=0.5, std=1.0/127.5))        
-    else:
-        prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+    if normalize:
+        # The ToTensor transforms the input into the range [0, 1]. However, if the input is compressed, it is required in the range [-127.5, 127.5]
+        if compressed_input:
+            prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
+        else:
+            prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
     
     return transforms.Compose(prep_trans_list)
 
