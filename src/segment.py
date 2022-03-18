@@ -27,7 +27,7 @@ def forward_undecoded_step(x, seg_model, decoder_model=None):
 def forward_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
         x_rec, x_brg = decoder_model.inflate(x, color=True)
-    y = seg_model(x / 127.5, x_brg[:0:-1])
+    y = seg_model(x / 127.5, map(lambda b: b/127.5, x_brg[:0:-1]))
     
     return y
 
@@ -35,7 +35,7 @@ def forward_decoded_step(x, seg_model, decoder_model=None):
 def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
         x_brg = decoder_model.module.inflate(x, color=False)
-    y = seg_model(x / 127.5, x_brg[:0:-1])
+    y = seg_model(x / 127.5, map(lambda b: b/127.5, x_brg[:0:-1]))
     return y
 
 
@@ -134,8 +134,8 @@ def setup_network(state):
     seg_model.load_state_dict(state['model'])
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    seg_model = nn.DataParallel(seg_model)
     if state['args']['gpu']:
+        seg_model = nn.DataParallel(seg_model)
         seg_model.cuda()
 
     # Define what funtion use in the feed-forward step

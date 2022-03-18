@@ -245,15 +245,19 @@ class DecoderUNet(nn.Module):
     It is intended to work on compressed representations obtained from a compressor encoder.
     """
     def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.5, bias=True, use_bridge=False, **kwargs):
-        super(DecoderUNet, self).__init__()
+        super(DecoderUNet, self).__init__()        
         self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, use_bridge, groups, batch_norm, dropout, bias)
         self._compression_level = compression_level
+        self._channels_org = channels_org
 
     def inflate(self, x, color=False):
         """ Mimics the inflate function of a trained decoder/synthesizer model
         """
         b, _, h, w = x.size()
         fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level+1)]
+        if color:
+            return torch.zeros([b, self._channels_org, h * 2**self._compression_level, w * 2**self._compression_level]).to(x.device), fx_brg
+        
         return fx_brg
 
     def forward(self, x, fx_brg):        
