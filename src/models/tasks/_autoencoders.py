@@ -250,7 +250,7 @@ class Synthesizer(nn.Module):
         fx = x.clone().to(self.synthesis_track[0].weight.device)
         for layer in self.synthesis_track[:-1]:
             fx = layer(fx)
-            x_brg.append(fx)
+            x_brg.append(fx / 127.5)
         
         if not color:
             return x_brg
