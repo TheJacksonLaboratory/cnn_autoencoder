@@ -137,7 +137,9 @@ def setup_network(state):
     seg_model_class = seg_model_types.get(state['args']['model_type'], None)
     if seg_model_class is None:
         raise ValueError('Model type %s not supported' % state['args']['model_type'])
-    
+
+    # Temporal testing:
+    state['args']['batch_norm'] = True
     seg_model = seg_model_class(**state['args'])       
     seg_model.load_state_dict(state['model'])
 
