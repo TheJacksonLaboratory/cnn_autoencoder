@@ -59,7 +59,7 @@ def compress_zarr(args):
     output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_comp.zarr'), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
     
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        histo_ds = utils.Histology_seg_zarr(root=in_fn, patch_size=args.patch_size, offset=offset, transform=transform)
+        histo_ds = utils.Histology_zarr(root=in_fn, patch_size=args.patch_size, offset=offset, transform=transform)
         data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
         
         H, W = histo_ds._z_list[0].shape[-2:]
