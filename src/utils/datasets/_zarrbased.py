@@ -325,7 +325,7 @@ def get_zarr_transform(normalize=True, compressed_input=False):
     return transforms.Compose(prep_trans_list)
 
 
-def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, **kwargs):
+def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, **kwargs):
     """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
     The size of the data queue can be virtually infinite, for that reason, a conservative size has been defined using the following variables.
     1. TRAIN_DATASIZE: 1200000 for autoencoder models, and all available patches for segmenetation models
@@ -359,8 +359,8 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     hist_train_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
     hist_valid_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
-    # train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=gpu)
-    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
+    # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
+    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=workers, pin_memory=gpu)
     valid_queue = DataLoader(hist_valid_data, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
 
     return train_queue, valid_queue

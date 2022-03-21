@@ -26,7 +26,7 @@ def forward_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
         x_brg = decoder_model.inflate(x, color=False)
         
-    y = seg_model(x/127.5, x_brg[:0:-1])
+    y = seg_model(x, x_brg[:0:-1])
 
     return y
 
@@ -35,7 +35,7 @@ def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
         x_brg = decoder_model.module.inflate(x, color=False)
         
-    y = seg_model(x/127.5, x_brg[:0:-1])
+    y = seg_model(x, x_brg[:0:-1])
 
     return y
 

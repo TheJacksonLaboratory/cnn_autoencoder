@@ -34,7 +34,7 @@ def override_config_file(parser):
     return args
 
 
-def get_training_args(task='autoencoder'):
+def get_training_args(task='autoencoder', parser_only=False):
     parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
 
@@ -89,6 +89,9 @@ def get_training_args(task='autoencoder'):
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
+    if parser_only:
+        return parser
+
     args = override_config_file(parser)
 
     args.mode = 'training'
@@ -97,7 +100,7 @@ def get_training_args(task='autoencoder'):
     return args
 
 
-def get_testing_args():
+def get_testing_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image compression-decompression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
     
@@ -123,6 +126,9 @@ def get_testing_args():
     
     parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
     
+    if parser_only:
+        return parser
+
     args = override_config_file(parser)
     
     args.mode = 'testing'
@@ -130,7 +136,7 @@ def get_testing_args():
     return args
 
 
-def get_compress_args():
+def get_compress_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image compression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
 
@@ -150,6 +156,9 @@ def get_compress_args():
     
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
 
+    if parser_only:
+        return parser
+
     args = override_config_file(parser)
     
     args.mode = 'compress'
@@ -157,7 +166,7 @@ def get_compress_args():
     return args
 
 
-def get_decompress_args():
+def get_decompress_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image decompression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
 
@@ -176,6 +185,9 @@ def get_decompress_args():
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
+    if parser_only:
+        return parser
+        
     args = override_config_file(parser)
 
     args.mode = 'decompress'
@@ -183,7 +195,7 @@ def get_decompress_args():
     return args
 
 
-def get_segment_args():
+def get_segment_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image segmentation model')
     
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
@@ -196,6 +208,7 @@ def get_segment_args():
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
 
     parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
+    parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
     
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
@@ -205,6 +218,9 @@ def get_segment_args():
     parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
+    
+    if parser_only:
+        return parser
     
     args = override_config_file(parser)
 

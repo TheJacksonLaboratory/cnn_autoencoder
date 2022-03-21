@@ -30,7 +30,7 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     
     comp_group.create_dataset('0', shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), chunks=(1, channels_bn, comp_patch_size, comp_patch_size), dtype='u1', compressor=compressor)
 
-    z_comp = zarr.open('%s/0/0' % output_dir, mode='a')
+    z_comp = comp_group['0/0']
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
