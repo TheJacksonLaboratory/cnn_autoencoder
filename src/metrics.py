@@ -60,12 +60,14 @@ def metrics(args):
     utils.setup_logger(args)
     logger = logging.getLogger(args.mode + '_log')
 
-    avg_metrics = dict(roc=0, acc=0, prec=0, recall=0, f1=0)
+    avg_metrics = dict(roc=0, acc=0, prec=0, recall=0, f1=0, time=0)
 
     all_preds = []
     all_targets = []
 
+    e_time = perf_counter()
     for i, group in enumerate(segment.segment(args)):
+        e_time = perf_counter() - e_time
         prediction = group['0/0'][:].flatten()
         target = group['1/0'][:].flatten()
         
@@ -77,7 +79,13 @@ def metrics(args):
         for m_k in scores.keys():
             avg_metrics[m_k] = avg_metrics[m_k] + scores[m_k]
             logger.info('[Image %i] Metric %s: %0.4f' % (i+1, m_k, scores[m_k]))
-
+        
+        avg_metrics['time'] = avg_metrics['time'] + e_time
+        logger.info('[Image %i] Execution time: %0.4f' % (i+1, e_time))
+        
+        # Time stamp for prediciton of next image 
+        e_time = perf_counter()
+    
     for m_k in avg_metrics.keys():
         avg_metrics[m_k] = avg_metrics[m_k] / (i+1)
         logger.info('Average metric %s: %0.4f' % (m_k, avg_metrics[m_k]))
