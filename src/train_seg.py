@@ -373,7 +373,7 @@ def main(args):
 
     seg_model, forward_function = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args)
-    optimizer, scheduler = setup_optim(seg_model, scheduler_type=args.scheduler)
+    optimizer, scheduler = setup_optim(seg_model, args)
 
     if args.resume is not None:
         resume_checkpoint(seg_model, optimizer, scheduler, args.resume, gpu=args.gpu)
