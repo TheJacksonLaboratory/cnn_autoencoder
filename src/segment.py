@@ -214,8 +214,7 @@ def segment(args):
     # Segment each file by separate    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
         seg_group = segment_image(forward_function=forward_function, filename=in_fn, output_dir=out_fn, classes=state['args']['classes'], input_comp_level=input_comp_level, input_patch_size=input_patch_size, output_patch_size=args.patch_size, input_offset=input_offset, output_offset=output_offset, transform=transform, source_format=args.source_format, destination_format=args.destination_format, workers=args.workers, is_labeled=args.is_labeled)
-        if 'memory' in args.destination_format:
-            yield seg_group
+        yield seg_group
 
 
 if __name__ == '__main__':
@@ -223,6 +222,7 @@ if __name__ == '__main__':
     
     utils.setup_logger(args)
     
-    segment(args)
+    for _ in segment(args):
+        logging.info('Image segmented successfully')
     
     logging.shutdown()

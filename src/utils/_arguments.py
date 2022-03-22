@@ -86,6 +86,7 @@ def get_training_args(task='autoencoder', parser_only=False):
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
     parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
+    parser.add_argument('-wd', '--wdecay', type=float, dest='weight_decay', help='Optimizer weight decay (L2 regularizer)', default=0)
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
