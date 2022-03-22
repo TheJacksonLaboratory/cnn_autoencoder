@@ -299,7 +299,7 @@ def setup_criteria(args):
     return criterion, stopping_criteria
 
 
-def setup_optim(seg_model, scheduler_type='None'):
+def setup_optim(seg_model, args):
     """ Setup a loss function for the neural network optimization, and training stopping criteria.
 
     Parameters
@@ -318,15 +318,15 @@ def setup_optim(seg_model, scheduler_type='None'):
     """
 
     # By now, only the ADAM optimizer is used
-    optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate)
+    optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     
     # Only the the reduce on plateau, or none at all scheduler are used
-    if scheduler_type == 'None':
+    if args.scheduler_type == 'None':
         scheduler = None
-    elif scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[scheduler_type](optimizer=optimizer)
+    elif args.scheduler_type in scheduler_options.keys():
+        scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer)
     else:
-        raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
+        raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler_type)
 
     return optimizer, scheduler
 
