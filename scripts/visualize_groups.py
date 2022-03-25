@@ -1,4 +1,3 @@
-from re import X
 from sklearn.manifold import TSNE, Isomap
 from skimage.filters import threshold_multiotsu
 import numpy as np
@@ -11,13 +10,14 @@ def sigmoid(x):
 
 idx = 100
 
-z_feats = zarr.open(r'C:\Users\cervaf\Documents\Logging\segmentation_training\results\%04d_feats.zarr' % idx, mode='r')
+z_feats = zarr.open(r'C:\Users\cervaf\Documents\Logging\segmentation_training\results\%04d_comp_feats.zarr' % idx, mode='r')
 z = zarr.open(r'C:\Users\cervaf\Documents\Datasets\Kidney\Labeled_examples\%04d.zarr' % idx, mode='r')
 
 logits = z_feats['0/0'] 
 pred = sigmoid(logits[:])
 feats = z_feats['1/0'] 
 org = z['0/0']
+
 
 h, w = org.shape[-2:]
 mosaic = np.zeros([11*h, 11*w])
@@ -47,7 +47,7 @@ regions = np.digitize(gray_pred, bins=thresh)
 thresh_probs = sigmoid(thresh/255 * (np.max(logits[0, 0]) - np.min(logits[0, 0])) + np.min(logits[0, 0]))
 print(thresh_probs)
 
-plt.imshow(regions, cmap='gray')
+plt.imshow(regions, cmap=plt.cm.Spectral)
 plt.show()
 
 sample_idx = np.random.choice(regions.size, 1000, replace=False)
@@ -57,7 +57,6 @@ X = feats[0, :].transpose(1, 2, 0)[(y_idx, x_idx)].astype(np.float64)
 
 embedded_tsne = TSNE(n_components=2, learning_rate=200.0, init='random', n_jobs=4).fit_transform(X)
 embedded_isomap = Isomap(n_neighbors=5, n_components=2, n_jobs=4).fit_transform(X)
-
 
 plt.subplot(2, 3, 1)
 plt.scatter(embedded_tsne[:, 0], embedded_tsne[:, 1], s=2, c=regions[(y_idx, x_idx)], cmap=plt.cm.Spectral)

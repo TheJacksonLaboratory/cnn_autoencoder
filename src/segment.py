@@ -59,9 +59,8 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
 
         comp_group = group.create_group('0', overwrite=True)
     
-        comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
+        z_seg = comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
 
-        z_seg = comp_group['0']
     else:
         z_seg = zarr.zeros(shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
 

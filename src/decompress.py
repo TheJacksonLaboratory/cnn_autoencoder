@@ -33,9 +33,7 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
         group = zarr.group(output_dir, overwrite=True)
         comp_group = group.create_group('0', overwrite=True)
     
-        comp_group.create_dataset('0', shape=(1, channels_org, H, W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
-
-        z_decomp = zarr.open('%s/0/0' % output_dir, mode='a')
+        z_decomp = comp_group.create_dataset('0', shape=(1, channels_org, H, W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
     else:
         z_decomp = zarr.zeros(shape=(1, channels_org, H, W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
 

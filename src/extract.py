@@ -16,39 +16,54 @@ import models
 import utils
 
 seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
+cae_model_types = {"MaskedAutoEncoder": models.Synthesizer, "AutoEncoder": models.Synthesizer}
 
 
-
-def forward_undecoded_step(x, seg_model, decoder_model=None):
+def forward_undecoded_step(x, seg_model=None, dec_model=None):
     y, fx = seg_model.extract_features(x)
     return y, fx
 
 
-def forward_parallel_undecoded_step(x, seg_model, decoder_model=None):
+def forward_parallel_undecoded_step(x, seg_model=None, dec_model=None):
     y, fx = seg_model.module.extract_features(x)
     return y, fx
 
 
-def forward_decoded_step(x, seg_model, decoder_model=None):
+def forward_decoded_step(x, seg_model=None, dec_model=None):
     # The compressed representation is stored as an unsigned integer between [0, 255].
     # The transformation used in the dataloader transforms it into the range [-127.5, 127.5].
     # However, the synthesis track of the segmentation task works better if the compressed representation is in the range [-1, 1].
     # For this reason the tensor x is divided by 127.5.
     with torch.no_grad():
-        _, x_brg = decoder_model.inflate(x, color=False)
-    y, fx = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
-    
+        x_brg = dec_model.inflate(x, color=False)
+    y, _ = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
+    fx = x_brg[-1]
     return y, fx
 
 
-def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
+def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
     with torch.no_grad():
-        x_brg = decoder_model.module.inflate(x, color=False)
-    y, fx = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
+        x_brg = dec_model.module.inflate(x, color=False)
+    y, _ = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
+    fx = x_brg[-1]
+    return y, fx
+
+# These two functions are for the reconstruction step of the decompression/synthesis model for image reconstruction
+def forward_reconstruct_step(x, seg_model=None, dec_model=None):
+    with torch.no_grad():
+        y, x_brg = dec_model.inflate(x, color=True)
+    fx = x_brg[-1]
     return y, fx
 
 
-def extract_image(forward_function, filename, output_dir, features, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers):
+def forward_parallel_reconstruct_step(x, seg_model=None, dec_model=None):
+    with torch.no_grad():
+        y, x_brg = dec_model.module.inflate(x, color=True)
+    fx = x_brg[-1]
+    return y, fx
+
+
+def extract_image(forward_function, filename, output_dir, features, output_channels, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
@@ -67,11 +82,8 @@ def extract_image(forward_function, filename, output_dir, features, classes, inp
         comp_group_feat = group.create_group('1', overwrite=True)
     
         # The sub-group 0 is meant to store the image at maximum resolution, if different resolutions are generated in the future, use the next sub-groups under the corresponding main group
-        comp_group_pred.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
-        comp_group_feat.create_dataset('0', shape=(1, features, H, W), chunks=(1, features, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
-
-        z_pred = zarr.open('%s/0/0' % output_dir, mode='a')
-        z_feat = zarr.open('%s/1/0' % output_dir, mode='a')
+        z_pred = comp_group_pred.create_dataset('0', shape=(1, output_channels, H, W), chunks=(1, output_channels, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
+        z_feat = comp_group_feat.create_dataset('0', shape=(1, features, H, W), chunks=(1, features, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
@@ -93,7 +105,7 @@ def extract_image(forward_function, filename, output_dir, features, classes, inp
 
 
 def setup_network(state):
-    """ Setup a nerual network for object segmentation.
+    """ Setup a nerual network for object segmentation/autoencoder.
 
     Parameters
     ----------
@@ -101,73 +113,96 @@ def setup_network(state):
         A checkpoint state saved during the network training
     
     Returns
-    -------
-    seg_model : nn.Module
-        The segmentation mode implemented by a convolutional neural network
-    
+    -------    
     forward_function : function
         The function to be used as feed-forward step
-    """
-    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
-    state['args']['compressed_input'] = 'Decoder' in state['args']['model_type']
+    
+    output_channels : int
+        The number of channels in the output image.
+        For segmentation models, it is the number of classes, whereas for autoencoder models, it is the number of color channels.
 
-    # If a decoder model is passed as argument, use the decoded step version of the feed-forward step    
-    if state['args']['autoencoder_model'] is None:
-        if 'Decoder' in state['args']['model_type'] or 'NoBridge' in state['args']['model_type']:
+    """
+    state['args']['compressed_input'] = 'Decoder' in state['args']['model_type'] or 'AutoEncoder' in state['args']['model_type']
+
+    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
+    if state['args']['task'] == 'segmentation':
+
+        if ('Decoder' in state['args']['model_type'] and state['args']['autoencoder_model'] is None) or 'NoBridge' in state['args']['model_type']:
             state['args']['use_bridge'] = False
         else:
             state['args']['use_bridge'] = True
-    else:
-        if not state['args']['gpu']:
-            checkpoint_state = torch.load(state['args']['autoencoder_model'], map_location=torch.device('cpu'))
+         
+        if state['args']['autoencoder_model'] is not None:
+            # If a decoder model is passed as argument, use the decoded step version of the feed-forward step
+            if not state['args']['gpu']:
+                checkpoint_state = torch.load(state['args']['autoencoder_model'], map_location=torch.device('cpu'))
+            else:
+                checkpoint_state = torch.load(state['args']['autoencoder_model'])
+        
+            dec_model = models.Synthesizer(**checkpoint_state['args'])
+            dec_model.load_state_dict(checkpoint_state['decoder'])
+
+            if state['args']['gpu']:
+                dec_model = nn.DataParallel(dec_model)        
+                dec_model.cuda()
+
+            dec_model.eval()
+            state['args']['use_bridge'] = True
         else:
-            checkpoint_state = torch.load(state['args']['autoencoder_model'])
-       
-        decoder_model = models.Synthesizer(**checkpoint_state['args'])
-        decoder_model.load_state_dict(checkpoint_state['decoder'])
+            dec_model = None
+            
+        seg_model_class = seg_model_types.get(state['args']['model_type'], None)
+        if seg_model_class is None:
+            raise ValueError('Model type %s not supported' % state['args']['model_type'])
 
+        seg_model = seg_model_class(**state['args'])
+        seg_model.load_state_dict(state['model'])
+        
         if state['args']['gpu']:
-            decoder_model = nn.DataParallel(decoder_model)        
-            decoder_model.cuda()
+            seg_model = nn.DataParallel(seg_model)
+            seg_model.cuda()
 
-        decoder_model.eval()
-        state['args']['use_bridge'] = True
-        print(decoder_model)
-    
-    seg_model_class = seg_model_types.get(state['args']['model_type'], None)
-    if seg_model_class is None:
-        raise ValueError('Model type %s not supported' % state['args']['model_type'])
+        output_channels = state['args']['classes']
 
-    # Temporal testing:
-    state['args']['batch_norm'] = True
-    seg_model = seg_model_class(**state['args'])       
-    seg_model.load_state_dict(state['model'])
+    elif state['args']['task'] == 'autoencoder':
+        seg_model = None
 
-    # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    if state['args']['gpu']:
-        seg_model = nn.DataParallel(seg_model)
-        seg_model.cuda()
+        cae_model_class = cae_model_types.get(state['args']['model_type'], None)
+        if cae_model_class is None:
+            raise ValueError('Model type %s not supported' % state['args']['model_type'])
+
+        dec_model = cae_model_class(**state['args'])
+        dec_model.load_state_dict(state['decoder'])
+        
+        if state['args']['gpu']:
+            dec_model = nn.DataParallel(dec_model)
+            dec_model.cuda()
+
+        output_channels = state['args']['channels_org']
 
     # Define what funtion use in the feed-forward step
-    if state['args']['autoencoder_model'] is None:
-        if 'Decoder' in state['args']['model_type']:
-            # If no decoder is loaded, use the inflate function inside the segmentation model
-            if state['args']['gpu']:
-                forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, decoder_model=seg_model)
-            else:
-                forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=seg_model)   
+    if seg_model is not None and dec_model is None:
+        # Segmentation w/o decoder
+        if not state['args']['gpu']:
+            forward_function = partial(forward_undecoded_step, seg_model=seg_model, dec_model=dec_model)
         else:
-            if state['args']['gpu']:
-                forward_function = partial(forward_parallel_undecoded_step, seg_model=seg_model, decoder_model=None)
-            else:
-                forward_function = partial(forward_undecoded_step, seg_model=seg_model, decoder_model=None)
-    else:
-        if state['args']['gpu']:
-            forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
+            forward_function = partial(forward_parallel_undecoded_step, seg_model=seg_model, dec_model=dec_model)
+    
+    elif seg_model is not None and dec_model is not None:
+        # Segmentation w/ decoder
+        if not state['args']['gpu']:
+            forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, dec_model=dec_model)
         else:
-            forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
+            forward_function = partial(forward_decoded_step, seg_model=seg_model, dec_model=dec_model)
 
-    return seg_model, forward_function
+    elif seg_model is None and dec_model is not None:
+        # Decoder
+        if not state['args']['gpu']:
+            forward_function = partial(forward_reconstruct_step, seg_model=seg_model, dec_model=dec_model)
+        else:
+            forward_function = partial(forward_parallel_reconstruct_step, seg_model=seg_model, dec_model=dec_model)
+    
+    return forward_function, output_channels
 
 
 def extract(args):
@@ -187,7 +222,7 @@ def extract(args):
     for k in args.__dict__.keys():
         state['args'][k] = args.__dict__[k]
 
-    seg_model, forward_function = setup_network(state)
+    forward_function, output_channels = setup_network(state)
 
     if state['args']['compressed_input']:
         input_comp_level = compression_level
@@ -196,11 +231,8 @@ def extract(args):
         input_comp_level = 0
     
     input_patch_size = args.patch_size // 2 ** input_comp_level
-
-    logger.debug('Model')
-    logger.debug(seg_model)
     
-    # Conver the single zarr file into a dataset to be iterated
+    # Convert the single zarr file into a dataset to be iterated
     transform = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
 
     if not args.input[0].lower().endswith(args.source_format.lower()):
@@ -213,7 +245,7 @@ def extract(args):
 
     # Segment each file by separate    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        extract_image(forward_function=forward_function, filename=in_fn, output_dir=out_fn, features=state['args']['channels_net'], classes=state['args']['classes'], input_comp_level=input_comp_level, input_patch_size=input_patch_size, output_patch_size=args.patch_size, input_offset=input_offset, output_offset=output_offset, transform=transform, source_format=args.source_format, destination_format=args.destination_format, workers=args.workers)
+        extract_image(forward_function=forward_function, filename=in_fn, output_dir=out_fn, features=state['args']['channels_net'], output_channels=output_channels, input_comp_level=input_comp_level, input_patch_size=input_patch_size, output_patch_size=args.patch_size, input_offset=input_offset, output_offset=output_offset, transform=transform, source_format=args.source_format, destination_format=args.destination_format, workers=args.workers)
 
 
 if __name__ == '__main__':
