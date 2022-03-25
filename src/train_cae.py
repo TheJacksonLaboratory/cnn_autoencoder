@@ -1,6 +1,4 @@
 import logging
-from multiprocessing.sharedctypes import Value
-from typing import ValuesView
 
 import numpy as np
 import torch
@@ -16,6 +14,7 @@ from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
 model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
+
 
 def valid(cae_model, data, criterion, args):
     """ Validation step.

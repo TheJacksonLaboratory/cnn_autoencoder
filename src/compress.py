@@ -104,6 +104,6 @@ if __name__ == '__main__':
     
     utils.setup_logger(args)
     
-    compress(args)
+    compress_zarr(args)
     
     logging.shutdown()

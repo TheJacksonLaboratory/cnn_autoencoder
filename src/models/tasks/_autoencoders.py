@@ -259,6 +259,18 @@ class Synthesizer(nn.Module):
         
         return fx, x_brg
 
+    def inflate(self, x, color=True):
+        x_brg = []
+        fx = x.clone()
+        for layer in self.synthesis_track[:-1]:
+            fx = layer(fx)
+            x_brg.append(fx)
+        
+        if color:
+            fx = self.synthesis_track[-1](fx)
+        
+        return fx, x_brg
+
     def forward(self, x):
         x = self.synthesis_track(x)
         return x
