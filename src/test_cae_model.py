@@ -14,24 +14,24 @@ DATASETS = ['MNIST', 'ImageNet', 'Histology']
 def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
-    if args.use_zarr:        
+    if args.use_zarr:
         fn_list = [os.path.join(args.data_dir, fn) for fn in sorted(os.listdir(args.data_dir)) if fn.endswith('.zarr')]
-        comp_list = [os.path.join(args.output_dir, 'rec_comp.zarr') for fn in sorted(os.listdir(args.data_dir)) if fn.endswith('.zarr')]
+        comp_list = [os.path.join(args.output_dir, '%04d_comp.zarr' % i) for i in range(args.n_imgs)]
 
         fn_list = fn_list[:args.n_imgs]
         comp_list = comp_list[:args.n_imgs]
         
         # Compress the list of images
         args.input = fn_list
-        compress.compress_zarr(args)
+        compress.compress(args)
         logger.info('All %s images compressed successfully' % args.n_imgs)
 
         args.input = comp_list
-        decompress.decompress_zarr(args)
+        decompress.decompress(args)
         logger.info('All %s images decompressed successfully' % args.n_imgs)
         
     else:
-        data_queue = utils.get_data(args)
+        data_queue = utils.get_data(args, normalize=False)
 
         if args.dataset == 'MNIST':
             img_ext = 'pgm'

@@ -36,17 +36,16 @@ def forward_decoded_step(x, seg_model=None, dec_model=None):
     # For this reason the tensor x is divided by 127.5.
     with torch.no_grad():
         x_brg = dec_model.inflate(x, color=False)
-    y, _ = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
-    fx = x_brg[-1]
+    y, fx = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
     return y, fx
 
 
 def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
     with torch.no_grad():
         x_brg = dec_model.module.inflate(x, color=False)
-    y, _ = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
-    fx = x_brg[-1]
+    y, fx = seg_model.extract_features(x / 127.5, x_brg[:0:-1])
     return y, fx
+
 
 # These two functions are for the reconstruction step of the decompression/synthesis model for image reconstruction
 def forward_reconstruct_step(x, seg_model=None, dec_model=None):
@@ -183,24 +182,24 @@ def setup_network(state):
     # Define what funtion use in the feed-forward step
     if seg_model is not None and dec_model is None:
         # Segmentation w/o decoder
-        if not state['args']['gpu']:
-            forward_function = partial(forward_undecoded_step, seg_model=seg_model, dec_model=dec_model)
-        else:
+        if state['args']['gpu']:
             forward_function = partial(forward_parallel_undecoded_step, seg_model=seg_model, dec_model=dec_model)
+        else:
+            forward_function = partial(forward_undecoded_step, seg_model=seg_model, dec_model=dec_model)
     
     elif seg_model is not None and dec_model is not None:
         # Segmentation w/ decoder
-        if not state['args']['gpu']:
+        if state['args']['gpu']:
             forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, dec_model=dec_model)
         else:
             forward_function = partial(forward_decoded_step, seg_model=seg_model, dec_model=dec_model)
 
     elif seg_model is None and dec_model is not None:
         # Decoder
-        if not state['args']['gpu']:
-            forward_function = partial(forward_reconstruct_step, seg_model=seg_model, dec_model=dec_model)
-        else:
+        if state['args']['gpu']:
             forward_function = partial(forward_parallel_reconstruct_step, seg_model=seg_model, dec_model=dec_model)
+        else:
+            forward_function = partial(forward_reconstruct_step, seg_model=seg_model, dec_model=dec_model)
     
     return forward_function, output_channels
 

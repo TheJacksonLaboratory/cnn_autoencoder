@@ -49,7 +49,7 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
         for i, (x, _) in enumerate(data_queue):
             y_q, _ = comp_model(x)
             y_q = y_q + 127.5
-
+            
             y_q = y_q.round().to(torch.uint8)
             y_q = y_q.detach().cpu().numpy()
 
@@ -105,7 +105,7 @@ def compress(args):
     else:
         input_fn_list = args.input
         
-    output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_comp.zarr'), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
+    output_fn_list = [os.path.join(args.output_dir, '%04d_comp.zarr' % i) for i in range(len(input_fn_list))]
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):

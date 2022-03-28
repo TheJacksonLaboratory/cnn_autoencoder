@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
-idx = 100
+idx = 205
 
 z_feats = zarr.open(r'C:\Users\cervaf\Documents\Logging\segmentation_training\results\%04d_comp_feats.zarr' % idx, mode='r')
 z = zarr.open(r'C:\Users\cervaf\Documents\Datasets\Kidney\Labeled_examples\%04d.zarr' % idx, mode='r')
@@ -26,10 +26,15 @@ for j in range(11):
         if 11*j+i >= 128: break
         mosaic[h*j:h*(j+1), w*i:w*(i+1)] = feats[0, 11*j+i, ...]
 
-plt.subplot(1, 2, 1)
+plt.subplot(1, 3, 1)
 plt.imshow(logits[0, 0])
-plt.subplot(1, 2, 2)
+plt.title('Logits')
+plt.subplot(1, 3, 2)
 plt.imshow(pred[0, 0])
+plt.title('Predicted probability')
+plt.subplot(1, 3, 3)
+plt.imshow(z['1/0'][0])
+plt.title('Ground-truth')
 plt.show()
 
 plt.imshow(mosaic)
@@ -76,6 +81,7 @@ plt.axis('off')
 plt.subplot(2, 3, 2)
 plt.imshow(regions, cmap=plt.cm.Spectral)
 plt.title('Thresholded prediction', fontsize=8)
+# plt.title('Thresholded reconstruction', fontsize=8)
 plt.axis('off')
 plt.subplot(2, 3, 5)
 plt.imshow(org[:].transpose(1, 2, 0))
