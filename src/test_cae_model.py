@@ -16,7 +16,7 @@ def main(args):
 
     if args.use_zarr:        
         fn_list = [os.path.join(args.data_dir, fn) for fn in sorted(os.listdir(args.data_dir)) if fn.endswith('.zarr')]
-        comp_list = [os.path.join(args.output_dir, '%s_comp.zarr' % os.path.splitext(fn)[0]) for fn in sorted(os.listdir(args.data_dir)) if fn.endswith('.zarr')]
+        comp_list = [os.path.join(args.output_dir, 'rec_comp.zarr') for fn in sorted(os.listdir(args.data_dir)) if fn.endswith('.zarr')]
 
         fn_list = fn_list[:args.n_imgs]
         comp_list = comp_list[:args.n_imgs]
