@@ -28,7 +28,20 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     group = zarr.group(output_dir, overwrite=True)
     comp_group = group.create_group('0', overwrite=True)
     
-    comp_group.create_dataset('0', shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), chunks=(1, channels_bn, comp_patch_size, comp_patch_size), dtype='u1', compressor=compressor)
+    if not args.input[0].endswith('.zarr'):
+        # If a directory has been passed, get all zarr files inside to compress
+        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith('.zarr'), os.listdir(args.input[0]))))
+    else:
+        input_fn_list = args.input
+        
+    output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_comp.zarr'), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
+    
+    for in_fn, out_fn in zip(input_fn_list, output_fn_list):
+        histo_ds = utils.Histology_seg_zarr(root=in_fn, patch_size=args.patch_size, offset=offset, transform=transform)
+        data_queue = DataLoader(histo_ds, batch_size=1, num_workers=args.workers, shuffle=False, pin_memory=True)
+        
+        H, W = histo_ds._z_list[0].shape[-2:]
+        comp_patch_size = args.patch_size//2**comp_level
 
     z_comp = zarr.open('%s/0/0' % output_dir, mode='a')
 
