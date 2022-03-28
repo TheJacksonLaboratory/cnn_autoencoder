@@ -16,7 +16,7 @@ def initialize_weights(m):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_dim=512, dropout=0.0):
+    def __init__(self, d_model, max_dim=1024, dropout=0.0):
         super(PositionalEncoding, self).__init__()
 
         self._dropout = nn.Dropout2d(p=dropout, inplace=False)
@@ -41,14 +41,15 @@ class PositionalEncoding(nn.Module):
 
 
 class RandMasking(nn.Module):
-    def __init__(self, n_masks=1, masks_size=64, **kwargs):
+    def __init__(self, n_masks=1, masks_size=64, disable_masking=False, **kwargs):
         super(RandMasking, self).__init__()
 
         self._n_masks = n_masks
         self._masks_size = masks_size
+        self.disable_masking = disable_masking
 
-    def forward(self, x):        
-        if not self.training:
+    def forward(self, x):
+        if self.disable_masking:
             return x
         
         b, _, h, w = x.size()
@@ -242,6 +243,33 @@ class Synthesizer(nn.Module):
         self.synthesis_track = nn.Sequential(*up_track)
 
         self.apply(initialize_weights)
+        
+    def inflate(self, x, color=True):
+        x_brg = []
+        # DataParallel only sends 'x' to the GPU memory when the forward method is used and not for other methods
+        fx = x.clone().to(self.synthesis_track[0].weight.device)
+        for layer in self.synthesis_track[:-1]:
+            fx = layer(fx)
+            x_brg.append(fx / 127.5)
+        
+        if not color:
+            return x_brg
+        
+        fx = self.synthesis_track[-1](fx)
+        
+        return fx, x_brg
+
+    def inflate(self, x, color=True):
+        x_brg = []
+        fx = x.clone()
+        for layer in self.synthesis_track[:-1]:
+            fx = layer(fx)
+            x_brg.append(fx)
+        
+        if color:
+            fx = self.synthesis_track[-1](fx)
+        
+        return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)
@@ -287,7 +315,7 @@ class MaskedAutoEncoder(nn.Module):
         # Initial color embedding
         self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
 
-        self.masking = RandMasking(n_masks, masks_size)
+        self.masking = RandMasking(n_masks=n_masks, masks_size=masks_size)
         self.pos_enc = PositionalEncoding(channels_net, max_dim=1024, dropout=dropout)
 
         self.analysis = Analyzer(channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)

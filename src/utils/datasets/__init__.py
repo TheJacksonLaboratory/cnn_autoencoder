@@ -1,3 +1,3 @@
-from ._histology import get_Histology, get_histo_transform, Histology_zarr, Histology_seg_zarr
-from ._mnist import get_MNIST
-from ._imagenet import get_ImageNet
+from ._zarrbased import get_zarr_dataset, get_zarr_transform, LabeledZarrDataset, ZarrDataset, IterableLabeledZarrDataset, IterableZarrDataset, compute_grid
+from ._mnist import get_MNIST, get_mnist_transform
+from ._imagenet import get_ImageNet, get_imagenet_transform

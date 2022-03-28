@@ -34,7 +34,7 @@ def override_config_file(parser):
     return args
 
 
-def get_training_args(task='autoencoder'):
+def get_training_args(task='autoencoder', parser_only=False):
     parser = argparse.ArgumentParser('Training of an image compression model based on a convolutional autoencoer')
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
 
@@ -47,14 +47,13 @@ def get_training_args(task='autoencoder'):
     parser.add_argument('-rm', '--resume', type=str, dest='resume', help='Resume training from an existing checkpoint')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
-    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
-    parser.add_argument('-nn', '--no-normal', action='store_false', dest='normalize', help='Do not normalize input data', default=True)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=128)
+    
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
-    parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
     parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
     parser.add_argument('-nch', '--netch', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)
@@ -81,14 +80,19 @@ def get_training_args(task='autoencoder'):
         parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of segmetnation model', choices=SEG_MODELS)
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
         parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
-
+        parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
+    
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
-    parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
+    parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler_type', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
+    parser.add_argument('-wd', '--wdecay', type=float, dest='weight_decay', help='Optimizer weight decay (L2 regularizer)', default=0)
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
+    if parser_only:
+        return parser
+
     args = override_config_file(parser)
 
     args.mode = 'training'
@@ -97,10 +101,9 @@ def get_training_args(task='autoencoder'):
     return args
 
 
-def get_testing_args():
+def get_testing_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image compression-decompression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
-
     
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
@@ -110,7 +113,6 @@ def get_testing_args():
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
     parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
-    parser.add_argument('-dwn', '--download', dest='download_data', action='store_true', help='Download the dataset if it is not in the data directory', default=False)
 
     parser.add_argument('-n', '--nimgs', type=int, dest='n_imgs', help='Number of images to extract from the dataset and pass through the compression-decompression process', default=10)
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed and decompressed files', default='.')
@@ -118,12 +120,16 @@ def get_testing_args():
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
-    parser.add_argument('-z', '--zarr', action='store_true', dest='use_zarr', help='Input and output should be stored as zarr files')
+    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+    parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
     
     parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
     
     parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
     
+    if parser_only:
+        return parser
+
     args = override_config_file(parser)
     
     args.mode = 'testing'
@@ -131,7 +137,7 @@ def get_testing_args():
     return args
 
 
-def get_compress_args():
+def get_compress_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image compression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
 
@@ -139,7 +145,7 @@ def get_compress_args():
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
-    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=-1)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image (set to -1 for default sizes given the dataset)', default=512)
     parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
     
     parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
@@ -147,9 +153,12 @@ def get_compress_args():
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input images to compress (list of images).')
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed image')
-    parser.add_argument('-pth', '--store-pth', action='store_true', dest='store_pth', help='Store the compressed representation of the image before the arithmetic encoding inside a .pth file?')
+    parser.add_argument('-f', '--format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
     
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
+
+    if parser_only:
+        return parser
 
     args = override_config_file(parser)
     
@@ -158,7 +167,7 @@ def get_compress_args():
     return args
 
 
-def get_decompress_args():
+def get_decompress_args(parser_only=False):
     parser = argparse.ArgumentParser('Testing of an image decompression model')
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
 
@@ -173,12 +182,49 @@ def get_decompress_args():
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
     parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
-    parser.add_argument('-f', '--format', type=str, dest='format', help='Format of the output image')
+    parser.add_argument('-f', '--format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
+    if parser_only:
+        return parser
+        
     args = override_config_file(parser)
 
     args.mode = 'decompress'
+
+    return args
+
+
+def get_segment_args(parser_only=False):
+    parser = argparse.ArgumentParser('Testing of an image segmentation model')
+    
+    parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
+
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
+    parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
+    
+    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
+
+    parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
+    parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
+    
+    parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
+    parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
+    parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
+
+    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+    parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
+
+    parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
+    
+    if parser_only:
+        return parser
+    
+    args = override_config_file(parser)
+
+    args.mode = 'segment'
 
     return args

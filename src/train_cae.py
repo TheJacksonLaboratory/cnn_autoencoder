@@ -1,6 +1,4 @@
 import logging
-from multiprocessing.sharedctypes import Value
-from typing import ValuesView
 
 import numpy as np
 import torch
@@ -16,6 +14,7 @@ from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
 model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
+
 
 def valid(cae_model, data, criterion, args):
     """ Validation step.
@@ -132,7 +131,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(i, len(train_data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
 
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
@@ -243,7 +242,7 @@ def setup_criteria(args):
     return criterion, stopping_criteria
 
 
-def setup_optim(cae_model, scheduler_type='None'):
+def setup_optim(cae_model, args):
     """ Setup a loss function for the neural network optimization, and training stopping criteria.
 
     Parameters
@@ -262,15 +261,15 @@ def setup_optim(cae_model, scheduler_type='None'):
     """
 
     # By now, only the ADAM optimizer is used
-    optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate)
+    optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     
     # Only the the reduce on plateau, or none at all scheduler are used
-    if scheduler_type == 'None':
+    if args.scheduler_type == 'None':
         scheduler = None
-    elif scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[scheduler_type](optimizer=optimizer, mode='min', patience=2)
+    elif args.scheduler_type in scheduler_options.keys():
+        scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer, mode='min', patience=2)
     else:
-        raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
+        raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler_type)
 
     return optimizer, scheduler
 
@@ -320,7 +319,7 @@ def main(args):
 
     cae_model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args)
-    optimizer, scheduler = setup_optim(cae_model, scheduler_type=args.scheduler)
+    optimizer, scheduler = setup_optim(cae_model, args)
 
     if args.resume is not None:
         resume_checkpoint(cae_model, optimizer, scheduler, args.resume, gpu=args.gpu)
