@@ -162,7 +162,7 @@ class ZarrDataset(Dataset):
         elif root.lower().endswith(self._source_format):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
-        elif root.lower().endswith('.txt'):
+        elif root.lower().endswith('txt'):
             # If the input is a text file with a list of url/paths, create the filenames list from it
             with open(root, mode='r') as f:
                 self._filenames = [l.strip('\n\r') for l in f.readlines()]
@@ -185,6 +185,7 @@ class ZarrDataset(Dataset):
         if self._source_format == 'zarr':
             # Open the tile downscaled to 'level'
             z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in filenames]
+
 
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
@@ -313,16 +314,18 @@ def get_zarr_transform(normalize=True, compressed_input=False):
     prep_trans_list = [transforms.ToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
-    
-    if normalize and compressed_input:
-        prep_trans_list.append(transforms.Normalize(mean=0.5, std=1.0/127.5))        
-    else:
-        prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+
+    if normalize:
+        # The ToTensor transforms the input into the range [0, 1]. However, if the input is compressed, it is required in the range [-127.5, 127.5]
+        if compressed_input:
+            prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
+        else:
+            prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
     
     return transforms.Compose(prep_trans_list)
 
 
-def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, **kwargs):
+def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, **kwargs):
     """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
     The size of the data queue can be virtually infinite, for that reason, a conservative size has been defined using the following variables.
     1. TRAIN_DATASIZE: 1200000 for autoencoder models, and all available patches for segmenetation models
@@ -356,8 +359,8 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     hist_train_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
     hist_valid_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
-    # train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=gpu)
-    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
+    # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
+    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=workers, pin_memory=gpu)
     valid_queue = DataLoader(hist_valid_data, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
 
     return train_queue, valid_queue
@@ -387,7 +390,7 @@ if __name__ == '__main__':
     if args.task == 'autoencoder':
         dataset = ZarrDataset
     else:
-        dataset = IterableZarrDataset
+        dataset = LabeledZarrDataset
 
     args.compressed_input = args.compression_level > 0
     ds = dataset(**args.__dict__)

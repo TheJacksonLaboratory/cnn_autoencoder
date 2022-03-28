@@ -5,7 +5,7 @@
     "print_log": false,
     "steps": 5e5,
     "checkpoint_steps": 5e3,
-    "log_dir": "/home/cervaf/NN_imaging/logs", 
+    "log_dir": "/home/cervaf/NN_imaging/logs/autoencoder", 
     "data_dir": "/mnt/imagenet",
     "dataset": "ImageNet",
     "download_data": false,

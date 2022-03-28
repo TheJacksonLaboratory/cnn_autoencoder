@@ -39,7 +39,7 @@ def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
     return y
 
 
-def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers):
+def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
@@ -50,14 +50,17 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
     H = H_comp * 2**input_comp_level
     W = W_comp * 2**input_comp_level
 
-    if destination_format == 'zarr':
+    if 'zarr' in destination_format:
         # Output dir is actually the absolute path to the file where to store the compressed representation
-        group = zarr.group(output_dir, overwrite=True)
+        if 'memory' in destination_format:
+            group = zarr.group()
+        else:
+            group = zarr.group(output_dir, overwrite=True)
+
         comp_group = group.create_group('0', overwrite=True)
     
-        comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
+        z_seg = comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
 
-        z_seg = zarr.open('%s/0/0' % output_dir, mode='a')
     else:
         z_seg = zarr.zeros(shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
 
@@ -75,13 +78,22 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
             tl_y *= output_patch_size
             tl_x *= output_patch_size
             
-            z_seg[..., tl_y:(tl_y+output_patch_size), tl_x:(tl_x+output_patch_size)] = y if destination_format == 'zarr' else (y * 255).astype(np.uint8)
+            z_seg[..., tl_y:(tl_y+output_patch_size), tl_x:(tl_x+output_patch_size)] = y if 'zarr' in destination_format else (y * 255).astype(np.uint8)
 
     # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
     # It should be used with care since this can generate a large image file.
-    if destination_format != 'zarr':
+    if 'zarr' not in destination_format:
         im = Image.fromarray(z_seg[0, 0])
         im.save(output_dir, destination_format)
+    elif is_labeled:
+        label_group = group.create_group('1', overwrite=True)
+        z_org = zarr.open(filename, 'r')
+        zarr.copy(z_org['1/0'], label_group)
+
+    if 'memory' in destination_format:
+        return group
+    
+    return True
 
 
 def setup_network(state):
@@ -134,8 +146,8 @@ def setup_network(state):
     seg_model.load_state_dict(state['model'])
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    seg_model = nn.DataParallel(seg_model)
     if state['args']['gpu']:
+        seg_model = nn.DataParallel(seg_model)
         seg_model.cuda()
 
     # Define what funtion use in the feed-forward step
@@ -200,7 +212,8 @@ def segment(args):
 
     # Segment each file by separate    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        segment_image(forward_function=forward_function, filename=in_fn, output_dir=out_fn, classes=state['args']['classes'], input_comp_level=input_comp_level, input_patch_size=input_patch_size, output_patch_size=args.patch_size, input_offset=input_offset, output_offset=output_offset, transform=transform, source_format=args.source_format, destination_format=args.destination_format, workers=args.workers)
+        seg_group = segment_image(forward_function=forward_function, filename=in_fn, output_dir=out_fn, classes=state['args']['classes'], input_comp_level=input_comp_level, input_patch_size=input_patch_size, output_patch_size=args.patch_size, input_offset=input_offset, output_offset=output_offset, transform=transform, source_format=args.source_format, destination_format=args.destination_format, workers=args.workers, is_labeled=args.is_labeled)
+        yield seg_group
 
 
 if __name__ == '__main__':
@@ -208,6 +221,7 @@ if __name__ == '__main__':
     
     utils.setup_logger(args)
     
-    segment(args)
+    for _ in segment(args):
+        logging.info('Image segmented successfully')
     
     logging.shutdown()

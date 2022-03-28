@@ -154,6 +154,7 @@ def load_state(args):
 
     if not torch.cuda.is_available() or not args.gpu:
         state = torch.load(save_fn, map_location=torch.device('cpu'))
+        state['args']['gpu'] = False
     else:
         state = torch.load(save_fn)
     

@@ -19,14 +19,13 @@ python ./src/train_cae.py -h
 ```
 
 ## Testing
-The trained model can be tested using the *test_cae_mode.py* script, or using the modules *src/compress.py*, and/or *src/decompress.py* by separate.
+The trained model can be tested using the modules *src/compress.py* and *src/decompress.py* by separate.
 
 ### Compressing and decompressing
 Compression and decompression requires a pre-trained model.
 Other arguments required to run these modules can be listed with the fllowing commands.
 
 ```
-python ./test_cae_model.py -h
 python ./src/compress.py -h
-python ./src/compress.py -h
+python ./src/decompress.py -h
 ```

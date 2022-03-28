@@ -26,7 +26,7 @@ def forward_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
         x_brg = decoder_model.inflate(x, color=False)
         
-    y = seg_model(x/127.5, x_brg[:0:-1])
+    y = seg_model(x, x_brg[:0:-1])
 
     return y
 
@@ -35,7 +35,7 @@ def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
         x_brg = decoder_model.module.inflate(x, color=False)
         
-    y = seg_model(x/127.5, x_brg[:0:-1])
+    y = seg_model(x, x_brg[:0:-1])
 
     return y
 
@@ -150,7 +150,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.1 * len(train_data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Training Loss {:.4f} ({:.4f})'.format(i, len(train_data), loss.item(), sum_loss / (i+1)))
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f})'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1)))
 
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
@@ -299,7 +299,7 @@ def setup_criteria(args):
     return criterion, stopping_criteria
 
 
-def setup_optim(seg_model, scheduler_type='None'):
+def setup_optim(seg_model, args):
     """ Setup a loss function for the neural network optimization, and training stopping criteria.
 
     Parameters
@@ -318,15 +318,15 @@ def setup_optim(seg_model, scheduler_type='None'):
     """
 
     # By now, only the ADAM optimizer is used
-    optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate)
+    optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     
     # Only the the reduce on plateau, or none at all scheduler are used
-    if scheduler_type == 'None':
+    if args.scheduler_type == 'None':
         scheduler = None
-    elif scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[scheduler_type](optimizer=optimizer)
+    elif args.scheduler_type in scheduler_options.keys():
+        scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer)
     else:
-        raise ValueError('Scheduler \"%s\" is not implemented' % scheduler_type)
+        raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler_type)
 
     return optimizer, scheduler
 
@@ -373,7 +373,7 @@ def main(args):
 
     seg_model, forward_function = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args)
-    optimizer, scheduler = setup_optim(seg_model, scheduler_type=args.scheduler)
+    optimizer, scheduler = setup_optim(seg_model, args)
 
     if args.resume is not None:
         resume_checkpoint(seg_model, optimizer, scheduler, args.resume, gpu=args.gpu)

@@ -20,7 +20,7 @@ def get_imagenet_transform(mode='training', normalize=True):
          transforms.PILToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
-            
+
     if mode == 'training':
         prep_trans_list.append(AddGaussianNoise(0., 0.1))
         prep_trans_list.append(transforms.RandomCrop((128, 128), pad_if_needed=True))
