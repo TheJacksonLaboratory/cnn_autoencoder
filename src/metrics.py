@@ -75,11 +75,12 @@ def metrics(args):
     # Override 'is_labeled' to True, in order to get the segmentation response along with its respective ground-truth
     args.is_labeled = True
     args.mode = 'testing'
-
-    utils.setup_logger(args)
+    
+    utils.setup_logger(args)    
     logger = logging.getLogger(args.mode + '_log')
 
     avg_metrics = dict(roc=0, acc=0, prec=0, recall=0, f1=0, time=0)
+    valid_cnt = dict(roc=0, acc=0, prec=0, recall=0, f1=0, time=0)
 
     all_preds = []
     all_targets = []
@@ -96,7 +97,10 @@ def metrics(args):
         scores = metrics_image(prediction, target, pred_threshold=args.pred_threshold)
 
         for m_k in scores.keys():
-            avg_metrics[m_k] = avg_metrics[m_k] + scores[m_k]
+            if scores[m_k] > 0.0:
+                avg_metrics[m_k] = avg_metrics[m_k] + scores[m_k]
+                valid_cnt[m_k] = valid_cnt[m_k] + 1
+
             logger.info('[Image %i] Metric %s: %0.4f' % (i+1, m_k, scores[m_k]))
         
         avg_metrics['time'] = avg_metrics['time'] + e_time
@@ -106,7 +110,7 @@ def metrics(args):
         e_time = perf_counter()
     
     for m_k in avg_metrics.keys():
-        avg_metrics[m_k] = avg_metrics[m_k] / (i+1)
+        avg_metrics[m_k] = avg_metrics[m_k] / valid_cnt[m_k]
         logger.info('Average metric %s: %0.4f' % (m_k, avg_metrics[m_k]))
 
     all_preds = np.concatenate(all_preds, axis=0)
@@ -126,8 +130,9 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(prog='Evaluate a model on a testing set (Segmentation models only)', parents=[seg_parser], add_help=False)
     
-    parser.add_argument('-th', '--threshold', dest='pred_threshold', help='The prediced probability threshold used to determine if a pixel is part of the foreground or not.', default=0.5)
-    
+    parser.add_argument('-th', '--threshold', type=float, dest='pred_threshold', help='The prediced probability threshold used to determine if a pixel is part of the foreground or not.', default=0.5)
+    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+
     args = utils.override_config_file(parser)
     
     avg_metrics = metrics(args)
