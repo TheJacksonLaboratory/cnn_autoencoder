@@ -30,11 +30,30 @@ def metrics_image(prediction, target, pred_threshold=0.5):
         Dictionary with the computed metrics (roc=ROC, acc=Accuracy, f1=F1 score, recall=Recall, prec=Precision)
     """
     pred_class = prediction > pred_threshold
-    roc = roc_auc_score(target, prediction)
-    f1 = f1_score(target, pred_class)
-    acc = accuracy_score(target, pred_class)
-    recall = recall_score(target, pred_class)
-    prec = precision_score(target, pred_class)
+    try:
+        roc = roc_auc_score(target, prediction)
+    except:
+        roc = -1
+    
+    try:
+        f1 = f1_score(target, pred_class)
+    except:
+        f1 = -1
+
+    try:
+        acc = accuracy_score(target, pred_class)
+    except:
+        acc = -1
+    
+    try:
+        recall = recall_score(target, pred_class)
+    except:
+        recall = -1
+    
+    try:
+        prec = precision_score(target, pred_class)
+    except:
+        prec = -1
 
     metrics_dict = dict(roc=roc, f1=f1, acc=acc, recall=recall, prec=prec)
 
@@ -55,7 +74,7 @@ def metrics(args):
 
     # Override 'is_labeled' to True, in order to get the segmentation response along with its respective ground-truth
     args.is_labeled = True
-    args.mode = 'evaluation'
+    args.mode = 'testing'
 
     utils.setup_logger(args)
     logger = logging.getLogger(args.mode + '_log')
