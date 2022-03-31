@@ -104,6 +104,7 @@ def metrics(args):
             logger.info('[Image %i] Metric %s: %0.4f' % (i+1, m_k, scores[m_k]))
         
         avg_metrics['time'] = avg_metrics['time'] + e_time
+        valid_cnt['time'] = valid_cnt['time'] + 1
         logger.info('[Image %i] Execution time: %0.4f' % (i+1, e_time))
         
         # Time stamp for prediciton of next image 
