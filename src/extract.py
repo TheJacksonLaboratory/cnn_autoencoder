@@ -121,11 +121,8 @@ def setup_network(state):
         For segmentation models, it is the number of classes, whereas for autoencoder models, it is the number of color channels.
 
     """
-    state['args']['compressed_input'] = 'Decoder' in state['args']['model_type'] or 'AutoEncoder' in state['args']['model_type']
-
     # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
     if state['args']['task'] == 'segmentation':
-
         if ('Decoder' in state['args']['model_type'] and state['args']['autoencoder_model'] is None) or 'NoBridge' in state['args']['model_type']:
             state['args']['use_bridge'] = False
         else:
@@ -178,6 +175,18 @@ def setup_network(state):
             dec_model.cuda()
 
         output_channels = state['args']['channels_org']
+
+    if 'Decoder' in state['args']['model_type']:
+        state['args']['compressed_input'] = True
+
+        if dec_model is None:
+            dec_model = seg_model
+        
+    elif  'AutoEncoder' in state['args']['model_type']:
+        state['args']['compressed_input'] = True
+
+    else:
+        state['args']['compressed_input'] = False
 
     # Define what funtion use in the feed-forward step
     if seg_model is not None and dec_model is None:
