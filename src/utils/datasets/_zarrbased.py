@@ -4,12 +4,20 @@ import random
 
 import numpy as np
 import zarr
+import xarray as xr
+import s3fs
+
+from tqdm import tqdm
+
 from PIL import Image
 from numcodecs import Blosc
 
 import torch
 from torch.utils.data import IterableDataset, Dataset, DataLoader
 import torchvision.transforms as transforms
+
+
+ZARR_PROTOCOLS = ['s3', 'https', 'http']
 
 
 def load_image(filename, patch_size):
@@ -196,9 +204,17 @@ class ZarrDataset(Dataset):
 
     def _preload_files(self, filenames, group='0'):
         if self._source_format == 'zarr':
-            # Open the tile downscaled to 'level'
-            z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in filenames]
+            z_list = []
+            for fn in self._filenames:
+                # Check if the zarr file is a local file or one retrieved from an S3 bucket
+                if len(list(filter(lambda proto: proto in fn, ZARR_PROTOCOLS))):
+                    store = zarr.storage.FSStore(fn, mode='r')
+                    z = zarr.open_consolidated(store, mode='r')['%s/%s' % (group, self._level)]
+                else:
+                    # Open the tile downscaled to 'level'
+                    z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]
 
+                z_list.append(z)
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
             compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
@@ -400,7 +416,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.task == 'autoencoder':
-        dataset = ZarrDataset
+        dataset = IterableZarrDataset
     else:
         dataset = LabeledZarrDataset
 
@@ -412,15 +428,14 @@ if __name__ == '__main__':
     dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers, worker_init_fn=zarrdataset_worker_init)
     print('Min image size: (%d, %d)' % (ds._min_H, ds._min_W))
 
-    t_ini = perf_counter()
-
+    q = tqdm(total = args.n_batches)
     for i, (x, t) in enumerate(dl):
-        print('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size() if isinstance(t, torch.torch.Tensor) else None))
+        q.set_description('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size() if isinstance(t, torch.torch.Tensor) else None))
+        q.update()
         # plt.imshow(x[0].permute(1, 2, 0))
         # plt.show()
 
         if i >= args.n_batches:
             break
 
-    e_time = perf_counter() - t_ini
-    print('Elapsed time:', e_time)
+    q.close()
