@@ -135,6 +135,19 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     return patch
 
 
+def zarrdataset_worker_init(worker_id):
+    worker_info = torch.utils.data.get_worker_info()
+    dataset_obj = worker_info.dataset
+
+    num_files_per_worker = len(dataset_obj._filenames) // worker_info.num_workers
+    
+    curr_worker_filenames = dataset_obj._filenames[worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]
+
+    dataset_obj._z_list = dataset_obj._preload_files(curr_worker_filenames, group='0')
+    if hasattr(dataset_obj, '_lab_list'):
+        dataset_obj._lab_list = dataset_obj._preload_files(curr_worker_filenames, group='1')
+
+
 class ZarrDataset(Dataset):
     """ A zarr-based dataset.
         The structure of the zarr file is considered fixed, and only the component '0/0' is used.
@@ -185,7 +198,6 @@ class ZarrDataset(Dataset):
         if self._source_format == 'zarr':
             # Open the tile downscaled to 'level'
             z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] for fn in filenames]
-
 
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
@@ -397,7 +409,7 @@ if __name__ == '__main__':
 
     print('Dataset size:', len(ds))
     
-    dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers)
+    dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers, worker_init_fn=zarrdataset_worker_init)
     print('Min image size: (%d, %d)' % (ds._min_H, ds._min_W))
 
     t_ini = perf_counter()
