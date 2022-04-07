@@ -17,10 +17,6 @@ import torchvision.transforms as transforms
 from elasticdeform import deform_grid, deform_random_grid
 from scipy.ndimage import rotate
 
-        
-
-ZARR_PROTOCOLS = ['s3', 'https', 'http']
-
 
 class RandomElasticDeformationInputTarget(object):
     def __init__(self, sigma=10):
@@ -36,7 +32,7 @@ class RandomElasticDeformationInputTarget(object):
             patch = patch.numpy()
 
         if not isinstance(target, np.ndarray):
-            target = target.numpy().astype(np.uint8)
+            target = target.numpy()
 
         patch = torch.from_numpy(deform_grid(patch, displacement, order=3, mode='reflect', axis=(1, 2))).float()
         target = torch.from_numpy(deform_grid(target, displacement, order=0, mode='reflect', axis=(1, 2))).float()
@@ -254,14 +250,7 @@ class ZarrDataset(Dataset):
         if self._source_format == 'zarr':
             z_list = []
             for fn in self._filenames:
-                # Check if the zarr file is a local file or one retrieved from an S3 bucket
-                if len(list(filter(lambda proto: proto in fn, ZARR_PROTOCOLS))):
-                    store = zarr.storage.FSStore(fn, mode='r')
-                    z = zarr.open_consolidated(store, mode='r')['%s/%s' % (group, self._level)]
-                else:
-                    # Open the tile downscaled to 'level'
-                    z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]
-
+                z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]
                 z_list.append(z)
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
