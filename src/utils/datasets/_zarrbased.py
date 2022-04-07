@@ -4,8 +4,6 @@ import random
 
 import numpy as np
 import zarr
-import xarray as xr
-import s3fs
 
 from tqdm import tqdm
 
@@ -16,8 +14,58 @@ import torch
 from torch.utils.data import IterableDataset, Dataset, DataLoader
 import torchvision.transforms as transforms
 
+from elasticdeform import deform_grid, deform_random_grid
+from scipy.ndimage import rotate
+
+        
 
 ZARR_PROTOCOLS = ['s3', 'https', 'http']
+
+
+class RandomElasticDeformationInputTarget(object):
+    def __init__(self, sigma=10):
+        self._sigma = sigma
+
+    def __call__(self, patch_target):
+        patch, target = patch_target
+
+        points = [3] * 2
+        displacement = np.random.randn(2, *points) * self._sigma
+
+        if not isinstance(patch, np.ndarray):
+            patch = patch.numpy()
+
+        if not isinstance(target, np.ndarray):
+            target = target.numpy().astype(np.uint8)
+
+        patch = torch.from_numpy(deform_grid(patch, displacement, order=3, mode='reflect', axis=(1, 2))).float()
+        target = torch.from_numpy(deform_grid(target, displacement, order=0, mode='reflect', axis=(1, 2))).float()
+
+        return patch, target
+
+
+class RandomRotationInputTarget(object):
+    def __init__(self, degrees=90):
+        self._degrees = degrees
+
+    def __call__(self, patch_target):
+        patch, target = patch_target
+
+        angle = np.random.rand() * self._degrees
+
+        if not isinstance(patch, np.ndarray):
+            patch = patch.numpy()
+
+        if not isinstance(target, np.ndarray):
+            target = target.numpy()
+
+        # rotate the input patch with bicubic interpolation, reflect the edges to preserve the content in the image
+        patch = torch.from_numpy(rotate(patch.transpose(1, 2, 0), angle, order=3, reshape=False, mode='reflect').transpose(2, 0, 1)).float()
+
+        # rotate the target patch with nearest neighbor interpolation
+        target = torch.from_numpy(rotate(target.transpose(1, 2, 0), angle, order=0, reshape=False, mode='reflect').transpose(2, 0, 1)).float()
+
+        return patch, target
 
 
 def load_image(filename, patch_size):
@@ -258,7 +306,7 @@ class LabeledZarrDataset(ZarrDataset):
     """ A labeled dataset based on the zarr dataset class.
         The densely labeled targets are extracted from group '1'.
     """
-    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, compression_level=0, compressed_input=False, source_format='zarr', **kwargs):
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, input_target_transform=None, compression_level=0, compressed_input=False, source_format='zarr', **kwargs):
         super(LabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format)
         
         # Open the labels from group 1
@@ -266,6 +314,9 @@ class LabeledZarrDataset(ZarrDataset):
 
         self._compression_level = compression_level
         self._compressed_input = compressed_input
+
+        # This is a transform that affects the geometry of the input, and then it has to be applied to the target as well
+        self._input_target_transform = input_target_transform
         
     def __getitem__(self, index):
         i, tl_y, tl_x = compute_grid(index, len(self._z_list), self._min_H, self._min_W, self._patch_size)
@@ -278,6 +329,9 @@ class LabeledZarrDataset(ZarrDataset):
         patch_size = self._patch_size * ((2**self._compression_level) if self._compressed_input else 1)
         target = get_patch(self._lab_list[i], tl_y, tl_x, patch_size, 0).astype(np.float32)
         
+        if self._input_target_transform:
+            patch, target = self._input_target_transform((patch, target))
+
         # Returns anything as label, to prevent an error during training
         return patch, target
 
@@ -297,7 +351,7 @@ class IterableZarrDataset(IterableDataset, ZarrDataset):
         if self._shuffle:
             for _ in range(num_examples):
                 # Generate a random index from the range [0, max_examples-1]
-                index = random.randint(0, num_examples)
+                index = np.random.randint(0, num_examples)
                 yield self.__getitem__(index)
         else:
             for index in range(num_examples):
@@ -334,7 +388,7 @@ class IterableLabeledZarrDataset(IterableZarrDataset, LabeledZarrDataset):
         super(IterableLabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format, compression_level=compression_level, compressed_input=compressed_input)
 
 
-def get_zarr_transform(normalize=True, compressed_input=False):
+def get_zarr_transform(normalize=True, compressed_input=False, rotation=False, elastic_deformation=False):
     """ Define the transformations that are commonly applied to zarr-based datasets.
     When the input is compressed, it has a range of [0, 255], which is convenient to shift into a range of [-127.5, 127.5].
     If the input is a color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
@@ -350,10 +404,22 @@ def get_zarr_transform(normalize=True, compressed_input=False):
         else:
             prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
     
-    return transforms.Compose(prep_trans_list)
+    target_trans_list = []
+    if rotation:
+        target_trans_list.append(RandomRotationInputTarget(degrees=30.))
+
+    if elastic_deformation:
+        target_trans_list.append(RandomElasticDeformationInputTarget(sigma=10))
+    
+    if len(target_trans_list) < 1:
+        target_trans = None
+    else:
+        target_trans = transforms.Compose(target_trans_list)
+
+    return transforms.Compose(prep_trans_list), target_trans
 
 
-def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, **kwargs):
+def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, rotation=False, elastic_deformation=False, classes=1, **kwargs):
     """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
     The size of the data queue can be virtually infinite, for that reason, a conservative size has been defined using the following variables.
     1. TRAIN_DATASIZE: 1200000 for autoencoder models, and all available patches for segmenetation models
@@ -362,14 +428,14 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     """
 
     if task == 'autoencoder':
-        prep_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input)
+        prep_trans, target_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input)
         histo_dataset = ZarrDataset
         TRAIN_DATASIZE = 1200000
         VALID_DATASIZE = 50000
         TEST_DATASIZE = 200000
         
     elif task == 'segmentation':
-        prep_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input)
+        prep_trans, target_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
         if mode == 'training':
             histo_dataset = LabeledZarrDataset
         else:
@@ -380,12 +446,12 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if mode != 'training':
-        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
+        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
         test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
         return test_queue
 
-    hist_train_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
-    hist_valid_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
+    hist_train_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
+    hist_valid_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
 
     # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
     train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=workers, pin_memory=gpu)

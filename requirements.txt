@@ -5,3 +5,5 @@ numcodecs
 s3fs
 tqdm
 zarr
+elasticdeform
+scipy
