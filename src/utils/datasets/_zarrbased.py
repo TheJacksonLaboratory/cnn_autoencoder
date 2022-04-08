@@ -198,6 +198,8 @@ def zarrdataset_worker_init(worker_id):
     dataset_obj._z_list = dataset_obj._preload_files(curr_worker_filenames, group='0')
     if hasattr(dataset_obj, '_lab_list'):
         dataset_obj._lab_list = dataset_obj._preload_files(curr_worker_filenames, group='1')
+    
+    dataset_obj._compute_size()
 
 
 class ZarrDataset(Dataset):
@@ -205,7 +207,7 @@ class ZarrDataset(Dataset):
         The structure of the zarr file is considered fixed, and only the component '0/0' is used.
         Only two-dimensional (+color channels) data is supported by now.
     """
-    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, source_format='zarr', **kwargs):
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, source_format='zarr', multithreaded=False, **kwargs):
         self._patch_size = patch_size
         self._dataset_size = dataset_size
         self._transform = transform
@@ -215,8 +217,12 @@ class ZarrDataset(Dataset):
         self._source_format = source_format
 
         self._split_dataset(root, mode)
-        self._z_list = self._preload_files(self._filenames, group='0')
-        self._compute_size()
+        if not multithreaded:
+            self._z_list = self._preload_files(self._filenames, group='0')
+            self._compute_size()
+        else:
+            self._min_H = None
+            self._min_W = None
 
     def _split_dataset(self, root, mode):
         """ Identify are the inputs being passed and split the data according to the mode.
@@ -224,6 +230,7 @@ class ZarrDataset(Dataset):
         """
         if isinstance(root, list):
             self._filenames = root
+            
         elif root.lower().endswith(self._source_format):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
@@ -231,7 +238,7 @@ class ZarrDataset(Dataset):
             # If the input is a text file with a list of url/paths, create the filenames list from it
             with open(root, mode='r') as f:
                 self._filenames = [l.strip('\n\r') for l in f.readlines()]
-                
+
         else:
             # If a root directory was provided, create a dataset from the images contained by splitting the set into training, validation, and testing subsets.
             self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if fn.lower().endswith(self._source_format)]))
@@ -249,7 +256,7 @@ class ZarrDataset(Dataset):
     def _preload_files(self, filenames, group='0'):
         if self._source_format == 'zarr':
             z_list = []
-            for fn in self._filenames:
+            for fn in filenames:
                 z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]
                 z_list.append(z)
         else:
@@ -408,7 +415,7 @@ def get_zarr_transform(normalize=True, compressed_input=False, rotation=False, e
     return transforms.Compose(prep_trans_list), target_trans
 
 
-def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, rotation=False, elastic_deformation=False, classes=1, **kwargs):
+def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, rotation=False, elastic_deformation=False, **kwargs):
     """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
     The size of the data queue can be virtually infinite, for that reason, a conservative size has been defined using the following variables.
     1. TRAIN_DATASIZE: 1200000 for autoencoder models, and all available patches for segmenetation models
@@ -435,16 +442,23 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if mode != 'training':
-        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
-        test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
+        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0)
+        test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
 
-    hist_train_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
-    hist_valid_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input)
+    if isinstance(data_dir, list) and len(data_dir) == 2:
+        data_dir_trn = data_dir[0]
+        data_dir_val = data_dir[1]
+    else:
+        data_dir_trn = data_dir
+        data_dir_val = data_dir
+    
+    hist_train_data = histo_dataset(data_dir_trn, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0)
+    hist_valid_data = histo_dataset(data_dir_val, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0)
 
     # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
-    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=workers, pin_memory=gpu)
-    valid_queue = DataLoader(hist_valid_data, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=gpu)
+    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
+    valid_queue = DataLoader(hist_valid_data, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
 
     return train_queue, valid_queue
 
