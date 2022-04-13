@@ -78,7 +78,7 @@ def compress(args):
     logger.debug(comp_model)
     
     # Conver the single zarr file into a dataset to be iterated
-    transform = utils.get_zarr_transform(normalize=True)
+    transform, _ = utils.get_zarr_transform(normalize=True)
 
     # Get the compression level from the model checkpoint
     comp_level = state['args']['compression_level']
