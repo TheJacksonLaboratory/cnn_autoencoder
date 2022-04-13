@@ -15,14 +15,14 @@ import models
 import utils
 
 
-def decompress_image(decomp_model, filename, output_dir, channels_org, comp_level, patch_size, offset, destination_format, workers):
+def decompress_image(decomp_model, filename, output_dir, channels_org, comp_level, patch_size, offset, destination_format, workers, batch_size=1):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     comp_patch_size = patch_size//2**comp_level
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     histo_ds = utils.ZarrDataset(root=filename, patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=None, source_format='zarr')
-    data_queue = DataLoader(histo_ds, batch_size=1, num_workers=workers, shuffle=False, pin_memory=True)
+    data_queue = DataLoader(histo_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
     
     H_comp, W_comp = histo_ds.get_shape()
     H = H_comp * 2**comp_level
@@ -48,11 +48,12 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
 
             if offset > 0:
                 x = x[..., offset:-offset, offset:-offset]
-            
-            _, tl_y, tl_x = utils.compute_grid(i, 1, H_comp, W_comp, comp_patch_size)
-            tl_y *= patch_size
-            tl_x *= patch_size
-            z_decomp[..., tl_y:(tl_y+patch_size), tl_x:(tl_x+patch_size)] = x
+                                    
+            for k, x_k in enumerate(x):
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=patch_size)
+                tl_y *= patch_size
+                tl_x *= patch_size
+                z_decomp[0, ..., tl_y:tl_y + patch_size, tl_x:tl_x + patch_size] = x_k
 
     # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
     # It should be used with care since this can generate a large image file.
@@ -96,7 +97,17 @@ def decompress(args):
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        decompress_image(decomp_model, in_fn, out_fn, state['args']['channels_org'], comp_level, args.patch_size, offset, args.destination_format, args.workers)
+        decompress_image(
+            decomp_model,
+            in_fn, 
+            out_fn, 
+            state['args']['channels_org'], 
+            comp_level, 
+            args.patch_size, 
+            offset, 
+            args.destination_format,
+            args.workers,
+            batch_size=args.batch_size)
 
 
 if __name__ == '__main__':

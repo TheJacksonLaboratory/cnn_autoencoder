@@ -399,7 +399,8 @@ def get_zarr_transform(normalize=True, compressed_input=False, rotation=False, e
             prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
         else:
             prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
-    
+    prep_trans = transforms.Compose(prep_trans_list)
+
     target_trans_list = []
     if rotation:
         target_trans_list.append(RandomRotationInputTarget(degrees=30.))
@@ -407,12 +408,13 @@ def get_zarr_transform(normalize=True, compressed_input=False, rotation=False, e
     if elastic_deformation:
         target_trans_list.append(RandomElasticDeformationInputTarget(sigma=10))
     
-    if len(target_trans_list) < 1:
-        target_trans = None
-    else:
+    if len(target_trans_list) > 0:
         target_trans = transforms.Compose(target_trans_list)
+    else:
+        target_trans = None
 
-    return transforms.Compose(prep_trans_list), target_trans
+    return prep_trans, target_trans
+
 
 
 def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, rotation=False, elastic_deformation=False, **kwargs):
@@ -430,7 +432,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
         VALID_DATASIZE = 50000
         TEST_DATASIZE = 200000
         
-    elif task == 'segmentation':
+    elif task == 'segmentation':        
         prep_trans, target_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
         if mode == 'training':
             histo_dataset = LabeledZarrDataset

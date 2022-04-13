@@ -1,5 +1,6 @@
 import logging
 import os
+from functools import partial
 
 import numpy as np
 import torch
@@ -14,12 +15,12 @@ import models
 import utils
 
 
-def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, workers, is_labeled=False):
+def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, workers, is_labeled=False, batch_size=1):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     histo_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, offset=offset, transform=transform, source_format=source_format)
-    data_queue = DataLoader(histo_ds, batch_size=1, num_workers=workers, shuffle=False, pin_memory=True)
+    data_queue = DataLoader(histo_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
     
     H, W = histo_ds.get_shape()
     comp_patch_size = patch_size//2**comp_level
@@ -40,11 +41,12 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
 
             if offset > 0:
                 y_q = y_q[..., 1:-1, 1:-1]
-                
-            _, tl_y, tl_x = utils.compute_grid(i, 1, H, W, patch_size)
-            tl_y *= comp_patch_size
-            tl_x *= comp_patch_size
-            z_comp[..., tl_y:(tl_y+comp_patch_size), tl_x:(tl_x+comp_patch_size)] = y_q
+            
+            for k, y_k in enumerate(y_q):
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=patch_size)
+                tl_y *= comp_patch_size
+                tl_x *= comp_patch_size
+                z_comp[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
     
     if is_labeled:
         label_group = group.create_group('1', overwrite=True)
@@ -94,7 +96,19 @@ def compress(args):
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        compress_image(comp_model=comp_model, filename=in_fn, output_dir=out_fn, channels_bn=state['args']['channels_bn'], comp_level=comp_level, patch_size=args.patch_size, offset=offset, transform=transform, source_format=args.source_format, workers=args.workers, is_labeled=args.is_labeled)
+        compress_image(
+            comp_model=comp_model, 
+            filename=in_fn,
+            output_dir=out_fn, 
+            channels_bn=state['args']['channels_bn'], 
+            comp_level=comp_level, 
+            patch_size=args.patch_size, 
+            offset=offset, 
+            transform=transform, 
+            source_format=args.source_format, 
+            workers=args.workers, 
+            is_labeled=args.is_labeled,
+            batch_size=args.batch_size)
 
 
 if __name__ == '__main__':

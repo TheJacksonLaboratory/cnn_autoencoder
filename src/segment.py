@@ -40,12 +40,12 @@ def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
     return y
 
 
-def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False):
+def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     histo_ds = utils.ZarrDataset(root=filename, patch_size=input_patch_size, offset=input_offset, transform=transform, source_format=source_format)
-    data_queue = DataLoader(histo_ds, batch_size=1, num_workers=workers, shuffle=False, pin_memory=True)
+    data_queue = DataLoader(histo_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
 
     H_comp, W_comp = histo_ds.get_shape()
     H = H_comp * 2**input_comp_level
@@ -74,12 +74,15 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
 
             if output_offset > 0:
                 y = y[..., output_offset:-output_offset, output_offset:-output_offset]
-                
-            _, tl_y, tl_x = utils.compute_grid(i, 1, H, W, output_patch_size)
-            tl_y *= output_patch_size
-            tl_x *= output_patch_size
             
-            z_seg[..., tl_y:(tl_y+output_patch_size), tl_x:(tl_x+output_patch_size)] = y if 'zarr' in destination_format else (y * 255).astype(np.uint8)
+            if 'zarr' not in destination_format:
+                y = (y * 255).astype(np.uint8)
+
+            for k, y_k in enumerate(y):
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=output_patch_size)
+                tl_y *= output_patch_size
+                tl_x *= output_patch_size
+                z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
 
     # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
     # It should be used with care since this can generate a large image file.
@@ -202,7 +205,7 @@ def segment(args):
     input_patch_size = args.patch_size // 2 ** input_comp_level
     
     # Conver the single zarr file into a dataset to be iterated
-    transform = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
+    transform, _ = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
 
     if args.input[0].lower().endswith('txt'):        
         with open(args.input[0], 'r') as f:
@@ -218,7 +221,23 @@ def segment(args):
 
     # Segment each file by separate    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        seg_group = segment_image(forward_function=forward_function, filename=in_fn, output_dir=out_fn, classes=output_channels, input_comp_level=input_comp_level, input_patch_size=input_patch_size, output_patch_size=args.patch_size, input_offset=input_offset, output_offset=output_offset, transform=transform, source_format=args.source_format, destination_format=args.destination_format, workers=args.workers, is_labeled=args.is_labeled)
+        seg_group = segment_image(
+            forward_function=forward_function, 
+            filename=in_fn,
+            output_dir=out_fn,
+            classes=output_channels,
+            input_comp_level=input_comp_level,
+            input_patch_size=input_patch_size,
+            output_patch_size=args.patch_size,
+            input_offset=input_offset,
+            output_offset=output_offset,
+            transform=transform,
+            source_format=args.source_format,
+            destination_format=args.destination_format,
+            workers=args.workers,
+            is_labeled=args.is_labeled,
+            batch_size=args.batch_size)
+
         yield seg_group
 
 
