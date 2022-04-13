@@ -18,6 +18,15 @@ from elasticdeform import deform_grid, deform_random_grid
 from scipy.ndimage import rotate
 
 
+class AddGaussianNoise(object):
+    def __init__(self, mean=0.0, std=1.0):
+        self.std = std
+        self.mean = mean
+        
+    def __call__(self, tensor):
+        return tensor + torch.randn(tensor.size()) * self.std + self.mean
+
+
 class RandomElasticDeformationInputTarget(object):
     def __init__(self, sigma=10):
         self._sigma = sigma
@@ -384,7 +393,7 @@ class IterableLabeledZarrDataset(IterableZarrDataset, LabeledZarrDataset):
         super(IterableLabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format, compression_level=compression_level, compressed_input=compressed_input)
 
 
-def get_zarr_transform(normalize=True, compressed_input=False, rotation=False, elastic_deformation=False):
+def get_zarr_transform(mode='testing', normalize=True, compressed_input=False, rotation=False, elastic_deformation=False):
     """ Define the transformations that are commonly applied to zarr-based datasets.
     When the input is compressed, it has a range of [0, 255], which is convenient to shift into a range of [-127.5, 127.5].
     If the input is a color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
@@ -399,6 +408,10 @@ def get_zarr_transform(normalize=True, compressed_input=False, rotation=False, e
             prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
         else:
             prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+
+    if mode == 'training':
+        prep_trans_list.append(AddGaussianNoise(0., 0.1))
+    
     prep_trans = transforms.Compose(prep_trans_list)
 
     target_trans_list = []
@@ -426,14 +439,14 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     """
 
     if task == 'autoencoder':
-        prep_trans, target_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input)
+        prep_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input)
         histo_dataset = ZarrDataset
         TRAIN_DATASIZE = 1200000
         VALID_DATASIZE = 50000
         TEST_DATASIZE = 200000
         
     elif task == 'segmentation':        
-        prep_trans, target_trans = get_zarr_transform(normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
+        prep_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
         if mode == 'training':
             histo_dataset = LabeledZarrDataset
         else:
