@@ -112,7 +112,7 @@ def metrics(args):
     
     for m_k in avg_metrics.keys():
         avg_metrics[m_k] = avg_metrics[m_k] / valid_cnt[m_k]
-        logger.info('Average metric %s: %0.4f' % (m_k, avg_metrics[m_k]))
+        logger.info('[%s] Average metric %s: %0.4f' % (args.trained_model, m_k, avg_metrics[m_k]))
 
     all_preds = np.concatenate(all_preds, axis=0)
     all_targets = np.concatenate(all_targets, axis=0)
@@ -120,7 +120,7 @@ def metrics(args):
     global_scores = metrics_image(all_preds, all_targets, pred_threshold=args.pred_threshold)
     
     for m_k in global_scores.keys():
-        logger.info('Global metric %s: %0.4f' % (m_k, global_scores[m_k]))
+        logger.info('[%s] Global metric %s: %0.4f' % (args.trained_model, m_k, global_scores[m_k]))
         
     logging.shutdown()
     return avg_metrics
