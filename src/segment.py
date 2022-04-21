@@ -110,11 +110,11 @@ def setup_network(state):
     
     Returns
     -------
-    seg_model : nn.Module
-        The segmentation mode implemented by a convolutional neural network
-    
     forward_function : function
         The function to be used as feed-forward step
+    
+    output_channels : int
+        The number of classes predicted by this model
     """
     # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
     if ('Decoder' in state['args']['model_type'] and state['args']['autoencoder_model'] is None) or 'NoBridge' in state['args']['model_type']:

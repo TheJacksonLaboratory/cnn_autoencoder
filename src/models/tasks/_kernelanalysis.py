@@ -1,5 +1,3 @@
-import logging 
-
 import math
 import torch
 import torch.nn as nn
@@ -14,16 +12,20 @@ def initialize_weights(m):
             nn.init.uniform_(m.bias.data, 0, 2*math.pi)
 
 class KernelLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, gammas=1.0):
+    def __init__(self, channels_org, num_projections, gammas=1.0, **kwargs):
         super(KernelLayer, self).__init__()
         
         if isinstance(gammas, float):
             gammas = [gammas]
         
+        if not isinstance(gammas, list):
+            gammas = list(gammas)
+        
         self._sqrt_gammas = [g**0.5 for g in gammas]
-        self._dim_scale = (2 / out_channels)**0.5
-                
-        self.projection = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1, padding=0, bias=True)
+        self.num_scales = len(self._sqrt_gammas)
+        self._dim_scale = (2 / num_projections)**0.5
+            
+        self.projection = nn.Conv2d(in_channels=channels_org, out_channels=num_projections, kernel_size=1, stride=1, padding=0, bias=True)
         self.avg_pooling = nn.AdaptiveAvgPool2d(output_size=(1, 1))
         
         # Initialize the kernel matrix

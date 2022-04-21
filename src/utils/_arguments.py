@@ -234,3 +234,36 @@ def get_segment_args(parser_only=False):
     args.mode = 'segment'
 
     return args
+
+
+def get_project_args(parser_only=False):
+    parser = argparse.ArgumentParser('Testing of an image kernel projection model')
+    
+    parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
+
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    
+    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-m', '--model', type=str, dest='model', help='The checkpoint of the model to be tested')
+
+    parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Patched segmentation in batches if this size', default=1)
+    
+    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
+    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
+
+    parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
+
+    parser.add_argument('-i', '--input', type=str, nargs='+', dest='input', help='Input compressed images (list of .pth files)')
+    parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the decompressed image')
+
+    parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
+    
+    if parser_only:
+        return parser
+    
+    args = override_config_file(parser)
+
+    args.task = 'projection'
+    args.mode = 'project'
+
+    return args
