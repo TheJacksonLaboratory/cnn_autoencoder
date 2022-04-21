@@ -13,45 +13,30 @@ def initialize_weights(m):
         if m.bias is not None:
             nn.init.uniform_(m.bias.data, 0, 2*math.pi)
 
-
 class KernelLayer(nn.Module):
-    def __init__(self, channels_in, channels_out, patch_size, gamma=1.0):
+    def __init__(self, in_channels, out_channels, gammas=1.0):
         super(KernelLayer, self).__init__()
-
-        self._sqrt_gamma = math.sqrt(gamma)
-        self._dim_scale = math.sqrt(2 / channels_out)
-
-        self.projection = nn.Conv2d(in_channels=channels_in, out_channels=channels_out, kernel_size=1, stride=1, padding=0, bias=True)
-        self.pooling = nn.AvgPool2d(kernel_size=patch_size, stride=patch_size)
-
+        
+        if isinstance(gammas, float):
+            gammas = [gammas]
+        
+        self._sqrt_gammas = [g**0.5 for g in gammas]
+        self._dim_scale = (2 / out_channels)**0.5
+                
+        self.projection = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1, padding=0, bias=True)
+        self.avg_pooling = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+        
         # Initialize the kernel matrix
         self.apply(initialize_weights)
-
+    
     def forward(self, x):
-        fx = self._dim_scale * torch.cos(self.projection(self._sqrt_gamma * x))
-        fx = self.pooling(fx)
-        return fx
+        wx = []
+        for sg in self._sqrt_gammas:
+            z = self._dim_scale * torch.cos(self.projection(sg * x))
+            z = self.avg_pooling(z).unsqueeze(dim=1)
+            wx.append(z)
+        return torch.cat(wx, dim=1)
 
-
-class MultiscaleKernelLayer(nn.Module):
-    def __init__(self, channels_in, channels_out, patch_size, gammas):
-        super(MultiscaleKernelLayer, self).__init__()
-
-        if isinstance(gammas, float):
-            gammas = list(gammas)
-
-        self.kernel_layers = nn.ModuleList([KernelLayer(channels_in=channels_in, channels_out=channels_out, patch_size=patch_size, gamma=gamma) for gamma in gammas])
-
-    def forward(self, x):
-        Z = []
-        for kl in self.kernel_layers:
-            # Scale the input to each scale of gammas
-            z = kl(x).unsqueeze(dim=1)
-            Z.append(z)
-
-        Z = torch.cat(Z, dim=1)
-        return Z
-        
 
 if __name__ == '__main__':
     import argparse
@@ -59,8 +44,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser('Test of the Kernel Canonical Correlation Analysis (KCCA)')
     parser.add_argument('-n', '--sample-size', dest='sample_size', help='Size of the sample', default=200)
-    parser.add_argument('-ps', '--patch-size', dest='patch_size', help='Size of the patch to be analyzed', default=64)
-    parser.add_argument('-bch', '--bnch', type=int, dest='channels_bn', help='Number of channels of the compressed representation', default=10)
+    parser.add_argument('-ps', '--patch-size', dest='patch_size', help='Size of the patch to be analyzed', default=1)
+    parser.add_argument('-bch', '--bnch', type=int, dest='channels_bn', help='Number of channels of the compressed representation', default=48)
     parser.add_argument('-pch', '--prjch', type=int, dest='channels_projection', help='Dimension of the projection space', default=10000)
     parser.add_argument('-g', '--gammas', type=float, nargs='+', dest='gammas', help='List of scales for multiscale analysis', default=[1e-2])
 
@@ -74,14 +59,14 @@ if __name__ == '__main__':
 
     print('Distance matrix', d.size())
     print('Kernel matrix', K_true.size())
-    kcca = MultiscaleKernelLayer(args.channels_bn, args.channels_projection, args.patch_size, args.gammas)
+    kcca = KernelLayer(in_channels=args.channels_bn, out_channels=args.channels_projection, gammas=args.gammas)
 
     Z = kcca(X)
     Z = Z.detach().permute(1, 3, 4, 0, 2)
     K_approx = torch.matmul(Z, Z.transpose(dim0=3, dim1=4))
     print('Kernel approximation matrix', K_approx.size())
     
-    plt.scatter(K_true.flatten(), K_approx.flatten())
+    plt.scatter(K_true.flatten(), K_approx[-1, ...].flatten())
     min_x = torch.min(K_true)
     min_y = torch.min(K_approx)
 
