@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import MaskedAutoEncoder, AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
+from models import MaskedAutoEncoder, AutoEncoder, RateDistortion, RateDistortionPenaltyA, RateDistortionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
 from utils import checkpoint, get_training_args, setup_logger, get_data
 
 from functools import reduce
@@ -222,15 +222,15 @@ def setup_criteria(args):
 
     # Loss function
     if args.criterion == 'RD_PA':
-        criterion = RateDistorsionPenaltyA(**args.__dict__)
+        criterion = RateDistortionPenaltyA(**args.__dict__)
         stopping_criteria.append(EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit))
 
     elif args.criterion == 'RD_PB':
-        criterion = RateDistorsionPenaltyB(**args.__dict__)
+        criterion = RateDistortionPenaltyB(**args.__dict__)
         stopping_criteria.append(EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit))
 
     elif args.criterion == 'RD':
-        criterion = RateDistorsion(**args.__dict__)
+        criterion = RateDistortion(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)

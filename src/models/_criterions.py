@@ -6,9 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class RateDistorsion(nn.Module):
+class RateDistortion(nn.Module):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
-        super(RateDistorsion, self).__init__()
+        super(RateDistortion, self).__init__()
         self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -20,9 +20,9 @@ class RateDistorsion(nn.Module):
         return self._distorsion_lambda * dist + rate, None
 
 
-class RateDistorsionPenaltyA(RateDistorsion):
+class RateDistortionPenaltyA(RateDistortion):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistorsionPenaltyA, self).__init__(distorsion_lambda)
+        super(RateDistortionPenaltyA, self).__init__(distorsion_lambda)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -41,14 +41,14 @@ class RateDistorsionPenaltyA(RateDistorsion):
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
         # Distortion and rate of compression loss:
-        dist_rate_loss, _ = super(RateDistorsionPenaltyA, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
+        dist_rate_loss, _ = super(RateDistortionPenaltyA, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
         return dist_rate_loss + self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
 
 
-class RateDistorsionPenaltyB(RateDistorsion):
+class RateDistortionPenaltyB(RateDistortion):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistorsionPenaltyB, self).__init__(distorsion_lambda)
+        super(RateDistortionPenaltyB, self).__init__(distorsion_lambda)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -75,7 +75,7 @@ class RateDistorsionPenaltyB(RateDistorsion):
         P_B = B[max_energy_channel]
         
         # Distortion and rate of compression loss:
-        dist_rate_loss, _ = super(RateDistorsionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
+        dist_rate_loss, _ = super(RateDistortionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
         return dist_rate_loss + self._penalty_beta * torch.mean(P_B), P_B.detach().mean()
 
