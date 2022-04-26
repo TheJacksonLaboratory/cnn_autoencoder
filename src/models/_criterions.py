@@ -144,17 +144,26 @@ class EarlyStoppingTarget(StoppingCriterion):
     """ Keep training while the inequality holds.  
     
     """
-    def __init__(self, target, comparison='l', **kwargs):
+    def __init__(self, target, comparison='l', warmup=0, **kwargs):
         super(EarlyStoppingTarget, self).__init__(**kwargs)
+        self._warmup = warmup
         self._target = target
         self._comparison = comparison
         self._last_metric = -1
 
     def update(self, metric=None, **kwargs):
         super(EarlyStoppingTarget, self).update(**kwargs)
+
+        # Do not store anythong until warmed up
+        if self._curr_iteration <= self._warmup:
+            return
+        
         self._last_metric = metric
 
     def check(self):
+        if self._curr_iteration <= self._warmup:
+            return True
+
         parent_decision = super(EarlyStoppingTarget, self).check()
 
         # If the criterion is met, the training is stopped
