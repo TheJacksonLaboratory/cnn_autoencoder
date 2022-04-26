@@ -41,7 +41,7 @@ class RateDistorsionPenaltyA(RateDistorsion):
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
         # Distortion and rate of compression loss:
-        dist_rate_loss = super(RateDistorsionPenaltyA, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
+        dist_rate_loss, _ = super(RateDistorsionPenaltyA, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
         return dist_rate_loss + self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
 
@@ -75,7 +75,7 @@ class RateDistorsionPenaltyB(RateDistorsion):
         P_B = B[max_energy_channel]
         
         # Distortion and rate of compression loss:
-        dist_rate_loss = super(RateDistorsionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
+        dist_rate_loss, _ = super(RateDistorsionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
         return dist_rate_loss + self._penalty_beta * torch.mean(P_B), P_B.detach().mean()
 
