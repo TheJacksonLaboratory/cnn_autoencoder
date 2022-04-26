@@ -457,7 +457,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if mode != 'training':
-        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0)
+        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0, **kwargs)
         test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
 
@@ -468,8 +468,8 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
         data_dir_trn = data_dir
         data_dir_val = data_dir
     
-    hist_train_data = histo_dataset(data_dir_trn, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0)
-    hist_valid_data = histo_dataset(data_dir_val, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0)
+    hist_train_data = histo_dataset(data_dir_trn, patch_size=patch_size, dataset_size=TRAIN_DATASIZE, level=pyramid_level, mode='train', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0, **kwargs)
+    hist_valid_data = histo_dataset(data_dir_val, patch_size=patch_size, dataset_size=VALID_DATASIZE, level=pyramid_level, mode='val', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0, **kwargs)
 
     # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
     train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)

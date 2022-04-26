@@ -12,18 +12,17 @@ class RateDistorsion(nn.Module):
         self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        # Distorsion
+        # Distortion
         dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.mean(-torch.log2(p_y))
+        rate = torch.mean(torch.sum(-torch.log2(p_y), dim=1)) / (p_y.size(0) * p_y.size(2) * p_y.size(3))
         return self._distorsion_lambda * dist + rate, None
 
 
-class RateDistorsionPenaltyA(nn.Module):
+class RateDistorsionPenaltyA(RateDistorsion):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistorsionPenaltyA, self).__init__()
-        self._distorsion_lambda = distorsion_lambda
+        super(RateDistorsionPenaltyA, self).__init__(distorsion_lambda)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -41,19 +40,15 @@ class RateDistorsionPenaltyA(nn.Module):
         
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
-        # Distorsion
-        dist = F.mse_loss(x_r, x.to(x_r.device))
-        
-        # Rate of compression:
-        rate = torch.mean(-torch.log2(p_y))
+        # Distortion and rate of compression loss:
+        dist_rate_loss = super(RateDistorsionPenaltyA, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
-        return self._distorsion_lambda * dist + rate + self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
+        return dist_rate_loss + self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
 
 
-class RateDistorsionPenaltyB(nn.Module):
+class RateDistorsionPenaltyB(RateDistorsion):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistorsionPenaltyB, self).__init__()
-        self._distorsion_lambda = distorsion_lambda
+        super(RateDistorsionPenaltyB, self).__init__(distorsion_lambda)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -79,13 +74,10 @@ class RateDistorsionPenaltyB(nn.Module):
         # P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
         P_B = B[max_energy_channel]
         
-        # Distorsion
-        dist = F.mse_loss(x_r, x.to(x_r.device))
-        
-        # Rate of compression:
-        rate = torch.mean(-torch.log2(p_y))
+        # Distortion and rate of compression loss:
+        dist_rate_loss = super(RateDistorsionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
-        return self._distorsion_lambda * dist + rate + self._penalty_beta * torch.mean(P_B), P_B.detach().mean()
+        return dist_rate_loss + self._penalty_beta * torch.mean(P_B), P_B.detach().mean()
 
 
 class StoppingCriterion(object):
