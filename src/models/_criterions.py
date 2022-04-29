@@ -16,7 +16,7 @@ class RateDistortion(nn.Module):
         dist = F.mse_loss(x_r, x.to(x_r.device))
         
         # Rate of compression:
-        rate = torch.mean(torch.sum(-torch.log2(p_y), dim=1)) / (p_y.size(0) * p_y.size(2) * p_y.size(3))
+        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
         return self._distorsion_lambda * dist + rate, None
 
 
