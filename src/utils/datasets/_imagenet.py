@@ -32,7 +32,7 @@ def get_imagenet_transform(mode='training', normalize=True):
 
     if normalize:
         # prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
-        prep_trans_list.append(transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]))
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
         
     return transforms.Compose(prep_trans_list)
 
@@ -45,7 +45,7 @@ class ImageS3(Dataset):
         
         elif root.endswith('.txt'):
             with open(root, 'r') as f:
-                self._s3_urls = f.readlines()
+                self._s3_urls = [l.strip() for l in f.readlines()]
         else:
             raise ValueError('Root %s not supported for retrieving images from an s3 bucket' % root)
 
@@ -75,12 +75,12 @@ class ImageS3(Dataset):
         else:
             fn = self._s3_urls[index]
         
-        print('[%i] Filename %s (remove end point %i)' % (index, fn, self._remove_endpoint))
+        print('[%i] Client %s Bucket %s, Filename %s (remove end point %i)' % (index, str(self._s3), self._bucket_name, fn, self._remove_endpoint))
         im_bytes = self._s3.get_object(Bucket=self._bucket_name, Key=fn)['Body'].read()
         im_s3 = Image.open(BytesIO(im_bytes))
 
-        # Copy and close the connection with the original image in the cloud bucket
-        im = im_s3.copy()
+        # Copy and close the connection with the original image in the cloud bucket. Additionally, convert any grayscale image to RGB (replicate it to have three channels)
+        im = im_s3.copy().convert('RGB')
         im_s3.close()
 
         if self._transform is not None:
@@ -95,7 +95,10 @@ class ImageS3(Dataset):
 def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
     prep_trans = get_imagenet_transform(mode, normalize)
 
-    if isinstance(data_dir, list) and (data_dir[0].endswith('txt') or data_dir[0].startswith('s3') or data_dir[0].startswith('http')):
+    if (isinstance(data_dir, list) and (data_dir[0].endswith('txt') or data_dir[0].startswith('s3') or data_dir[0].startswith('http'))) or data_dir.endswith('txt'):
+        if isinstance(data_dir, list) and data_dir[0].endswith('txt'):
+            data_dir = data_dir[0]
+
         image_dataset = ImageS3
     else:
         image_dataset = ImageFolder
@@ -130,20 +133,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     transform = get_imagenet_transform(mode='training', normalize=True)
-
-    trn_queue, val_queue = get_ImageNet(data_dir=args.dataset_filenames, batch_size=1, val_batch_size=1, workers=0, mode=args.mode, normalize=True)
+    
+    trn_queue, val_queue = get_ImageNet(data_dir=args.dataset_filenames, batch_size=2, val_batch_size=1, workers=0, mode=args.mode, normalize=True)
 
     print('Data set sizes: training %i, validation %i' % (len(trn_queue), len(val_queue)))
     
     for im, _ in trn_queue:
-        plt.imshow(im[0].permute(1, 2, 0) * 0.5 + 0.5)
-        plt.axis('off')
-        plt.tight_layout()
-        plt.show()
+        print(im.size())
     
     for im, _ in val_queue:
-        plt.imshow(im[0].permute(1, 2, 0) * 0.5 + 0.5)
-        plt.axis('off')
-        plt.tight_layout()
-        plt.show()
-    
+        print(im.size())
+        
