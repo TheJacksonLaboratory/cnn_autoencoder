@@ -61,10 +61,9 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
     for s, s_i in enumerate(sample_idx):
 
         optimizer.zero_grad()
-        p = fact_entropy(x[s_i] + 0.5) - fact_entropy(x[s_i] - 0.5) + 1e-10
-        p = torch.prod(p, dim=1).unsqueeze(dim=1)
+        p = fact_entropy(x[s_i] + 0.5) - fact_entropy(x[s_i] - 0.5) + 1e-10        
 
-        loss = torch.mean(-torch.log2(p))
+        loss = torch.mean(torch.sum(-torch.log2(p), dim=1))
 
         loss.backward()
         mean_loss += loss.item()
