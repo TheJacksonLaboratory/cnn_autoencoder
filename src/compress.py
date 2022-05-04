@@ -43,7 +43,7 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
                 y_q = y_q[..., 1:-1, 1:-1]
             
             for k, y_k in enumerate(y_q):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=patch_size)
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=patch_size)
                 tl_y *= comp_patch_size
                 tl_x *= comp_patch_size
                 z_comp[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k

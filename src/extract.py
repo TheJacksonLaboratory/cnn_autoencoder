@@ -95,7 +95,7 @@ def extract_image(forward_function, filename, output_dir, features, output_chann
                 y = y[..., output_offset:-output_offset, output_offset:-output_offset]
                 fx = fx[..., output_offset:-output_offset, output_offset:-output_offset]
                 
-            _, tl_y, tl_x = utils.compute_grid(i, 1, H, W, output_patch_size)
+            _, tl_y, tl_x = utils.compute_grid(i, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=output_patch_size)
             tl_y *= output_patch_size
             tl_x *= output_patch_size
             

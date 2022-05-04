@@ -50,7 +50,7 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
                 x = x[..., offset:-offset, offset:-offset]
                                     
             for k, x_k in enumerate(x):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=patch_size)
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=patch_size)
                 tl_y *= patch_size
                 tl_x *= patch_size
                 z_decomp[0, ..., tl_y:tl_y + patch_size, tl_x:tl_x + patch_size] = x_k

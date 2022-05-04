@@ -107,7 +107,7 @@ def load_image(filename, patch_size):
     return arr
     
 
-def compute_grid(index, n_files, min_H, min_W, patch_size):
+def compute_grid(index, imgs_shapes, imgs_sizes, patch_size):
     """ Compute the coordinate on a grid of indices corresponding to 'index'.
     The indices are in the form of [i, tl_x, tl_y], where 'i' is the file index.
     tl_x and tl_y are the top left coordinates of the patched image.
@@ -117,12 +117,10 @@ def compute_grid(index, n_files, min_H, min_W, patch_size):
     ----------
     index : int
         Index of the patched dataset Between 0 and 'total_patches'-1
-    n_files : int
-        Number of image files in the dataset
-    min_H : int
-        Minimum image height among all images
-    min_W : int
-        Minimum image width among all images
+    imgs_shapes : list of ints
+        Shapes of each image in the dataset
+    imgs_sizes : list of ints
+        Number of patches that can be obtained from each image in the dataset
     patch_size : int
         The size of each squared patch
         
@@ -133,15 +131,16 @@ def compute_grid(index, n_files, min_H, min_W, patch_size):
     tl_x : int
     """
     # This allows to generate virtually infinite data from bootstrapping the same data
-    index %= (n_files * min_H * min_W) // patch_size**2
+    index %= imgs_sizes[-1]
 
     # Get the file index among the available file names
-    i = index // ((min_H * min_W) // patch_size**2)
-    index %= (min_H * min_W) // patch_size**2
-
+    i = list(filter(lambda l_h: l_h[1][0] <= index < l_h[1][1], enumerate(zip(imgs_sizes[:-1], imgs_sizes[1:]))))[0][0]
+    index -= imgs_sizes[i]
+    _, W = imgs_shapes[i]
+    
     # Get the patch position in the file
-    tl_y = index // (min_W // patch_size)
-    tl_x = index % (min_W // patch_size)
+    tl_y = index // (W // patch_size)
+    tl_x = index % (W // patch_size)
 
     return i, tl_y, tl_x
 
@@ -189,6 +188,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     if c == 1:
         patch = patch[np.newaxis, ...]
 
+
     # Pad the patch using the reflect mode
     if offset > 0:
         patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
@@ -230,8 +230,10 @@ class ZarrDataset(Dataset):
             self._z_list = self._preload_files(self._filenames, group='0')
             self._compute_size()
         else:
-            self._min_H = None
-            self._min_W = None
+            self._max_H = None
+            self._max_W = None
+            self._imgs_shapes = []
+            self._imgs_sizes = []
 
     def _split_dataset(self, root, mode):
         """ Identify are the inputs being passed and split the data according to the mode.
@@ -266,7 +268,7 @@ class ZarrDataset(Dataset):
         if self._source_format == 'zarr':
             z_list = []
             for fn in filenames:
-                z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]
+                z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]                
                 z_list.append(z)
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
@@ -275,25 +277,29 @@ class ZarrDataset(Dataset):
             z_list = [zarr.array(load_image(fn, self._patch_size), chunks=(3, self._patch_size, self._patch_size), compressor=compressor)
                             for fn in filenames
                     ]
+
         return z_list
 
     def _compute_size(self):
-        # Get the lower bound of patches that can be obtained from all zarr files
-        min_H = min([z.shape[-2] for z in self._z_list])
-        min_W = min([z.shape[-1] for z in self._z_list])
+        self._imgs_shapes = [(z.shape[-2], z.shape[-1]) for z in self._z_list]
+        self._imgs_sizes = np.cumsum([0] + [int(np.ceil((H * W) / self._patch_size**2)) for H, W in self._imgs_shapes])
         
-        self._min_H = self._patch_size * (min_H // self._patch_size)
-        self._min_W = self._patch_size * (min_W // self._patch_size)
+        # Get the upper bound of patches that can be obtained from all zarr files (images with smaller size will be padded)
+        max_H = max([z.shape[-2] for z in self._z_list])
+        max_W = max([z.shape[-1] for z in self._z_list])
+        
+        self._max_H = self._patch_size * (max_H // self._patch_size)
+        self._max_W = self._patch_size * (max_W // self._patch_size)
         
         # Compute the size of the dataset from the valid patches
         if self._dataset_size < 0:
-            self._dataset_size = int(np.ceil(self._min_H * self._min_W / self._patch_size**2)) * len(self._filenames)
+            self._dataset_size = self._imgs_sizes[-1]
     
     def __len__(self):
         return self._dataset_size
 
     def __getitem__(self, index):
-        i, tl_y, tl_x = compute_grid(index, len(self._z_list), self._min_H, self._min_W, self._patch_size)
+        i, tl_y, tl_x = compute_grid(index, self._imgs_shapes, self._imgs_sizes, self._patch_size)
 
         patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
@@ -304,7 +310,7 @@ class ZarrDataset(Dataset):
         return patch, [0]
 
     def get_shape(self):
-        return self._min_H, self._min_W
+        return self._max_H, self._max_W
 
 
 class LabeledZarrDataset(ZarrDataset):
@@ -324,7 +330,7 @@ class LabeledZarrDataset(ZarrDataset):
         self._input_target_transform = input_target_transform
         
     def __getitem__(self, index):
-        i, tl_y, tl_x = compute_grid(index, len(self._z_list), self._min_H, self._min_W, self._patch_size)
+        i, tl_y, tl_x = compute_grid(index, self._imgs_shapes, self._imgs_sizes, self._patch_size)
 
         patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
@@ -510,7 +516,7 @@ if __name__ == '__main__':
     print('Dataset size:', len(ds))
     
     dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers, worker_init_fn=zarrdataset_worker_init)
-    print('Min image size: (%d, %d)' % (ds._min_H, ds._min_W))
+    print('Min image size: (%d, %d)' % (ds._max_H, ds._max_W))
 
     q = tqdm(total = args.n_batches)
     for i, (x, t) in enumerate(dl):

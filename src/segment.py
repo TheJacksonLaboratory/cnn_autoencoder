@@ -79,7 +79,7 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
                 y = (y * 255).astype(np.uint8)
 
             for k, y_k in enumerate(y):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=output_patch_size)
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=output_patch_size)
                 tl_y *= output_patch_size
                 tl_x *= output_patch_size
                 z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
