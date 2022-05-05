@@ -245,7 +245,7 @@ def get_project_args(parser_only=False):
     
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
-    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=PROJ_MODELS, defualt=PROJ_MODELS[0])
+    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=PROJ_MODELS, default=PROJ_MODELS[0])
 
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Patched segmentation in batches if this size', default=1)
     
