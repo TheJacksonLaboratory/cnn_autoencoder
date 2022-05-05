@@ -44,7 +44,7 @@ def project_image(proj_model, filename, output_dir, num_projections, patch_size,
             y = y.cpu().view(batch_size, num_scales, -1).numpy()
 
             for k, y_k in enumerate(y):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, n_files=1, min_H=H, min_W=W, patch_size=patch_size)
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=patch_size)
                 z_patches_proj[..., tl_y, tl_x] = y_k
 
                 z_proj[:] = z_proj[:] + y_k
