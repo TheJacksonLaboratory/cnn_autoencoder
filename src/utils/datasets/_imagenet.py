@@ -128,12 +128,14 @@ if __name__ == '__main__':
     
     parser.add_argument('-ds', '--dataset', nargs='+', dest='dataset_filenames', help='URL to the filenames in S3 storage')
     parser.add_argument('-m', '--mode', dest='mode', help='Mode of use of the dataset', choices=['training', 'validation', 'testing'], default='training')
+    parser.add_argument('-bs', '--batch-size', type=int, dest='batch_size', help='Size of the batch retrieved', default=8)
+    parser.add_argument('-nw', '--num-workers', type=int, dest='num_workers', help='Number of workers', default=0)
 
     args = parser.parse_args()
 
     transform = get_imagenet_transform(mode='training', normalize=True)
     
-    trn_queue, val_queue = get_ImageNet(data_dir=args.dataset_filenames, batch_size=2, val_batch_size=1, workers=0, mode=args.mode, normalize=True)
+    trn_queue, val_queue = get_ImageNet(data_dir=args.dataset_filenames, batch_size=args.batch_size, val_batch_size=args.batch_size, workers=args.num_workers, mode=args.mode, normalize=True)
 
     print('Data set sizes: training %i, validation %i' % (len(trn_queue), len(val_queue)))
     
