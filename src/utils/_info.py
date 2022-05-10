@@ -9,3 +9,4 @@ SCHEDULERS = ['None', 'ReduceOnPlateau']
 
 SEG_MODELS = ['DecoderUNet', 'UNet', 'UNetNoBridge']
 CAE_MODELS = ['MaskedAutoEncoder', 'AutoEncoder']
+PROJ_MODELS = ['KCCA']

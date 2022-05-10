@@ -1,7 +1,7 @@
 import math
 import os
-import random
 
+import math
 import numpy as np
 import zarr
 
@@ -139,8 +139,8 @@ def compute_grid(index, imgs_shapes, imgs_sizes, patch_size):
     _, W = imgs_shapes[i]
     
     # Get the patch position in the file
-    tl_y = index // (W // patch_size)
-    tl_x = index % (W // patch_size)
+    tl_y = index // int(math.ceil(W / patch_size))
+    tl_x = index % int(math.ceil(W / patch_size))
 
     return i, tl_y, tl_x
 
@@ -190,7 +190,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
 
 
     # Pad the patch using the reflect mode
-    if offset > 0:
+    if offset > 0 or (patch.shape[-2] < patch_size or patch.shape[-1] < patch_size):
         patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
 
     return patch
@@ -288,8 +288,8 @@ class ZarrDataset(Dataset):
         max_H = max([z.shape[-2] for z in self._z_list])
         max_W = max([z.shape[-1] for z in self._z_list])
         
-        self._max_H = self._patch_size * (max_H // self._patch_size)
-        self._max_W = self._patch_size * (max_W // self._patch_size)
+        self._max_H = self._patch_size * int(math.ceil(max_H / self._patch_size))
+        self._max_W = self._patch_size * int(math.ceil(max_W / self._patch_size))
         
         # Compute the size of the dataset from the valid patches
         if self._dataset_size < 0:
