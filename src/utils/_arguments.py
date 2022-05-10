@@ -253,6 +253,7 @@ def get_project_args(parser_only=False):
     
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
+    parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
 
