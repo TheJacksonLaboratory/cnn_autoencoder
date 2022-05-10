@@ -17,7 +17,7 @@ import utils
 proj_model_types = {"KCCA": models.KernelLayer}
 
 
-def project_image(proj_model, filename, output_dir, num_projections, patch_size, workers, input_offset=True, batch_size=1):
+def project_image(proj_model, filename, output_dir, num_projections, patch_size, workers, batch_size=1):
     logger = logging.getLogger(args.mode + '_log')
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
@@ -25,7 +25,7 @@ def project_image(proj_model, filename, output_dir, num_projections, patch_size,
     num_scales = proj_model.module.num_scales
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    histo_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, offset=input_offset, source_format='zarr')
+    histo_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, source_format='zarr')
     data_queue = DataLoader(histo_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
 
     H, W = histo_ds.get_shape()
@@ -124,7 +124,6 @@ def project(args):
             output_dir=out_fn,
             num_projections=output_channels,
             patch_size=args.patch_size,
-            input_offset=args.add_offset,
             workers=args.workers,
             batch_size=args.batch_size
             )
