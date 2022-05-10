@@ -41,7 +41,7 @@ def project_image(proj_model, filename, output_dir, num_projections, patch_size,
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
             y = proj_model(x)
-            y = y.cpu().view(batch_size, num_scales, -1).numpy()
+            y = y.cpu().view(-1, num_scales, num_projections).numpy()
 
             for k, y_k in enumerate(y):
                 _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=patch_size)
