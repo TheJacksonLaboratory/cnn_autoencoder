@@ -115,6 +115,7 @@ def metrics(args):
         all_metrics['time'].append(e_time)
         logger.info('[Image %i] Execution time: %0.4f' % (i+1, e_time))
                 
+    logger.info('Metrics summary: min, mean, median, max, std. dev.')
     for m_k in all_metrics.keys():
         avg_metric = np.nanmean(all_metrics[m_k])
         std_metric = np.nanstd(all_metrics[m_k])
