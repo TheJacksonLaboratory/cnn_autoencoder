@@ -75,7 +75,6 @@ class ImageS3(Dataset):
         else:
             fn = self._s3_urls[index]
         
-        print('[%i] Client %s Bucket %s, Filename %s (remove end point %i)' % (index, str(self._s3), self._bucket_name, fn, self._remove_endpoint))
         im_bytes = self._s3.get_object(Bucket=self._bucket_name, Key=fn)['Body'].read()
         im_s3 = Image.open(BytesIO(im_bytes))
 
