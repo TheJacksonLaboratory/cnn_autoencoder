@@ -116,16 +116,16 @@ def metrics(args):
         logger.info('[Image %i] Execution time: %0.4f' % (i+1, e_time))
                 
     for m_k in all_metrics.keys():
-        avg_metric = np.nanmean(avg_metrics[m_k])
-        std_metric = np.nanstd(avg_metrics[m_k])
-        med_metric = np.nanmedian(avg_metrics[m_k])
-        min_metric = np.nanmin(avg_metrics[m_k])
-        max_metric = np.nanmax(avg_metrics[m_k])
+        avg_metric = np.nanmean(all_metrics[m_k])
+        std_metric = np.nanstd(all_metrics[m_k])
+        med_metric = np.nanmedian(all_metrics[m_k])
+        min_metric = np.nanmin(all_metrics[m_k])
+        max_metric = np.nanmax(all_metrics[m_k])
 
         logger.info('[%s] Summary %s: %0.4f, %0.4f, %0.4f, %0.4f, %0.4f' % (args.trained_model, m_k, min_metric, avg_metric, med_metric, max_metric, std_metric))
 
     logging.shutdown()
-    return avg_metrics
+    return all_metrics
 
 
 if __name__ == '__main__':
@@ -137,4 +137,4 @@ if __name__ == '__main__':
 
     args = utils.override_config_file(parser)
     
-    avg_metrics = metrics(args)
+    all_metrics = metrics(args)
