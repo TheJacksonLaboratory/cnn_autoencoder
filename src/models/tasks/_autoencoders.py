@@ -287,6 +287,7 @@ class AutoEncoder(nn.Module):
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = torch.prod(p_y, dim=1) + 1e-10
         
         x_r = self.synthesis(y_q)
 
@@ -319,6 +320,7 @@ class MaskedAutoEncoder(nn.Module):
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = torch.prod(p_y, dim=1) + 1e-10
 
         x_r = self.synthesis(y_q)
 
