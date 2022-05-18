@@ -7,9 +7,6 @@ from time import perf_counter
 from sklearn.metrics import accuracy_score, roc_auc_score, recall_score, precision_score, f1_score
 
 import numpy as np
-import torch
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 import zarr
 from numcodecs import Blosc
 
@@ -74,8 +71,7 @@ def metrics(args):
     utils.setup_logger(args)    
     logger = logging.getLogger(args.mode + '_log')
 
-    avg_metrics = dict(dist=0, rate=0, psnr=0, time=0)
-    valid_cnt = dict(dist=0, rate=0, psnr=0, time=0)
+    all_metrics = dict(dist=[], rate=[], psnr=[], time=[])
 
     if not args.input[0].lower().endswith(args.source_format.lower()):
         # If a directory has been passed, get all image files inside to compress
@@ -110,18 +106,23 @@ def metrics(args):
 
         for m_k in scores.keys():
             if scores[m_k] > 0.0:
-                avg_metrics[m_k] = avg_metrics[m_k] + scores[m_k]
-                valid_cnt[m_k] = valid_cnt[m_k] + 1
+                all_metrics[m_k].append(scores[m_k])
+            else:
+                all_metrics[m_k].append(np.nan)
 
             logger.info('[Image %i] Metric %s: %0.4f' % (i+1, m_k, scores[m_k]))
         
-        avg_metrics['time'] = avg_metrics['time'] + e_time
-        valid_cnt['time'] = valid_cnt['time'] + 1
+        all_metrics['time'].append(e_time)
         logger.info('[Image %i] Execution time: %0.4f' % (i+1, e_time))
                 
-    for m_k in avg_metrics.keys():
-        avg_metrics[m_k] = avg_metrics[m_k] / valid_cnt[m_k]
-        logger.info('[%s] Average metric %s: %0.4f' % (args.trained_model, m_k, avg_metrics[m_k]))
+    for m_k in all_metrics.keys():
+        avg_metric = np.nanmean(avg_metrics[m_k])
+        std_metric = np.nanstd(avg_metrics[m_k])
+        med_metric = np.nanmedian(avg_metrics[m_k])
+        min_metric = np.nanmin(avg_metrics[m_k])
+        max_metric = np.nanmax(avg_metrics[m_k])
+
+        logger.info('[%s] Summary %s: %0.4f, %0.4f, %0.4f, %0.4f, %0.4f' % (args.trained_model, m_k, min_metric, avg_metric, med_metric, max_metric, std_metric))
 
     logging.shutdown()
     return avg_metrics
