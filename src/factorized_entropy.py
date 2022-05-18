@@ -16,7 +16,7 @@ import utils
 
 
 def setup_network(state):
-    """ Setup a neural network-based image compression model.
+    """ Setup a neural network-based factorized entropy model.
 
     Parameters
     ----------
@@ -25,35 +25,38 @@ def setup_network(state):
     
     Returns
     -------
-    comp_model : torch.nn.Module
-        The compressor model
-    """
-    embedding = models.ColorEmbedding(**state['args'])
-    comp_model = models.Analyzer(**state['args'])
-
-    embedding.load_state_dict(state['embedding'])
-    comp_model.load_state_dict(state['encoder'])
-
-    comp_model = nn.Sequential(embedding, comp_model)
-
-    if torch.cuda.is_available() and args.gpu:
-        comp_model = nn.DataParallel(comp_model)
-        comp_model.cuda()
+    fact_ent_model : torch.nn.Module
+        The factorized entropy model
     
-    comp_model.eval()
+    channels_bn : int
+        The number of channels in the compressed representation
+    """
+    fact_ent_model = models.FactorizedEntropy(**state['args'])
+    fact_ent_model.load_state_dict(state['fact_ent'])
+    
+    if state['args']['gpu']:
+        fact_ent_model = nn.DataParallel(fact_ent_model)
+        fact_ent_model.cuda()
+    
+    state['args']['compressed_input'] = False
 
-    return comp_model
+    return fact_ent_model
 
 
-def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1):
+def fact_ent_image(fact_ent_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, destination_format, workers, batch_size=1):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
+    comp_patch_size = patch_size//2**comp_level
+
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    zarr_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, offset=offset, transform=transform, source_format=source_format)
+    zarr_ds = utils.ZarrDataset(root=filename, patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=transform, source_format=source_format)
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
     
-    H, W = zarr_ds.get_shape()
-    comp_patch_size = patch_size//2**comp_level
+    H_comp, W_comp = zarr_ds.get_shape()
+
+    # Compute the size of the reconstructed image
+    H = H_comp * 2**comp_level
+    W = W_comp * 2**comp_level
 
     # Output dir is actually the absolute path to the file where to store the compressed representation
     if 'memory' in destination_format.lower():
@@ -61,31 +64,23 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     else:
         group = zarr.group(output_dir, overwrite=True)
     
-    comp_group = group.create_group('0', overwrite=True)
+    fact_ent_group = group.create_group('0', overwrite=True)
     
-    z_comp = comp_group.create_dataset('0', shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), chunks=(1, channels_bn, comp_patch_size, comp_patch_size), dtype='u1', compressor=compressor)
+    z_fact_ent = fact_ent_group.create_dataset('0', shape=(1, channels_bn, H_comp, W_comp), chunks=(1, channels_bn, comp_patch_size, comp_patch_size), dtype=np.float32, compressor=compressor)
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
-            y_q, _ = comp_model(x)
-            y_q = y_q + 127.5
-            
-            y_q = y_q.round().to(torch.uint8)
-            y_q = y_q.detach().cpu().numpy()
+            p_y_q = fact_ent_model(x + 0.5) - fact_ent_model(x - 0.5) + 1e-10
+            p_y_q = p_y_q.detach().cpu().numpy()
 
             if offset > 0:
-                y_q = y_q[..., 1:-1, 1:-1]
+                p_y_q = p_y_q[..., 1:-1, 1:-1]
             
-            for k, y_k in enumerate(y_q):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
+            for k, p_y_k in enumerate(p_y_q):
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H_comp, W_comp)], imgs_sizes=[0, len(zarr_ds)], patch_size=comp_patch_size)
                 tl_y *= comp_patch_size
                 tl_x *= comp_patch_size
-                z_comp[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
-    
-    if is_labeled:
-        label_group = group.create_group('1', overwrite=True)
-        z_org = zarr.open(filename, 'r')
-        zarr.copy(z_org['1/0'], label_group)
+                z_fact_ent[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = p_y_k
     
     if 'memory' in destination_format.lower():
         return group
@@ -93,18 +88,18 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     return True
 
 
-def compress(args):
-    """ Compress any supported file format (zarr, or any supported by PIL) into a compressed representation in zarr format.
+def fact_ent(args):
+    """ Compute the factorized entropy using a learned model.
     """    
     logger = logging.getLogger(args.mode + '_log')
 
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    comp_model = setup_network(state)
+    fact_ent_model = setup_network(state)
     
     # Conver the single zarr file into a dataset to be iterated
-    transform, _ = utils.get_zarr_transform(normalize=True)
+    transform, _ = utils.get_zarr_transform(normalize=True, compressed_input=True)
 
     # Get the compression level from the model checkpoint
     comp_level = state['args']['compression_level']
@@ -121,36 +116,35 @@ def compress(args):
     if 'memory' in args.destination_format.lower():
         output_fn_list = [None for _ in range(len(input_fn_list))]
     else:
-        output_fn_list = [os.path.join(args.output_dir, '%04d_comp.zarr' % i) for i in range(len(input_fn_list))]
+        output_fn_list = [os.path.join(args.output_dir, '%04d_entropy.zarr' % i) for i in range(len(input_fn_list))]
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        comp_group = compress_image(
-            comp_model=comp_model, 
+        fact_ent_group = fact_ent_image(
+            fact_ent_model=fact_ent_model, 
             filename=in_fn,
             output_dir=out_fn, 
-            channels_bn=state['args']['channels_bn'], 
-            comp_level=comp_level, 
+            channels_bn=state['args']['channels_bn'],
+            comp_level=comp_level,
             patch_size=args.patch_size, 
             offset=offset, 
             transform=transform, 
             source_format=args.source_format, 
             destination_format=args.destination_format, 
-            workers=args.workers, 
-            is_labeled=args.is_labeled,
+            workers=args.workers,
             batch_size=args.batch_size)
 
-        yield comp_group
+        yield fact_ent_group
 
 
 if __name__ == '__main__':
-    args = utils.get_compress_args()
+    args = utils.get_fact_ent_args()
     
     utils.setup_logger(args)
     
     logger = logging.getLogger(args.mode + '_log')
 
-    for _ in compress(args):
-        logger.info('Image compressed successfully')
-        
+    for _ in fact_ent(args):
+        logger.info('Computed the factorized entropy from this image successfully')
+    
     logging.shutdown()

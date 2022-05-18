@@ -40,66 +40,6 @@ def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
     return y
 
 
-def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1):
-    compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
-
-    # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    histo_ds = utils.ZarrDataset(root=filename, patch_size=input_patch_size, offset=input_offset, transform=transform, source_format=source_format)
-    data_queue = DataLoader(histo_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
-
-    H_comp, W_comp = histo_ds.get_shape()
-    H = H_comp * 2**input_comp_level
-    W = W_comp * 2**input_comp_level
-
-    if 'zarr' in destination_format:
-        # Output dir is actually the absolute path to the file where to store the compressed representation
-        if 'memory' in destination_format:
-            group = zarr.group()
-        else:
-            group = zarr.group(output_dir, overwrite=True)
-
-        comp_group = group.create_group('0', overwrite=True)
-    
-        z_seg = comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
-
-    else:
-        z_seg = zarr.zeros(shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
-
-    with torch.no_grad():
-        for i, (x, _) in enumerate(data_queue):
-            y = forward_function(x)
-
-            y = torch.sigmoid(y.detach())
-            y = y.cpu().numpy()
-
-            if output_offset > 0:
-                y = y[..., output_offset:-output_offset, output_offset:-output_offset]
-            
-            if 'zarr' not in destination_format:
-                y = (y * 255).astype(np.uint8)
-
-            for k, y_k in enumerate(y):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(histo_ds)], patch_size=output_patch_size)
-                tl_y *= output_patch_size
-                tl_x *= output_patch_size
-                z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
-
-    # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
-    # It should be used with care since this can generate a large image file.
-    if 'zarr' not in destination_format:
-        im = Image.fromarray(z_seg[0, 0])
-        im.save(output_dir, destination_format)
-    elif is_labeled:
-        label_group = group.create_group('1', overwrite=True)
-        z_org = zarr.open(filename, 'r')
-        zarr.copy(z_org['1/0'], label_group)
-
-    if 'memory' in destination_format:
-        return group
-    
-    return True
-
-
 def setup_network(state):
     """ Setup a nerual network for object segmentation.
 
@@ -175,6 +115,66 @@ def setup_network(state):
             forward_function = partial(forward_decoded_step, seg_model=seg_model, dec_model=dec_model)
 
     return forward_function, output_channels
+
+
+def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1):
+    compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
+
+    # Generate a dataset from a single image to divide in patches and iterate using a dataloader
+    zarr_ds = utils.ZarrDataset(root=filename, patch_size=input_patch_size, offset=input_offset, transform=transform, source_format=source_format)
+    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
+
+    H_comp, W_comp = zarr_ds.get_shape()
+    H = H_comp * 2**input_comp_level
+    W = W_comp * 2**input_comp_level
+
+    if 'zarr' in destination_format.lower():
+        # Output dir is actually the absolute path to the file where to store the compressed representation
+        if 'memory' in destination_format:
+            group = zarr.group()
+        else:
+            group = zarr.group(output_dir, overwrite=True)
+
+        comp_group = group.create_group('0', overwrite=True)
+    
+        z_seg = comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
+
+    else:
+        z_seg = zarr.zeros(shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
+
+    with torch.no_grad():
+        for i, (x, _) in enumerate(data_queue):
+            y = forward_function(x)
+
+            y = torch.sigmoid(y.detach())
+            y = y.cpu().numpy()
+
+            if output_offset > 0:
+                y = y[..., output_offset:-output_offset, output_offset:-output_offset]
+            
+            if 'zarr' not in destination_format:
+                y = (y * 255).astype(np.uint8)
+
+            for k, y_k in enumerate(y):
+                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=output_patch_size)
+                tl_y *= output_patch_size
+                tl_x *= output_patch_size
+                z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
+
+    # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
+    # It should be used with care since this can generate a large image file.
+    if 'zarr' not in destination_format:
+        im = Image.fromarray(z_seg[0, 0])
+        im.save(output_dir, destination_format)
+    elif is_labeled:
+        label_group = group.create_group('1', overwrite=True)
+        z_org = zarr.open(filename, 'r')
+        zarr.copy(z_org['1/0'], label_group)
+
+    if 'memory' in destination_format.lower():
+        return group
+    
+    return True
 
 
 def segment(args):

@@ -240,12 +240,15 @@ class ZarrDataset(Dataset):
         The datasets will be splitted into 70% training, 10% validation, and 20% testing.
         """
         if isinstance(root, list):
+            # If the input file is a list
             self._filenames = root
-            
-        elif root.lower().endswith(self._source_format):
+        elif isinstance(root, (zarr.Group, zarr.Array)):
+            # If the input is a zarr group or array, convert it to list
+            self._filenames = [root]
+        elif isinstance(root, str) and root.lower().endswith(self._source_format):
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
-        elif root.lower().endswith('txt'):
+        elif isinstance(root, str) and root.lower().endswith('txt'):
             # If the input is a text file with a list of url/paths, create the filenames list from it
             with open(root, mode='r') as f:
                 self._filenames = [l.strip('\n\r') for l in f.readlines()]
@@ -266,10 +269,17 @@ class ZarrDataset(Dataset):
 
     def _preload_files(self, filenames, group='0'):
         if self._source_format == 'zarr':
-            z_list = []
-            for fn in filenames:
-                z = zarr.open(fn, mode='r')['%s/%s' % (group, self._level)]                
-                z_list.append(z)
+            # If the input files have been passed as an open zarr group directly
+            if isinstance(filenames[0], zarr.Group):
+                z_list = [grp['%s/%s' % (group, self._level)]
+                            for grp in filenames
+                        ]
+            elif isinstance(filenames[0], zarr.Array):
+                z_list = filenames
+            else:
+                z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] 
+                            for fn in filenames
+                        ]
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
             compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
