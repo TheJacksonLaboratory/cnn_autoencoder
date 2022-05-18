@@ -15,7 +15,7 @@ import models
 import utils
 
 
-def setup_network(state):
+def setup_network(state, use_gpu=False):
     """ Setup a neural network-based image compression model.
 
     Parameters
@@ -36,7 +36,7 @@ def setup_network(state):
 
     comp_model = nn.Sequential(embedding, comp_model)
 
-    if torch.cuda.is_available() and args.gpu:
+    if use_gpu:
         comp_model = nn.DataParallel(comp_model)
         comp_model.cuda()
     
@@ -101,7 +101,7 @@ def compress(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    comp_model = setup_network(state)
+    comp_model = setup_network(state, args.gpu)
     
     # Conver the single zarr file into a dataset to be iterated
     transform, _ = utils.get_zarr_transform(normalize=True)

@@ -15,7 +15,7 @@ import models
 import utils
 
 
-def setup_network(state):
+def setup_network(state, use_gpu=False):
     """ Setup a neural network-based factorized entropy model.
 
     Parameters
@@ -34,7 +34,7 @@ def setup_network(state):
     fact_ent_model = models.FactorizedEntropy(**state['args'])
     fact_ent_model.load_state_dict(state['fact_ent'])
     
-    if state['args']['gpu']:
+    if use_gpu:
         fact_ent_model = nn.DataParallel(fact_ent_model)
         fact_ent_model.cuda()
     
@@ -96,7 +96,7 @@ def fact_ent(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    fact_ent_model = setup_network(state)
+    fact_ent_model = setup_network(state, args.gpu)
     
     # Conver the single zarr file into a dataset to be iterated
     transform, _ = utils.get_zarr_transform(normalize=True, compressed_input=True)

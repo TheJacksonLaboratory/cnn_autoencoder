@@ -40,7 +40,7 @@ def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
     return y
 
 
-def setup_network(state):
+def setup_network(state, use_gpu=False):
     """ Setup a nerual network for object segmentation.
 
     Parameters
@@ -88,7 +88,7 @@ def setup_network(state):
     seg_model = seg_model_class(**state['args'])
     seg_model.load_state_dict(state['model'])
     
-    if state['args']['gpu']:
+    if use_gpu:
         seg_model = nn.DataParallel(seg_model)
         seg_model.cuda()
 
@@ -109,7 +109,7 @@ def setup_network(state):
     
     elif seg_model is not None and dec_model is not None:
         # Segmentation w/ decoder
-        if state['args']['gpu']:
+        if use_gpu:
             forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, dec_model=dec_model)
         else:
             forward_function = partial(forward_decoded_step, seg_model=seg_model, dec_model=dec_model)
@@ -194,7 +194,7 @@ def segment(args):
     for k in args.__dict__.keys():
         state['args'][k] = args.__dict__[k]
 
-    forward_function, output_channels = setup_network(state)
+    forward_function, output_channels = setup_network(state, args.gpu)
 
     if state['args']['compressed_input']:
         input_comp_level = compression_level

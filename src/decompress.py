@@ -16,7 +16,7 @@ import models
 import utils
 
 
-def setup_network(state):
+def setup_network(state, use_gpu=False):
     """ Setup a neural network-based image decompression model.
 
     Parameters
@@ -36,7 +36,7 @@ def setup_network(state):
 
     decomp_model.load_state_dict(state['decoder'])
 
-    if torch.cuda.is_available() and args.gpu:
+    if torch.cuda.is_available() and use_gpu:
         decomp_model = nn.DataParallel(decomp_model)
         decomp_model.cuda()
     
@@ -109,7 +109,7 @@ def decompress(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    decomp_model = setup_network(state)
+    decomp_model = setup_network(state, args)
 
     # Get the compression level from the model checkpoint
     comp_level = state['args']['compression_level']
