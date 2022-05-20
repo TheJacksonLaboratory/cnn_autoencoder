@@ -1,4 +1,4 @@
-from encodings import normalize_encoding
+from functools import reduce
 import logging
 import argparse
 import os
@@ -8,6 +8,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score, recall_score, precisi
 
 import numpy as np
 import zarr
+import dask.array as da
 from numcodecs import Blosc
 
 import compress
@@ -76,24 +77,44 @@ def metrics(args):
     if not args.input[0].lower().endswith(args.source_format.lower()):
         # If a directory has been passed, get all image files inside to compress
         input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith(args.source_format.lower()), os.listdir(args.input[0]))))
+    elif args.input[0].lower().endswith('txt'):
+        with open(args.input[0], mode='r') as f:
+            input_fn_list = [l.strip('\n\r') for l in f.readlines()]
     else:
         input_fn_list = args.input
 
+    if args.rois is not None:
+        args.rois = [
+                [(tuple(start_coords), tuple(axis_lengths))
+                    for start_coords, axis_lengths in rois
+                ]
+                for rois in args.rois
+            ]
+    else:
+        args.rois = [None for _ in range(len(input_fn_list))]
     args.source_format = 'zarr'
     compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
 
-    for i, img_fn in enumerate(input_fn_list):
+    for i, (img_fn, img_rois) in enumerate(zip(input_fn_list, args.rois)):
         if img_fn.endswith('zarr'):
-            img_group = zarr.open(img_fn, mode='r')
+            # img_group = zarr.open(img_fn, mode='r')
+            img_arr = da.from_zarr(img_fn, component='0/0')
         else:
             # Open the image (supported by PIL) as a zarr group in memory
-            img_group = zarr.group()
-            tmp_group = img_group.create_group('0')
-            tmp_arr = tmp_group.array(name='0', data=utils.load_image(img_fn, args.patch_size), chunks=(3, args.patch_size, args.patch_size), compressor=compressor)
+            # img_group = zarr.group()
+            # tmp_group = img_group.create_group('0')
+            # img_arr = tmp_group.array(name='0', data=utils.load_image(img_fn, args.patch_size), chunks=(3, args.patch_size, args.patch_size), compressor=compressor)
+            img_arr = da.from_array(utils.load_image(img_fn, args.patch_size), chunks=(3, args.patch_size, args.patch_size))
+        
+        if img_rois is not None:
+            arr_rois = []
+            for (x_o, y_o, _, c_o, _), (x_l, y_l, _, c_l, _) in img_rois:
+                arr_rois.append(img_arr[c_o:c_o+c_l, x_o:x_o+x_l, y_o:y_o+y_l])
+            img_arr = reduce(lambda l1, l2: l1+l2, arr_rois)
 
         e_time = perf_counter()
 
-        args.input = img_group
+        args.input = img_arr
         args.is_labeled = False
         comp_group = next(compress.compress(args))
         args.input = comp_group
@@ -102,7 +123,7 @@ def metrics(args):
 
         e_time = perf_counter() - e_time
 
-        scores = metrics_image(img_group['0/0'], rec_group['0/0'], p_comp_group['0/0'])
+        scores = metrics_image(img_arr, rec_group['0/0'], p_comp_group['0/0'])
 
         for m_k in scores.keys():
             if scores[m_k] > 0.0:
@@ -135,7 +156,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='Evaluate a model on a testing set (Segmentation models only)', parents=[seg_parser], add_help=False)
     
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-roi', '--input-rois', type=int, nargs='+', dest='rois', help='Regions of interest extacted from the input images to compute the compression performance')
 
     args = utils.override_config_file(parser)
-    
+
     all_metrics = metrics(args)

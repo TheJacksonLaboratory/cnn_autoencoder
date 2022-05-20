@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import zarr
+import dask
 from PIL import Image
 from numcodecs import Blosc
 
@@ -115,7 +116,7 @@ def decompress(args):
     comp_level = state['args']['compression_level']
     offset = (2 ** comp_level) if args.add_offset else 0
 
-    if isinstance(args.input, (zarr.Group, zarr.Array)):
+    if isinstance(args.input, (zarr.Group, zarr.Array, np.ndarray, dask.array.core.Array)):
         input_fn_list = [args.input]
     elif not args.input[0].lower().endswith('zarr'):
         # If a directory has been passed, get all image files inside to compress
@@ -154,7 +155,7 @@ if __name__ == '__main__':
     logger = logging.getLogger(args.mode + '_log')
 
     for _ in decompress(args):
-        logger.info('Image compressed successfully')
+        logger.info('Image decompressed successfully')
     
 
     logging.shutdown()

@@ -4,6 +4,8 @@ import os
 import math
 import numpy as np
 import zarr
+import dask
+import dask.array as da
 
 from tqdm import tqdm
 
@@ -193,7 +195,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     if offset > 0 or (patch.shape[-2] < patch_size or patch.shape[-1] < patch_size):
         patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
 
-    return patch
+    return patch.compute()
 
 
 def zarrdataset_worker_init(worker_id):
@@ -242,7 +244,7 @@ class ZarrDataset(Dataset):
         if isinstance(root, list):
             # If the input file is a list
             self._filenames = root
-        elif isinstance(root, (zarr.Group, zarr.Array)):
+        elif isinstance(root, (zarr.Group, zarr.Array, np.ndarray, dask.array.core.Array)):
             # If the input is a zarr group or array, convert it to list
             self._filenames = [root]
         elif isinstance(root, str) and root.lower().endswith(self._source_format):
@@ -274,7 +276,7 @@ class ZarrDataset(Dataset):
                 z_list = [grp['%s/%s' % (group, self._level)]
                             for grp in filenames
                         ]
-            elif isinstance(filenames[0], zarr.Array):
+            elif isinstance(filenames[0], (zarr.Array, np.ndarray, dask.array.core.Array)):
                 z_list = filenames
             else:
                 z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] 
@@ -287,6 +289,12 @@ class ZarrDataset(Dataset):
             z_list = [zarr.array(load_image(fn, self._patch_size), chunks=(3, self._patch_size, self._patch_size), compressor=compressor)
                             for fn in filenames
                     ]
+
+        # Convert the zarr/numpy arrays into lazy loaded arrays
+        if isinstance(z_list[0], (zarr.Array, zarr.Group)):
+            z_list = [da.from_zarr(z) for z in z_list]
+        elif isinstance(z_list[0], np.ndarray):
+            z_list = [da.from_array(z) for z in z_list]
 
         return z_list
 
