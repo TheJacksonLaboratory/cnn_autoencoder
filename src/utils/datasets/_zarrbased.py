@@ -4,10 +4,6 @@ import os
 import math
 import numpy as np
 import zarr
-import dask
-import dask.array as da
-
-from tqdm import tqdm
 
 from PIL import Image
 from numcodecs import Blosc
@@ -195,7 +191,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     if offset > 0 or (patch.shape[-2] < patch_size or patch.shape[-1] < patch_size):
         patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
 
-    return patch.compute()
+    return patch
 
 
 def zarrdataset_worker_init(worker_id):
@@ -244,7 +240,7 @@ class ZarrDataset(Dataset):
         if isinstance(root, list):
             # If the input file is a list
             self._filenames = root
-        elif isinstance(root, (zarr.Group, zarr.Array, np.ndarray, dask.array.core.Array)):
+        elif isinstance(root, (zarr.Group, zarr.Array, np.ndarray)):
             # If the input is a zarr group or array, convert it to list
             self._filenames = [root]
         elif isinstance(root, str) and root.lower().endswith(self._source_format):
@@ -276,7 +272,7 @@ class ZarrDataset(Dataset):
                 z_list = [grp['%s/%s' % (group, self._level)]
                             for grp in filenames
                         ]
-            elif isinstance(filenames[0], (zarr.Array, np.ndarray, dask.array.core.Array)):
+            elif isinstance(filenames[0], (zarr.Array, np.ndarray)):
                 z_list = filenames
             else:
                 z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] 
@@ -289,12 +285,6 @@ class ZarrDataset(Dataset):
             z_list = [zarr.array(load_image(fn, self._patch_size), chunks=(3, self._patch_size, self._patch_size), compressor=compressor)
                             for fn in filenames
                     ]
-
-        # Convert the zarr/numpy arrays into lazy loaded arrays
-        if isinstance(z_list[0], (zarr.Array, zarr.Group)):
-            z_list = [da.from_zarr(z) for z in z_list]
-        elif isinstance(z_list[0], np.ndarray):
-            z_list = [da.from_array(z) for z in z_list]
 
         return z_list
 
@@ -454,7 +444,7 @@ def get_zarr_transform(mode='testing', normalize=True, compressed_input=False, r
 
 
 
-def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, rotation=False, elastic_deformation=False, **kwargs):
+def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, offset=0, gpu=False, pyramid_level=0, compressed_input=False, compression_level=0, shuffle_training=True, shuffle_test=False, rotation=False, elastic_deformation=False, test_size=-1, **kwargs):
     """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
     The size of the data queue can be virtually infinite, for that reason, a conservative size has been defined using the following variables.
     1. TRAIN_DATASIZE: 1200000 for autoencoder models, and all available patches for segmenetation models
@@ -467,7 +457,6 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
         histo_dataset = ZarrDataset
         TRAIN_DATASIZE = 1200000
         VALID_DATASIZE = 50000
-        TEST_DATASIZE = 200000
         
     elif task == 'segmentation':        
         prep_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
@@ -477,12 +466,11 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
             histo_dataset = ZarrDataset
         TRAIN_DATASIZE = -1
         VALID_DATASIZE = -1
-        TEST_DATASIZE = -1
     
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if mode != 'training':
-        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=TEST_DATASIZE, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0, **kwargs)
-        test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
+        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=test_size, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0, **kwargs)
+        test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
 
     if isinstance(data_dir, list) and len(data_dir) == 2:
@@ -505,16 +493,17 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import argparse
-    from time import perf_counter
+    from tqdm import tqdm
 
     parser = argparse.ArgumentParser('Test zarr-based datasets generation and loading with a pytorch\'s DataLoader')
 
     parser.add_argument('-d', '--dir', dest='root', help='Root directory where the zarr files are stored')
     parser.add_argument('-w', '--workers', type=int, dest='workers', help='Number of workers', default=0)
-    parser.add_argument('-sb', '--batchsize', type=int, dest='batch_size', help='Batch size', default=8)
+    parser.add_argument('-bs', '--batchsize', type=int, dest='batch_size', help='Batch size', default=8)
     parser.add_argument('-nb', '--nbatches', type=int, dest='n_batches', help='Number of batches to show', default=10)
     parser.add_argument('-p', '--patch', type=int, dest='patch_size', help='Size of the patch -> patch_size x patch_size', default=128)
-    parser.add_argument('-sh', '--shuffled', action='store_true', dest='shuffled', help='Shuffle the data?')
+    parser.add_argument('-shr', '--shuffle-trn', action='store_true', dest='shuffle_training', help='Shuffle training data?')
+    parser.add_argument('-sht', '--shuffle-tst', action='store_true', dest='shuffle_test', help='Shuffle test data?')
     parser.add_argument('-t', '--task', dest='task', help='Task for what the data is used', choices=['autoencoder', 'segmentation'], default='autoencoder')
     parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test'], default='train')
     parser.add_argument('-o', '--offset', type=int, dest='offset', help='Offset added to the patches', default=0)
@@ -524,7 +513,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.task == 'autoencoder':
-        dataset = IterableZarrDataset
+        dataset = ZarrDataset
     else:
         dataset = LabeledZarrDataset
 
@@ -534,7 +523,7 @@ if __name__ == '__main__':
     print('Dataset size:', len(ds))
     
     dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers, worker_init_fn=zarrdataset_worker_init)
-    print('Min image size: (%d, %d)' % (ds._max_H, ds._max_W))
+    print('Max image size: (%d, %d)' % (ds._max_H, ds._max_W))
 
     q = tqdm(total = args.n_batches)
     for i, (x, t) in enumerate(dl):
