@@ -5,6 +5,7 @@ import os
 
 from time import perf_counter
 
+from skimage.color import deltaE_ciede2000, rgb2lab
 import numpy as np
 import random
 
@@ -12,6 +13,10 @@ import compress
 import decompress
 import factorized_entropy
 import utils
+
+
+def compute_deltaCIELAB(img, rec):
+    return np.mean(deltaE_ciede2000(rgb2lab(np.moveaxis(img, 0, -1)), rgb2lab(np.moveaxis(rec[0], 0, -1))))
 
 
 def compute_psnr(rmse):
@@ -41,13 +46,14 @@ def metrics_image(img, rec, p_comp):
     Returns
     -------
     metrics_dict : Dictionary
-        Dictionary with the computed metrics (dist=Distortion, rate=Compression rate (bpp), psnr=Peak Dignal-to-Noise Ratio (dB))
+        Dictionary with the computed metrics (dist=Distortion, rate=Compression rate (bpp), psnr=Peak Dignal-to-Noise Ratio (dB)), delta_cielab=Distance between images in the CIELAB color space
     """
     dist = compute_rmse(img, rec)
     rate = compute_rate(img, p_comp)
     psnr = compute_psnr(dist)
+    delta_cielab = compute_deltaCIELAB(img, rec)
     
-    metrics_dict = dict(dist=dist, rate=rate, psnr=psnr)
+    metrics_dict = dict(dist=dist, rate=rate, psnr=psnr, delta_cielab=delta_cielab)
 
     return metrics_dict
 
@@ -61,17 +67,18 @@ def metrics(args):
     """
     # Override the destination format to 'zarr_memory' in case that it was given
     args.destination_format = 'zarr_memory'
-
-    # Override 'is_labeled' to True, in order to get the segmentation response along with its respective ground-truth
-    args.is_labeled = True
     args.mode = 'testing'
     
     utils.setup_logger(args)    
     logger = logging.getLogger(args.mode + '_log')
 
-    all_metrics = dict(dist=[], rate=[], psnr=[], time=[])
+    # Set print_log to False to prevent submodules from logging all the configuration details from the training stage
+    args.print_log = False
+
+    all_metrics = dict(dist=[], rate=[], psnr=[], delta_cielab=[], time=[])
 
     zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, offset=False, transform=None, source_format=args.source_format)
+    H, W = zarr_ds.get_shape()
 
     if args.test_size < 0:
         args.test_size = len(zarr_ds)
@@ -84,13 +91,16 @@ def metrics(args):
         else:
             index = i
         
+        im_id, tl_y, tl_x = utils.compute_grid(index, imgs_shapes=zarr_ds._imgs_shapes, imgs_sizes=zarr_ds._imgs_sizes
+, patch_size=args.patch_size)
+
         e_time = perf_counter()
 
         img_arr, _ = zarr_ds[index]
         args.input = img_arr
-        args.is_labeled = False
         comp_group = next(compress.compress(args))
-        args.input = comp_group
+
+        args.input = comp_group        
         p_comp_group = next(factorized_entropy.fact_ent(args))
         rec_group = next(decompress.decompress(args))
 
@@ -104,10 +114,10 @@ def metrics(args):
             else:
                 all_metrics[m_k].append(np.nan)
 
-            logger.info('[Image %i] Metric %s: %0.4f' % (i+1, m_k, scores[m_k]))
+            logger.info('[Image %i (%i, %i, %i)] Metric %s: %0.4f' % (i+1, im_id, tl_y, tl_x, m_k, scores[m_k]))
         
         all_metrics['time'].append(e_time)
-        logger.info('[Image %i] Execution time: %0.4f' % (i+1, e_time))
+        logger.info('[Image %i (%i, %i, %i)] Execution time: %0.4f' % (i+1, im_id, tl_y, tl_x, e_time))
                 
     logger.info('Metrics summary: min, mean, median, max, std. dev.')
     for m_k in all_metrics.keys():
