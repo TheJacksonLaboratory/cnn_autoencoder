@@ -71,7 +71,7 @@ def metrics(args):
 
     all_metrics = dict(dist=[], rate=[], psnr=[], time=[])
 
-    zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, test_size=args.test_size, offset=False, transform=None, source_format=args.source_format)
+    zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, offset=False, transform=None, source_format=args.source_format)
 
     if args.test_size < 0:
         args.test_size = len(zarr_ds)

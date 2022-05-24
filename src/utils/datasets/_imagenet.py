@@ -71,6 +71,7 @@ try:
 except ModuleNotFoundError:
     print('Loading ImageNet from S3 bucket requires boto3 to be installed; however, it was not found. ImageNet from S3 not supported in this session.')
     ImageS3_Implemented = False
+    ImageS3 = None
 
 
 class AddGaussianNoise(object):
