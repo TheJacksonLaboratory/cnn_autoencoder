@@ -1,14 +1,12 @@
-from encodings import normalize_encoding
+from functools import reduce
 import logging
 import argparse
 import os
 
 from time import perf_counter
-from sklearn.metrics import accuracy_score, roc_auc_score, recall_score, precision_score, f1_score
 
 import numpy as np
-import zarr
-from numcodecs import Blosc
+import random
 
 import compress
 import decompress
@@ -73,27 +71,23 @@ def metrics(args):
 
     all_metrics = dict(dist=[], rate=[], psnr=[], time=[])
 
-    if not args.input[0].lower().endswith(args.source_format.lower()):
-        # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith(args.source_format.lower()), os.listdir(args.input[0]))))
-    else:
-        input_fn_list = args.input
+    zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, test_size=args.test_size, offset=False, transform=None, source_format=args.source_format)
+
+    if args.test_size < 0:
+        args.test_size = len(zarr_ds)
 
     args.source_format = 'zarr'
-    compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
 
-    for i, img_fn in enumerate(input_fn_list):
-        if img_fn.endswith('zarr'):
-            img_group = zarr.open(img_fn, mode='r')
+    for i in range(len(zarr_ds)):
+        if args.shuffle_test:
+            index = random.randrange(0, args.test_size)
         else:
-            # Open the image (supported by PIL) as a zarr group in memory
-            img_group = zarr.group()
-            tmp_group = img_group.create_group('0')
-            tmp_arr = tmp_group.array(name='0', data=utils.load_image(img_fn, args.patch_size), chunks=(3, args.patch_size, args.patch_size), compressor=compressor)
-
+            index = i
+        
         e_time = perf_counter()
 
-        args.input = img_group
+        img_arr, _ = zarr_ds[index]
+        args.input = img_arr
         args.is_labeled = False
         comp_group = next(compress.compress(args))
         args.input = comp_group
@@ -102,7 +96,7 @@ def metrics(args):
 
         e_time = perf_counter() - e_time
 
-        scores = metrics_image(img_group['0/0'], rec_group['0/0'], p_comp_group['0/0'])
+        scores = metrics_image(img_arr, rec_group['0/0'], p_comp_group['0/0'])
 
         for m_k in scores.keys():
             if scores[m_k] > 0.0:
@@ -135,7 +129,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='Evaluate a model on a testing set (Segmentation models only)', parents=[seg_parser], add_help=False)
     
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-sht', '--shuffle-test', action='store_true', dest='shuffle_test', help='Shuffle the test set? Works for large images where only small regions will be used to test the performance instead of whole images.')
+    parser.add_argument('-nt', '--num-test', type=int, dest='test_size', help='Size of set of test images used to evaluate the model.', default=-1)
 
     args = utils.override_config_file(parser)
-    
+
     all_metrics = metrics(args)
