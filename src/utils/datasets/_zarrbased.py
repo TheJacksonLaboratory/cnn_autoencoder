@@ -265,7 +265,7 @@ class ZarrDataset(Dataset):
             elif mode == 'val':
                 # Use 10% of the data for validation
                 self._filenames = self._filenames[int(0.7 * len(self._filenames)):int(0.8 * len(self._filenames))]
-            else:
+            elif mode == 'test':
                 # Use 20% of the data for testing
                 self._filenames = self._filenames[int(0.8 * len(self._filenames)):]
 

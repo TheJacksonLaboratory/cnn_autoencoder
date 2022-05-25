@@ -77,7 +77,10 @@ def metrics(args):
 
     all_metrics = dict(dist=[], rate=[], psnr=[], delta_cielab=[], time=[])
 
-    zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, offset=False, transform=None, source_format=args.source_format)
+    if len(args.input) == 1 and not args.input[0].lower().endswith(args.source_format):
+        args.input = args.input[0]
+
+    zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, mode=args.mode_data, offset=False, transform=None, source_format=args.source_format)
     H, W = zarr_ds.get_shape()
 
     if args.test_size < 0:
@@ -141,6 +144,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='Evaluate a model on a testing set (Segmentation models only)', parents=[seg_parser], add_help=False)
     
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-md', '--mode-data', type=str, dest='mode_data', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
     parser.add_argument('-sht', '--shuffle-test', action='store_true', dest='shuffle_test', help='Shuffle the test set? Works for large images where only small regions will be used to test the performance instead of whole images.')
     parser.add_argument('-nt', '--num-test', type=int, dest='test_size', help='Size of set of test images used to evaluate the model.', default=-1)
 
