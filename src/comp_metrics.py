@@ -27,8 +27,8 @@ def compute_rmse(img, rec):
     return np.sqrt(np.mean((rec[0, :]/255 - img[:]/255)**2))
 
 
-def compute_rate(img, p_comp):    
-    return np.sum(-np.log2(p_comp[:])) / img.size
+def compute_rate(img, p_comp):
+    return np.sum(-np.log2(np.prod(p_comp[:], axis=1)+1e-10)) / img.size
 
 
 def metrics_image(img, rec, p_comp):
@@ -97,6 +97,8 @@ def metrics(args):
         e_time = perf_counter()
 
         img_arr, _ = zarr_ds[index]
+        org_H, org_W = zarr_ds.get_img_original_shape(im_id)
+        img_arr = img_arr[..., :org_H, :org_W]
         args.input = img_arr
         comp_group = next(compress.compress(args))
 

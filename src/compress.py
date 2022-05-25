@@ -52,6 +52,7 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     zarr_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, offset=offset, transform=transform, source_format=source_format)
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
     
+    org_H, org_W = zarr_ds.get_img_shape(0)
     H, W = zarr_ds.get_shape()
     comp_patch_size = patch_size//2**comp_level
 
@@ -61,6 +62,11 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     else:
         group = zarr.group(output_dir, overwrite=True)
     
+    group.attrs['height'] = org_H
+    group.attrs['width'] = org_W
+    group.attrs['compression_level'] = comp_level
+    group.attrs['model'] = str(comp_model)
+
     comp_group = group.create_group('0', overwrite=True)
     
     z_comp = comp_group.create_dataset('0', shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), chunks=(1, channels_bn, comp_patch_size, comp_patch_size), dtype='u1', compressor=compressor)

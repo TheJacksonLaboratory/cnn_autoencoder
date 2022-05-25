@@ -94,13 +94,13 @@ def load_image(filename, patch_size):
     else:
         arr = arr.transpose(2, 0, 1)
 
-    # Pad the image to the closest size multiple of 2
-    H, W = arr.shape[1:]
-    pad_bottom = int(math.ceil(H / patch_size) * patch_size) - H
-    pad_right = int(math.ceil(W / patch_size) * patch_size) - W
+    # # Pad the image to the closest size multiple of 2
+    # H, W = arr.shape[1:]
+    # pad_bottom = int(math.ceil(H / patch_size) * patch_size) - H
+    # pad_right = int(math.ceil(W / patch_size) * patch_size) - W
 
-    if pad_bottom > 0 or pad_right > 0:
-        arr = np.pad(arr, ((0, 0), (0, pad_bottom), (0, pad_right)))
+    # if pad_bottom > 0 or pad_right > 0:
+    #     arr = np.pad(arr, ((0, 0), (0, pad_bottom), (0, pad_right)))
     
     return arr
     
@@ -189,7 +189,10 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
 
     # Pad the patch using the reflect mode
     if offset > 0 or (patch.shape[-2] < patch_size or patch.shape[-1] < patch_size):
-        patch = np.pad(patch, ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), (tl_x - tl_x_offset, br_x_offset - br_x)), mode='reflect', reflect_type='even')
+        patch = np.pad(patch, 
+        ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), 
+        (tl_x - tl_x_offset, br_x_offset - br_x)),
+        mode='symmetric', reflect_type='even')
 
     return patch
 
@@ -202,9 +205,9 @@ def zarrdataset_worker_init(worker_id):
     
     curr_worker_filenames = dataset_obj._filenames[worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]
 
-    dataset_obj._z_list = dataset_obj._preload_files(curr_worker_filenames, group='0')
+    dataset_obj._z_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group='0')
     if hasattr(dataset_obj, '_lab_list'):
-        dataset_obj._lab_list = dataset_obj._preload_files(curr_worker_filenames, group='1')
+        dataset_obj._lab_list, _ = dataset_obj._preload_files(curr_worker_filenames, group='1')
     
     dataset_obj._compute_size()
 
@@ -225,13 +228,14 @@ class ZarrDataset(Dataset):
 
         self._split_dataset(root, mode)
         if not multithreaded:
-            self._z_list = self._preload_files(self._filenames, group='0')
+            self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
             self._compute_size()
         else:
             self._max_H = None
             self._max_W = None
             self._imgs_shapes = []
             self._imgs_sizes = []
+            self._imgs_orginal_shapes = []
 
     def _split_dataset(self, root, mode):
         """ Identify are the inputs being passed and split the data according to the mode.
@@ -266,6 +270,9 @@ class ZarrDataset(Dataset):
                 self._filenames = self._filenames[int(0.8 * len(self._filenames)):]
 
     def _preload_files(self, filenames, group='0'):
+        imgs_orginal_shapes = []
+        z_list = []
+
         if self._source_format == 'zarr':
             # If the input files have been passed as an open zarr group directly
             if isinstance(filenames[0], zarr.Group):
@@ -278,15 +285,34 @@ class ZarrDataset(Dataset):
                 z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] 
                             for fn in filenames
                         ]
+                        
+            # Get the shapes of the original images. This is only for zarr files containing compressed representations
+            if isinstance(filenames[0], (zarr.Group, str)):
+                for fn in filenames:
+                    if isinstance(fn, zarr.Group):
+                        grp = fn
+                    else:
+                        grp = zarr.open(fn, mode='r')
+
+                    grp_attrs = grp.attrs
+                    
+                    z_arr = grp['%s/%s' % (group, self._level)]
+                    org_height = grp_attrs.get('height', z_arr.shape[-2])
+                    org_width = grp_attrs.get('width', z_arr.shape[-1])
+
+                    imgs_orginal_shapes.append((org_height, org_width))
+                
         else:
             # Loading the images using PIL. This option is restricted to formats supported by PIL
             compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
             
-            z_list = [zarr.array(load_image(fn, self._patch_size), chunks=(3, self._patch_size, self._patch_size), compressor=compressor)
-                            for fn in filenames
-                    ]
+            for fn in filenames:
+                im = load_image(fn, self._patch_size)
+                height, width = im.shape[-2:]
+                imgs_orginal_shapes.append((height, width))
+                z_list.append(zarr.array(im, chunks=(3, self._patch_size, self._patch_size), compressor=compressor))
 
-        return z_list
+        return z_list, imgs_orginal_shapes
 
     def _compute_size(self):
         self._imgs_shapes = [(z.shape[-2], z.shape[-1]) for z in self._z_list]
@@ -320,6 +346,12 @@ class ZarrDataset(Dataset):
     def get_shape(self):
         return self._max_H, self._max_W
 
+    def get_img_shape(self, i):
+        return self._imgs_shapes[i]
+
+    def get_img_original_shape(self, i):
+        return self._imgs_orginal_shapes[i]
+
 
 class LabeledZarrDataset(ZarrDataset):
     """ A labeled dataset based on the zarr dataset class.
@@ -329,7 +361,7 @@ class LabeledZarrDataset(ZarrDataset):
         super(LabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format)
         
         # Open the labels from group 1
-        self._lab_list = self._preload_files(self._filenames, group='1')
+        self._lab_list, _ = self._preload_files(self._filenames, group='1')
 
         self._compression_level = compression_level
         self._compressed_input = compressed_input

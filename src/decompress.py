@@ -55,6 +55,7 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
     
     H_comp, W_comp = zarr_ds.get_shape()
+    org_H, org_W = zarr_ds.get_img_original_shape(0)
     H = H_comp * 2**comp_level
     W = W_comp * 2**comp_level
 
@@ -67,9 +68,9 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
         
         comp_group = group.create_group('0', overwrite=True)
     
-        z_decomp = comp_group.create_dataset('0', shape=(1, channels_org, H, W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
+        z_decomp = comp_group.create_dataset('0', shape=(1, channels_org, org_H, org_W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
     else:
-        z_decomp = zarr.zeros(shape=(1, channels_org, H, W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
+        z_decomp = zarr.zeros(shape=(1, channels_org, org_H, org_W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
 
     with torch.no_grad():
         for i, (y_q, _) in enumerate(data_queue):
@@ -87,7 +88,12 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
                 _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
                 tl_y *= patch_size
                 tl_x *= patch_size
-                z_decomp[0, ..., tl_y:tl_y + patch_size, tl_x:tl_x + patch_size] = x_k
+                br_y = min(tl_y + patch_size, org_H)
+                br_x = min(tl_x + patch_size, org_W)
+                valid_patch_size_y = br_y - tl_y
+                valid_patch_size_x = br_x - tl_x
+
+                z_decomp[0, ..., tl_y:br_y, tl_x:br_x] = x_k[..., :valid_patch_size_y, :valid_patch_size_x]
 
     # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
     # It should be used with care since this can generate a large image file.
