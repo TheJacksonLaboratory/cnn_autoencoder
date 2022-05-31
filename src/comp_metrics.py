@@ -1,13 +1,12 @@
-from functools import reduce
 import logging
 import argparse
-import os
 
 from time import perf_counter
 
 from skimage.color import deltaE_ciede2000, rgb2lab
 import numpy as np
-import random
+import zarr
+from torch.utils.data import DataLoader
 
 import compress
 import decompress
@@ -16,7 +15,7 @@ import utils
 
 
 def compute_deltaCIELAB(img, rec):
-    return np.mean(deltaE_ciede2000(rgb2lab(np.moveaxis(img, 0, -1)), rgb2lab(np.moveaxis(rec[0], 0, -1))))
+    return np.mean(deltaE_ciede2000(rgb2lab(np.moveaxis(img, 1, -1)), rgb2lab(np.moveaxis(rec, 1, -1))))
 
 
 def compute_psnr(rmse):
@@ -28,7 +27,7 @@ def compute_rmse(img, rec):
 
 
 def compute_rate(img, p_comp):
-    return np.sum(-np.log2(np.prod(p_comp[:], axis=1)+1e-10)) / img.size
+    return np.sum(-np.log2(p_comp[:]+1e-10)) / (img.shape[-2] * img.shape[-1])
 
 
 def metrics_image(img, rec, p_comp):
@@ -47,7 +46,7 @@ def metrics_image(img, rec, p_comp):
     -------
     metrics_dict : Dictionary
         Dictionary with the computed metrics (dist=Distortion, rate=Compression rate (bpp), psnr=Peak Dignal-to-Noise Ratio (dB)), delta_cielab=Distance between images in the CIELAB color space
-    """
+    """    
     dist = compute_rmse(img, rec)
     rate = compute_rate(img, p_comp)
     psnr = compute_psnr(dist)
@@ -56,6 +55,25 @@ def metrics_image(img, rec, p_comp):
     metrics_dict = dict(dist=dist, rate=rate, psnr=psnr, delta_cielab=delta_cielab)
 
     return metrics_dict
+
+
+def compute_rois(img_arr):
+    """ Compute a set of ROIs from the current batch of images.
+    A batch can then be passed through the autoencoder model and be processeced as independent images, instead of stitching those together
+    
+    Parameters:
+    ----------
+    img_arr: torch.Tensor
+        A batch of input images
+
+    Returns
+    -------
+    rois : list of tuples
+        Each tuple contains the starting coordinates and the axes lengths
+    """
+    b, c, h, w = img_arr.shape[0], img_arr.shape[1], img_arr.shape[-2], img_arr.shape[-1]
+    rois = [((0, 0, 0, 0, b_i), (w, h, 1, c, 1)) for b_i in range(b)]
+    return rois
 
 
 def metrics(args):
@@ -72,46 +90,52 @@ def metrics(args):
     utils.setup_logger(args)    
     logger = logging.getLogger(args.mode + '_log')
 
-    # Set print_log to False to prevent submodules from logging all the configuration details from the training stage
-    args.print_log = False
-
     all_metrics = dict(dist=[], rate=[], psnr=[], delta_cielab=[], time=[])
 
     if len(args.input) == 1 and not args.input[0].lower().endswith(args.source_format):
         args.input = args.input[0]
 
     zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, mode=args.mode_data, offset=False, transform=None, source_format=args.source_format)
-    H, W = zarr_ds.get_shape()
+    zarr_dl = DataLoader(zarr_ds, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, worker_init_fn=utils.zarrdataset_worker_init)
 
     if args.test_size < 0:
         args.test_size = len(zarr_ds)
 
+    # Override some arguments to be passed to the compression, decompression modules
     args.source_format = 'zarr'
+    args.workers = 0
+    args.stitch_batches = False
 
-    for i in range(len(zarr_ds)):
-        if args.shuffle_test:
-            index = random.randrange(0, args.test_size)
-        else:
-            index = i
-        
-        im_id, tl_y, tl_x = utils.compute_grid(index, imgs_shapes=zarr_ds._imgs_shapes, imgs_sizes=zarr_ds._imgs_sizes
-, patch_size=args.patch_size)
+    # Create a zarr group on memory to store the batch of input images
+    img_group = zarr.group()
+    img_subgroup = img_group.create_group('0')
 
+    for i, (img_arr, _) in enumerate(zarr_dl):
         e_time = perf_counter()
 
-        img_arr, _ = zarr_ds[index]
-        org_H, org_W = zarr_ds.get_img_original_shape(im_id)
-        img_arr = img_arr[..., :org_H, :org_W]
-        args.input = img_arr
-        comp_group = next(compress.compress(args))
+        # Include the batch indices as ROIs (0, 0, 0, 0, b), where b is the batch index
+        # i.e. if there are 8 images in the batch, there must be also 8 ROIs in that group
+        img_group.attrs['rois'] = compute_rois(img_arr)
+        img_subgroup.create_dataset('0', data=img_arr.numpy(), chunks=(1, img_arr.shape[1], args.patch_size, args.patch_size), overwrite=True)
 
-        args.input = comp_group        
+        args.input = img_group
+        # Compress the input images
+        comp_group = next(compress.compress(args))
+        # Compute dummy ROIs for the processed batch. This allows to pass a single batch of images like it were a set of independent images.
+        comp_group.attrs['rois'] = compute_rois(comp_group['0/0'])
+        
+        args.input = comp_group
+        # Compute the factorized entropy model of the compressed representations
         p_comp_group = next(factorized_entropy.fact_ent(args))
+        p_comp_group.attrs['rois'] = img_group.attrs['rois']
+    
+        # Reconstruct the images from their compressed representations
         rec_group = next(decompress.decompress(args))
 
         e_time = perf_counter() - e_time
 
-        scores = metrics_image(img_arr, rec_group['0/0'], p_comp_group['0/0'])
+        # Compute compression metrics
+        scores = metrics_image(img_group['0/0'], rec_group['0/0'], p_comp_group['0/0'])
 
         for m_k in scores.keys():
             if scores[m_k] > 0.0:
@@ -119,10 +143,10 @@ def metrics(args):
             else:
                 all_metrics[m_k].append(np.nan)
 
-            logger.info('[Image %i (%i, %i, %i)] Metric %s: %0.4f' % (i+1, im_id, tl_y, tl_x, m_k, scores[m_k]))
+            logger.info('[Image/batch %i] Metric %s: %0.4f' % (i+1, m_k, scores[m_k]))
         
         all_metrics['time'].append(e_time)
-        logger.info('[Image %i (%i, %i, %i)] Execution time: %0.4f' % (i+1, im_id, tl_y, tl_x, e_time))
+        logger.info('[Image/batch %i] Execution time: %0.4f' % (i+1, e_time))
                 
     logger.info('Metrics summary: min, mean, median, max, std. dev.')
     for m_k in all_metrics.keys():
@@ -143,7 +167,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(prog='Evaluate a model on a testing set (Segmentation models only)', parents=[seg_parser], add_help=False)
     
-    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-ld', '--log-dir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-md', '--mode-data', type=str, dest='mode_data', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
     parser.add_argument('-sht', '--shuffle-test', action='store_true', dest='shuffle_test', help='Shuffle the test set? Works for large images where only small regions will be used to test the performance instead of whole images.')
     parser.add_argument('-nt', '--num-test', type=int, dest='test_size', help='Size of set of test images used to evaluate the model.', default=-1)

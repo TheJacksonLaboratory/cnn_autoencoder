@@ -4,8 +4,10 @@ import os
 import math
 import numpy as np
 import zarr
+import dask.array as da
 
 from PIL import Image
+
 from numcodecs import Blosc
 
 import torch
@@ -71,37 +73,66 @@ class RandomRotationInputTarget(object):
         return patch, target
 
 
-def load_image(filename, patch_size):
+def parse_roi(filename):
+    """ Parse the filename and ROIs from \'filename\'.
+    The filename and ROIs must be separated by a semicolon (;). Any number of ROIs are accepted.
+    ROIs are expected to be passed as (start_coords:axis_lengths), in the axis order of XYZCT.
+
+    Example:
+    test_file.zarr;(0, 10, 0, 0, 0):(10, 10, 1, 1, 1)
+    Will parse a ROI from \'test_file\' from 0:10 in the first axis, 10:20 in the second axis, 0:1 in the third to fifth axes.
+
+    Parameters:
+    ----------
+    filename : str, numpy.ndarray, zarr.Array, or zarr.Group
+        Path to the image
+    
+    Returns
+    -------
+    fn : str
+    rois : list of tuples
+    """
+    rois = []
+    if isinstance(filename, (zarr.Array, np.ndarray)):
+        fn = filename
+
+    elif isinstance(filename, zarr.Group):
+        fn = filename
+        rois = filename.attrs['rois']
+    
+    elif isinstance(filename, str):
+        broken_filename = filename.split(";")
+        fn = broken_filename[0]
+        rois_str = broken_filename[1:]
+    
+        for roi in rois_str:
+            start_coords, axis_lengths = roi.split(':')
+            start_coords = tuple([int(c.strip('\n\r ()')) for c in start_coords.split(',')])
+            axis_lengths = tuple([int(l.strip('\n\r ()')) for l in axis_lengths.split(',')])
+
+            rois.append((start_coords, axis_lengths))
+
+    return fn, rois
+
+
+def load_image(filename):
     """ Load the image at \'filename\' using the Image class from the PIL library and returns it as a numpy array.
-    The image is padded to have a size (height and width) multiple of \'patch_size\'
 
     Parameters:
     ----------
     filename : str
         Path to the image
-    patch_size : int
-        The size of each squared patch
     
     Returns
     -------
     arr : numpy.array
     """
-    im = Image.open(filename, mode="r")
+    im = Image.open(filename, mode="r").convert('RGB')
     arr = np.array(im)
-    
-    if len(im.getbands()) == 1:
-        arr = np.tile(np.array(im), (3, 1, 1))
-    else:
-        arr = arr.transpose(2, 0, 1)
 
-    # # Pad the image to the closest size multiple of 2
-    # H, W = arr.shape[1:]
-    # pad_bottom = int(math.ceil(H / patch_size) * patch_size) - H
-    # pad_right = int(math.ceil(W / patch_size) * patch_size) - W
+    # Complete the number of dimensions to match the expected axis ordering (from OMERO)
+    arr = arr.transpose(2, 0, 1)[np.newaxis, :, np.newaxis, ...]
 
-    # if pad_bottom > 0 or pad_right > 0:
-    #     arr = np.pad(arr, ((0, 0), (0, pad_bottom), (0, pad_right)))
-    
     return arr
     
 
@@ -149,7 +180,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
 
     Parameters:
     ----------
-    z : numpy.array or zarr.array
+    z : dask.array.core.Array, numpy.array or zarr.array
         A full array from where to take a patch
     tl_y : int
         Top left coordinate in the y-axis
@@ -167,8 +198,8 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     tl_y *= patch_size
     tl_x *= patch_size
 
-    # TODO extract this information from the zarr metadata
-    c = max(z.shape[:-2])
+    # TODO extract this information from the zarr metadata. For now, the color channel is considered to be in the second axis
+    c = z.shape[1]
     H, W = z.shape[-2:]
 
     tl_y_offset = tl_y - offset
@@ -186,22 +217,49 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     if c == 1:
         patch = patch[np.newaxis, ...]
 
+    # In the case that the input patch contains more than three dimensions, pad the leading dimensions with (0, 0)
+    leading_padding = [(0, 0)] * (patch.ndim - 2)
 
-    # Pad the patch using the reflect mode
+    # Pad the patch using the symmetric mode
     if offset > 0 or (patch.shape[-2] < patch_size or patch.shape[-1] < patch_size):
-        patch = np.pad(patch, 
-        ((0, 0), (tl_y - tl_y_offset, br_y_offset - br_y), 
-        (tl_x - tl_x_offset, br_x_offset - br_x)),
-        mode='symmetric', reflect_type='even')
+        # An array cannot be padded more than its current size.
+        # For this reason, the array is first padded all the possible size,
+        # and then is padded with a mean value to complete the patch size
+        pad_up = tl_y - tl_y_offset
+        pad_down = br_y_offset - br_y
+        pad_left = tl_x - tl_x_offset
+        pad_right = br_x_offset - br_x
 
-    return patch
+        valid_pad_up = min(pad_up, br_y - tl_y)
+        valid_pad_down = min(pad_down, br_y - tl_y)
+        valid_pad_left = min(pad_left, br_x - tl_x)
+        valid_pad_right = min(pad_right, br_x - tl_x)
+
+        padded_patch  = da.pad(patch, 
+            (*leading_padding, 
+             (valid_pad_up, valid_pad_down),
+             (valid_pad_left, valid_pad_right)),
+            mode='symmetric', reflect_type='odd')
+
+        completion_pad_up = pad_up - valid_pad_up
+        completion_pad_down = pad_down - valid_pad_down
+        completion_pad_left = pad_left - valid_pad_left
+        completion_pad_right = pad_right - valid_pad_right
+
+        patch = da.pad(padded_patch, 
+            (*leading_padding, 
+             (completion_pad_up, completion_pad_down), 
+             (completion_pad_left, completion_pad_right)),
+            mode='mean')
+
+    return patch.compute()
 
 
 def zarrdataset_worker_init(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset_obj = worker_info.dataset
 
-    num_files_per_worker = len(dataset_obj._filenames) // worker_info.num_workers
+    num_files_per_worker = int(math.ceil(len(dataset_obj._filenames) / worker_info.num_workers))
     
     curr_worker_filenames = dataset_obj._filenames[worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]
 
@@ -270,48 +328,59 @@ class ZarrDataset(Dataset):
                 self._filenames = self._filenames[int(0.8 * len(self._filenames)):]
 
     def _preload_files(self, filenames, group='0'):
+        filenames_rois = list(map(parse_roi, filenames))
+
         imgs_orginal_shapes = []
         z_list = []
-
-        if self._source_format == 'zarr':
-            # If the input files have been passed as an open zarr group directly
-            if isinstance(filenames[0], zarr.Group):
-                z_list = [grp['%s/%s' % (group, self._level)]
-                            for grp in filenames
-                        ]
-            elif isinstance(filenames[0], (zarr.Array, np.ndarray)):
-                z_list = filenames
-            else:
-                z_list = [zarr.open(fn, mode='r')['%s/%s' % (group, self._level)] 
-                            for fn in filenames
-                        ]
-                        
-            # Get the shapes of the original images. This is only for zarr files containing compressed representations
-            if isinstance(filenames[0], (zarr.Group, str)):
-                for fn in filenames:
-                    if isinstance(fn, zarr.Group):
-                        grp = fn
-                    else:
-                        grp = zarr.open(fn, mode='r')
-
-                    grp_attrs = grp.attrs
-                    
-                    z_arr = grp['%s/%s' % (group, self._level)]
-                    org_height = grp_attrs.get('height', z_arr.shape[-2])
-                    org_width = grp_attrs.get('width', z_arr.shape[-1])
-
-                    imgs_orginal_shapes.append((org_height, org_width))
+        
+        for arr_src, rois in filenames_rois:
+            org_height, org_width = None, None
+            if isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str) and 'zarr' in self._source_format):
+                if isinstance(arr_src, str):
+                    # If the passed object is a string containing the path to a zarr file, open it before passing it to dask.
+                    arr_src = zarr.open(arr_src, mode='r')
                 
-        else:
-            # Loading the images using PIL. This option is restricted to formats supported by PIL
-            compressor = Blosc(cname='zlib', clevel=0, shuffle=Blosc.BITSHUFFLE)
+                z = arr_src['%s/%s' % (group, self._level)]
+                org_height = arr_src.attrs.get('height', None)
+                org_width = arr_src.attrs.get('width', None)
+            elif isinstance(arr_src, str) and 'zarr' not in self._source_format:
+                z = load_image(arr_src)
+            else:
+                # Otherwise, move the zarr array to dask using the same command
+                z = arr_src
             
-            for fn in filenames:
-                im = load_image(fn, self._patch_size)
-                height, width = im.shape[-2:]
-                imgs_orginal_shapes.append((height, width))
-                z_list.append(zarr.array(im, chunks=(3, self._patch_size, self._patch_size), compressor=compressor))
+            # Lazily open the array files using dask, that will be more efficient when retrieving ROIs from large images
+            if isinstance(z, np.ndarray):
+                arr = da.from_array(z)
+            else:
+                arr = da.from_zarr(z, chunks=z.chunks)
 
+            # Store the original image's shapes
+            if org_height is None:
+                org_height = arr.shape[-2]
+            if org_width is None:
+                org_width = arr.shape[-1]
+
+            # Load from the lazily openned array the especified ROIs, if any
+            if len(rois) > 0:                            
+                for (cx, cy, cz, cc, ct), (lx, ly, lz, lc, lt) in rois:
+                    if arr.ndim == 5:
+                        z_list.append(arr[ct:ct+lt, cc:cc+lc, cz:cz+lz, cy:cy+ly, cx:cx+lx])
+                    elif arr.ndim == 4:
+                        z_list.append(arr[ct:ct+lt, cc:cc+lc, cy:cy+ly, cx:cx+lx])
+                    elif arr.ndim == 3:
+                        z_list.append(arr[cc:cc+lc, cy:cy+ly, cx:cx+lx])
+                    elif arr.ndim == 2:
+                        z_list.append(arr[cy:cy+ly, cx:cx+lx])
+                    elif arr.ndim < 2 or arr.ndim > 5:
+                        raise(ValueError, 'Incorrect number of dimensions of the input array. It has %i dimensions while only from 2 to 5 are supported' % arr.ndim)
+
+                    # Even if the ROIs have different shape, we would like to have from each one of them their original image shape
+                    imgs_orginal_shapes.append((org_height, org_width))
+            else:
+                z_list.append(arr)
+                imgs_orginal_shapes.append((org_height, org_width))
+        
         return z_list, imgs_orginal_shapes
 
     def _compute_size(self):
@@ -338,6 +407,7 @@ class ZarrDataset(Dataset):
         patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
         if self._transform is not None:
+            # Move the 
             patch = self._transform(patch.transpose(1, 2, 0))
         
         # Returns anything as label, to prevent an error during training
@@ -524,25 +594,35 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    import random
     import argparse
     from tqdm import tqdm
 
     parser = argparse.ArgumentParser('Test zarr-based datasets generation and loading with a pytorch\'s DataLoader')
 
+    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Random seed for the random number generator', default=-1)
     parser.add_argument('-d', '--dir', dest='root', help='Root directory where the zarr files are stored')
     parser.add_argument('-w', '--workers', type=int, dest='workers', help='Number of workers', default=0)
     parser.add_argument('-bs', '--batchsize', type=int, dest='batch_size', help='Batch size', default=8)
-    parser.add_argument('-nb', '--nbatches', type=int, dest='n_batches', help='Number of batches to show', default=10)
     parser.add_argument('-p', '--patch', type=int, dest='patch_size', help='Size of the patch -> patch_size x patch_size', default=128)
     parser.add_argument('-shr', '--shuffle-trn', action='store_true', dest='shuffle_training', help='Shuffle training data?')
     parser.add_argument('-sht', '--shuffle-tst', action='store_true', dest='shuffle_test', help='Shuffle test data?')
     parser.add_argument('-t', '--task', dest='task', help='Task for what the data is used', choices=['autoencoder', 'segmentation'], default='autoencoder')
+    parser.add_argument('-ts', '--test-size', type=int, dest='dataset_size', help='Number of samples extracted from the test dataset')
     parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test'], default='train')
     parser.add_argument('-o', '--offset', type=int, dest='offset', help='Offset added to the patches', default=0)
     parser.add_argument('-cl', '--comp-level', type=int, dest='compression_level', help='Compression level of the input', default=0)
     parser.add_argument('-ex', '--extension', type=str, dest='source_format', help='Format of the input files', default='zarr')
-    
+    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+
     args = parser.parse_args()
+
+    if args.seed < 0:
+        args.seed = np.random.randint(1, 100000)
+    
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed + 1)
+    random.seed(args.seed + 2)
 
     if args.task == 'autoencoder':
         dataset = ZarrDataset
@@ -554,17 +634,12 @@ if __name__ == '__main__':
 
     print('Dataset size:', len(ds))
     
-    dl = DataLoader(ds, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers, worker_init_fn=zarrdataset_worker_init)
+    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=args.shuffle_test, pin_memory=True, num_workers=args.workers, worker_init_fn=zarrdataset_worker_init)
     print('Max image size: (%d, %d)' % (ds._max_H, ds._max_W))
 
-    q = tqdm(total = args.n_batches)
+    q = tqdm(total = len(dl))
     for i, (x, t) in enumerate(dl):
         q.set_description('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size() if isinstance(t, torch.torch.Tensor) else None))
         q.update()
-        # plt.imshow(x[0].permute(1, 2, 0))
-        # plt.show()
-
-        if i >= args.n_batches:
-            break
 
     q.close()

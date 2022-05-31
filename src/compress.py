@@ -1,6 +1,5 @@
 import logging
 import os
-from functools import partial
 
 import numpy as np
 import torch
@@ -45,12 +44,12 @@ def setup_network(state, use_gpu=False):
     return comp_model
 
 
-def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1):
+def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1, stitch_batches=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     zarr_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, offset=offset, transform=transform, source_format=source_format)
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
+    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
     org_H, org_W = zarr_ds.get_img_shape(0)
     H, W = zarr_ds.get_shape()
@@ -69,8 +68,17 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
 
     comp_group = group.create_group('0', overwrite=True)
     
-    z_comp = comp_group.create_dataset('0', shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), chunks=(1, channels_bn, comp_patch_size, comp_patch_size), dtype='u1', compressor=compressor)
-
+    if stitch_batches:
+        z_comp = comp_group.create_dataset('0', 
+                shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), 
+                chunks=(1, channels_bn, comp_patch_size, comp_patch_size), 
+                dtype='u1', compressor=compressor)
+    else:
+        z_comp = comp_group.create_dataset('0', 
+                shape=(len(zarr_ds), channels_bn, comp_patch_size, comp_patch_size), 
+                chunks=(1, channels_bn, comp_patch_size, comp_patch_size),
+                dtype='u1', compressor=compressor)
+    
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
             y_q, _ = comp_model(x)
@@ -82,11 +90,15 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
             if offset > 0:
                 y_q = y_q[..., 1:-1, 1:-1]
             
-            for k, y_k in enumerate(y_q):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
-                tl_y *= comp_patch_size
-                tl_x *= comp_patch_size
-                z_comp[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
+            if stitch_batches:
+                for k, y_k in enumerate(y_q):
+                    _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
+                    tl_y *= comp_patch_size
+                    tl_x *= comp_patch_size
+                    z_comp[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
+            else:
+                z_comp[i*batch_size:i*batch_size+x.size(0), ...] = y_q
+
     
     if is_labeled:
         label_group = group.create_group('1', overwrite=True)
@@ -144,7 +156,8 @@ def compress(args):
             destination_format=args.destination_format, 
             workers=args.workers, 
             is_labeled=args.is_labeled,
-            batch_size=args.batch_size)
+            batch_size=args.batch_size,
+            stitch_batches=args.stitch_batches)
 
         yield comp_group
 

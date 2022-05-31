@@ -50,6 +50,7 @@ def get_training_args(task='autoencoder', parser_only=False):
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
     
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory where the data is stored. If giving lists of filenames, provide first the traing set, and then the validation set.', default='.')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
@@ -110,6 +111,7 @@ def get_testing_args(parser_only=False):
     
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     
@@ -147,7 +149,9 @@ def get_fact_ent_args(parser_only=False):
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Patched compression in batches if this size', default=1)
-
+    parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
+    
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
     
@@ -179,7 +183,9 @@ def get_compress_args(parser_only=False):
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Patched compression in batches if this size', default=1)
-
+    parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
+    
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
     parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
@@ -212,7 +218,9 @@ def get_decompress_args(parser_only=False):
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Patched decompression in batches if this size', default=1)
+    parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
     
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='') 
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
 
@@ -246,7 +254,9 @@ def get_segment_args(parser_only=False):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Patched segmentation in batches if this size', default=1)
+    parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
     
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
 
@@ -280,6 +290,8 @@ def get_project_args(parser_only=False):
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
     
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
+    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
+    
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=PROJ_MODELS, default=PROJ_MODELS[0])
     parser.add_argument('-np', '--num-projs', type=int, dest='num_projections', help='Number of projections', default=1000)

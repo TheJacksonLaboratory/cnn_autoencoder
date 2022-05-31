@@ -2,7 +2,6 @@ import logging
 import os
 
 import numpy as np
-from setuptools import setup
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -45,32 +44,40 @@ def setup_network(state, use_gpu=False):
     return decomp_model    
 
 
-def decompress_image(decomp_model, filename, output_dir, channels_org, comp_level, patch_size, offset, source_format, destination_format, workers, batch_size=1):
+def decompress_image(decomp_model, filename, output_dir, channels_org, comp_level, patch_size, offset, source_format, destination_format, workers, batch_size=1, stitch_batches=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     comp_patch_size = patch_size//2**comp_level
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     zarr_ds = utils.ZarrDataset(root=filename, patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=None, source_format='zarr')
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
+    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
     H_comp, W_comp = zarr_ds.get_shape()
     org_H, org_W = zarr_ds.get_img_original_shape(0)
     H = H_comp * 2**comp_level
     W = W_comp * 2**comp_level
 
-    if 'zarr' in destination_format.lower():
-        # Output dir is actually the absolute path to the file where to store the compressed representation
-        if 'memory' in destination_format.lower():
-            group = zarr.group()
-        else:
-            group = zarr.group(output_dir, overwrite=True)
-        
-        comp_group = group.create_group('0', overwrite=True)
+    if 'zarr' in destination_format.lower() and 'memory' not in destination_format.lower():
+        # If the output is a zarr file, but will not be kept in memory, create a group (folder) to store the output into a sub-group
+        group = zarr.group(output_dir, overwrite=True)
     
-        z_decomp = comp_group.create_dataset('0', shape=(1, channels_org, org_H, org_W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
     else:
-        z_decomp = zarr.zeros(shape=(1, channels_org, org_H, org_W), chunks=(1, channels_org, patch_size, patch_size), dtype='u1', compressor=compressor)
+        group = zarr.group()
+        
+    comp_group = group.create_group('0', overwrite=True)
+    
+    if stitch_batches:
+        z_decomp = comp_group.create_dataset('0', 
+            shape=(1, channels_org, org_H, org_W),
+            chunks=(1, channels_org, patch_size, patch_size), 
+            dtype='u1', compressor=compressor)
+
+    else:
+        z_decomp = comp_group.create_dataset('0', 
+            shape=(len(zarr_ds), channels_org, patch_size, patch_size),
+            chunks=(1, channels_org, patch_size, patch_size), 
+            dtype='u1', compressor=compressor)
 
     with torch.no_grad():
         for i, (y_q, _) in enumerate(data_queue):
@@ -83,27 +90,31 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
 
             if offset > 0:
                 x = x[..., offset:-offset, offset:-offset]
-                                    
-            for k, x_k in enumerate(x):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
-                tl_y *= patch_size
-                tl_x *= patch_size
-                br_y = min(tl_y + patch_size, org_H)
-                br_x = min(tl_x + patch_size, org_W)
-                valid_patch_size_y = br_y - tl_y
-                valid_patch_size_x = br_x - tl_x
 
-                z_decomp[0, ..., tl_y:br_y, tl_x:br_x] = x_k[..., :valid_patch_size_y, :valid_patch_size_x]
+            if stitch_batches:
+                for k, x_k in enumerate(x):
+                    _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
+                    tl_y *= patch_size
+                    tl_x *= patch_size
+                    br_y = min(tl_y + patch_size, org_H)
+                    br_x = min(tl_x + patch_size, org_W)
+                    valid_patch_size_y = br_y - tl_y
+                    valid_patch_size_x = br_x - tl_x
 
+                    z_decomp[0, ..., tl_y:br_y, tl_x:br_x] = x_k[..., :valid_patch_size_y, :valid_patch_size_x]
+            else:
+                z_decomp[i*batch_size:i*batch_size+y_q.size(0), ...] = x
+
+    # If the output will be stored in memory instead of on disk, return the main group
+    if 'memory' in destination_format.lower():
+        return group
+    
     # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
     # It should be used with care since this can generate a large image file.
     if 'zarr' not in destination_format.lower():
         im = Image.fromarray(z_decomp[0].transpose(1, 2, 0))
         im.save(output_dir, destination_format)
-    
-    if 'memory' in destination_format.lower():
-        return group
-    
+        
     return True
 
 
@@ -147,7 +158,8 @@ def decompress(args):
             source_format=args.source_format,
             destination_format=args.destination_format,
             workers=args.workers,
-            batch_size=args.batch_size)
+            batch_size=args.batch_size,
+            stitch_batches=args.stitch_batches)
 
         yield decomp_group
     

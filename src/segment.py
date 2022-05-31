@@ -117,12 +117,12 @@ def setup_network(state, use_gpu=False):
     return forward_function, output_channels
 
 
-def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1):
+def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1, stitch_batches=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     zarr_ds = utils.ZarrDataset(root=filename, patch_size=input_patch_size, offset=input_offset, transform=transform, source_format=source_format)
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True)
+    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
 
     H_comp, W_comp = zarr_ds.get_shape()
     H = H_comp * 2**input_comp_level
@@ -137,10 +137,10 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
 
         comp_group = group.create_group('0', overwrite=True)
     
-        z_seg = comp_group.create_dataset('0', shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
+        z_seg = comp_group.create_dataset('0', shape=(1 if stitch_batches else len(zarr_ds), classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
 
     else:
-        z_seg = zarr.zeros(shape=(1, classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
+        z_seg = zarr.zeros(shape=(1 if stitch_batches else len(zarr_ds), classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
@@ -154,12 +154,15 @@ def segment_image(forward_function, filename, output_dir, classes, input_comp_le
             
             if 'zarr' not in destination_format:
                 y = (y * 255).astype(np.uint8)
-
-            for k, y_k in enumerate(y):
-                _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=output_patch_size)
-                tl_y *= output_patch_size
-                tl_x *= output_patch_size
-                z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
+            
+            if stitch_batches:
+                for k, y_k in enumerate(y):
+                    _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=output_patch_size)
+                    tl_y *= output_patch_size
+                    tl_x *= output_patch_size
+                    z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
+            else:
+                z_seg[i*batch_size:i*batch_size+x.size(0), ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y
 
     # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
     # It should be used with care since this can generate a large image file.
@@ -236,7 +239,8 @@ def segment(args):
             destination_format=args.destination_format,
             workers=args.workers,
             is_labeled=args.is_labeled,
-            batch_size=args.batch_size)
+            batch_size=args.batch_size,
+            stitch_batches=args.stitch_batches)
 
         yield seg_group
 
