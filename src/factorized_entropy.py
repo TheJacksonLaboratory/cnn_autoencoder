@@ -109,6 +109,10 @@ def fact_ent(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
+    if not hasattr(args, 'model_type'):
+        args.model_type = 'FactorizedEntropy'
+    
+    
     fact_ent_model = setup_network(state, args.model_type, args.gpu)
     
     # Conver the single zarr file into a dataset to be iterated
