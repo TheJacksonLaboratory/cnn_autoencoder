@@ -27,7 +27,7 @@ def compute_rmse(img, rec):
 
 
 def compute_rate(img, p_comp):
-    return np.sum(-np.log2(p_comp[:]+1e-10)) / (img.shape[-2] * img.shape[-1])
+    return np.sum(-np.log2(p_comp[:]+1e-10)) / (img.shape[0] * img.shape[-2] * img.shape[-1])
 
 
 def metrics_image(img, rec, p_comp):

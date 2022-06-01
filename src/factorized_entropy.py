@@ -13,8 +13,13 @@ import models
 
 import utils
 
+model_types = {
+    'FactorizedEntropy': models.FactorizedEntropy,
+    'FactorizedEntropyLaplace': models.FactorizedEntropyLaplace    
+}
 
-def setup_network(state, use_gpu=False):
+
+def setup_network(state, model_type, use_gpu=False):
     """ Setup a neural network-based factorized entropy model.
 
     Parameters
@@ -30,8 +35,9 @@ def setup_network(state, use_gpu=False):
     channels_bn : int
         The number of channels in the compressed representation
     """
-    fact_ent_model = models.FactorizedEntropy(**state['args'])
-    fact_ent_model.load_state_dict(state['fact_ent'])
+    fact_ent_model = model_types[model_type](**state['args'])
+    if model_type != 'FactorizedEntropyLaplace':
+        fact_ent_model.load_state_dict(state['fact_ent'])
     
     if use_gpu:
         fact_ent_model = nn.DataParallel(fact_ent_model)
@@ -72,6 +78,8 @@ def fact_ent_image(fact_ent_model, filename, output_dir, channels_bn, comp_level
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
+            fact_ent_model.reset(x)
+            
             p_y_q = fact_ent_model(x + 0.5) - fact_ent_model(x - 0.5) + 1e-10
             p_y_q = p_y_q.detach().cpu().numpy()
 
@@ -101,7 +109,7 @@ def fact_ent(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    fact_ent_model = setup_network(state, args.gpu)
+    fact_ent_model = setup_network(state, args.model_type, args.gpu)
     
     # Conver the single zarr file into a dataset to be iterated
     transform, _ = utils.get_zarr_transform(normalize=True, compressed_input=True)

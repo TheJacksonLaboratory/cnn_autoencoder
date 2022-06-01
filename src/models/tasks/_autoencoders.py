@@ -127,6 +127,9 @@ class FactorizedEntropy(nn.Module):
         self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r[-1], d[-1], 1, 1), 0.0, 0.01))
         self._b = nn.Parameter(torch.zeros(channels_bn * r[-1]))
 
+    def reset(self, x):
+        pass
+    
     def forward(self, x):
         fx = self._layers(x)
 
@@ -134,6 +137,20 @@ class FactorizedEntropy(nn.Module):
         fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels))
 
         return fx
+
+
+class FactorizedEntropyLaplace(nn.Module):
+    """ Univariate non-parametric density model to approximate the factorized entropy prior using a laplace distribution
+    """
+    def __init__(self, **kwargs):
+        super(FactorizedEntropyLaplace, self).__init__()
+        self._gaussian_approx = None
+        
+    def reset(self, x):
+        self._gaussian_approx = torch.distributions.Laplace(torch.zeros_like(x), torch.var(x.detach(), dim=(0, 2,3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
+
+    def forward(self, x):
+        return self._gaussian_approx.cdf(x)
 
 
 class DownsamplingUnit(nn.Module):

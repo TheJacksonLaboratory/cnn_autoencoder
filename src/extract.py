@@ -241,7 +241,7 @@ def extract(args):
     input_patch_size = args.patch_size // 2 ** input_comp_level
     
     # Convert the single zarr file into a dataset to be iterated
-    transform = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
+    transform, _ = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
 
     if not args.input[0].lower().endswith(args.source_format.lower()):
         # If a directory has been passed, get all image files inside to compress
