@@ -280,6 +280,18 @@ class Synthesizer(nn.Module):
         x = self.synthesis_track(x)
         return x
 
+    def forward_steps(self, x):
+        fx = self.synthesis_track[0](x)
+        color_layer = self.synthesis_track[-1]
+
+        x_r_ms = []
+        for up_layer in self.synthesis_track[1:-1]:
+            fx = up_layer(fx)
+            x_r = color_layer(fx)
+            x_r_ms.insert(0, x_r)
+
+        return x_r_ms
+
 
 class AutoEncoder(nn.Module):
     """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
@@ -304,11 +316,27 @@ class AutoEncoder(nn.Module):
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
-        p_y = torch.prod(p_y, dim=1) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
         
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
+
+    def forward_steps(self, x, synthesize_only=False):
+        if synthesize_only:
+            return self.synthesis(x)
+        
+        fx = self.embedding(x)
+        
+        y_q, y = self.analysis(fx)
+        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
+        
+        # Get the reconstruction at multiple scales
+        x_r_ms = self.synthesis.forward_steps(y_q)
+
+        return x_r_ms, y, p_y
+
 
 
 class MaskedAutoEncoder(nn.Module):
@@ -336,12 +364,29 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.pos_enc(fx)
         
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
-        p_y = torch.prod(p_y, dim=1) + 1e-10
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
+
+    def forward_steps(self, x, synthesize_only=False):
+        if synthesize_only:
+            return self.synthesis(x)
+
+        fx = self.embedding(x)
+        fx = self.masking(fx)
+        fx = self.pos_enc(fx)
+        
+        y_q, y = self.analysis(fx)
+        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
+
+        # Get the reconstruction at multiple scales
+        x_r_ms = self.synthesis.forward_steps(y_q)
+
+        return x_r_ms, y, p_y
 
 
 if __name__ == '__main__':

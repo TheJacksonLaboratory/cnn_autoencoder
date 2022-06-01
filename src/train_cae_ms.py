@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import MaskedAutoEncoder, AutoEncoder, RateDistortion, RateDistortionPenaltyA, RateDistortionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
+from models import MaskedAutoEncoder, AutoEncoder, RateDistortion, RateDistortionMultiscale, RateDistortionPenaltyA, RateDistortionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
 from utils import checkpoint, get_training_args, setup_logger, get_data
 
 from functools import reduce
@@ -43,14 +43,16 @@ def valid(cae_model, data, criterion, args):
 
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
-            x_r, y, p_y = cae_model(x)
+            x_r, y, p_y = cae_model.module.forward_steps(x)
 
             loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(i, len(data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
+            if i % max(1, int(0.1 * len(data))) == 0:                
+                dist, rate = criterion.compute_metrics(x, x_r, p_y)
+                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                    i, len(data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
     mean_loss = sum_loss / len(data)
 
@@ -105,7 +107,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             # Start of training step
             optimizer.zero_grad()
 
-            x_r, y, p_y = cae_model(x)
+            x_r, y, p_y = cae_model.module.forward_steps(x)
             
             synthesizer = DataParallel(cae_model.module.synthesis)
             if args.gpu:
@@ -133,7 +135,9 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
+                dist, rate = criterion.compute_metrics(x, x_r, p_y)
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                    step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
@@ -231,8 +235,8 @@ def setup_criteria(args):
         criterion = RateDistortionPenaltyB(**args.__dict__)
         stopping_criteria.append(EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
 
-    elif args.criterion == 'RD':
-        criterion = RateDistortion(**args.__dict__)
+    elif args.criterion == 'RD_MS':
+        criterion = RateDistortionMultiscale(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
