@@ -122,11 +122,14 @@ def fact_ent(args):
     comp_level = state['args']['compression_level']
     offset = (2 ** comp_level) if args.add_offset else 0
 
+    if not args.source_format.startswith('.'):
+        args.source_format = '.' + args.source_format
+
     if isinstance(args.input, (zarr.Group, zarr.Array, np.ndarray)):
         input_fn_list = [args.input]
     elif not args.input[0].lower().endswith(args.source_format.lower()):
         # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.endswith(args.source_format.lower()), os.listdir(args.input[0]))))
+        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: args.source_format.lower() in fn.lower(), os.listdir(args.input[0]))))
     else:
         input_fn_list = args.input
     

@@ -134,9 +134,9 @@ def decompress(args):
 
     if isinstance(args.input, (zarr.Group, zarr.Array, np.ndarray)):
         input_fn_list = [args.input]
-    elif not args.input[0].lower().endswith('zarr'):
-        # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: fn.lower().endswith('zarr'), os.listdir(args.input[0]))))
+    elif '.zarr' not in args.input[0].lower():
+        # If a directory has been passed, get all image files inside to decompress
+        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: '.zarr' in fn.lower(), os.listdir(args.input[0]))))
     else:
         input_fn_list = args.input
                 

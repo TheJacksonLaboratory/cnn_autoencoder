@@ -305,7 +305,7 @@ class ZarrDataset(Dataset):
         elif isinstance(root, (zarr.Group, zarr.Array, np.ndarray)):
             # If the input is a zarr group or array, convert it to list
             self._filenames = [root]
-        elif isinstance(root, str) and root.lower().endswith(self._source_format):
+        elif isinstance(root, str) and self._source_format.lower() in root.lower():
             # If the input is a single zarr file, take it directly as the only file
             self._filenames = [root]
         elif isinstance(root, str) and root.lower().endswith('txt'):
