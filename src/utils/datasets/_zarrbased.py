@@ -283,12 +283,14 @@ class ZarrDataset(Dataset):
         
         self._level = level
         self._source_format = source_format
+        
 
         self._split_dataset(root, mode)
         if not multithreaded:
             self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
             self._compute_size()
         else:
+            self._org_channels = None
             self._max_H = None
             self._max_W = None
             self._imgs_shapes = []
@@ -315,7 +317,7 @@ class ZarrDataset(Dataset):
 
         else:
             # If a root directory was provided, create a dataset from the images contained by splitting the set into training, validation, and testing subsets.
-            self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if fn.lower().endswith(self._source_format)]))
+            self._filenames = list(map(lambda fn: os.path.join(root, fn), [fn for fn in sorted(os.listdir(root)) if self._source_format in fn.lower()]))
 
             if mode == 'train':
                 # Use 70% of the data for traning
@@ -335,7 +337,7 @@ class ZarrDataset(Dataset):
         
         for arr_src, rois in filenames_rois:
             org_height, org_width = None, None
-            if isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str) and 'zarr' in self._source_format):
+            if isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str) and '.zarr' in self._source_format):
                 if isinstance(arr_src, str):
                     # If the passed object is a string containing the path to a zarr file, open it before passing it to dask.
                     arr_src = zarr.open(arr_src, mode='r')
@@ -343,7 +345,7 @@ class ZarrDataset(Dataset):
                 z = arr_src['%s/%s' % (group, self._level)]
                 org_height = arr_src.attrs.get('height', None)
                 org_width = arr_src.attrs.get('width', None)
-            elif isinstance(arr_src, str) and 'zarr' not in self._source_format:
+            elif isinstance(arr_src, str) and '.zarr' not in self._source_format:
                 z = load_image(arr_src)
             else:
                 # Otherwise, move the zarr array to dask using the same command
@@ -375,8 +377,8 @@ class ZarrDataset(Dataset):
                     elif arr.ndim < 2 or arr.ndim > 5:
                         raise(ValueError, 'Incorrect number of dimensions of the input array. It has %i dimensions while only from 2 to 5 are supported' % arr.ndim)
 
-                    # Even if the ROIs have different shape, we would like to have from each one of them their original image shape
-                    imgs_orginal_shapes.append((org_height, org_width))
+                    # Take the ROI as the original size of the image
+                    imgs_orginal_shapes.append((ly-cy, lx-cx))
             else:
                 z_list.append(arr)
                 imgs_orginal_shapes.append((org_height, org_width))
@@ -397,6 +399,14 @@ class ZarrDataset(Dataset):
         # Compute the size of the dataset from the valid patches
         if self._dataset_size < 0:
             self._dataset_size = self._imgs_sizes[-1]
+
+        if self._z_list[0].ndim < 3:
+            self._org_channels = 1
+        elif self._z_list[0].ndim == 3:
+            self._org_channels = self._z_list[0].shape[0]
+        elif self._z_list[0].ndim > 3:
+            self._org_channels = self._z_list[0].shape[1]
+        
     
     def __len__(self):
         return self._dataset_size
@@ -412,6 +422,9 @@ class ZarrDataset(Dataset):
         
         # Returns anything as label, to prevent an error during training
         return patch, [0]
+
+    def get_channels(self):
+        return self._org_channels
 
     def get_shape(self):
         return self._max_H, self._max_W

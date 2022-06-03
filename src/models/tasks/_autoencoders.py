@@ -248,7 +248,7 @@ class Synthesizer(nn.Module):
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, **kwargs):
         super(Synthesizer, self).__init__()
 
-        # Initial deconvolution in the synthesis track
+        # Initial convolution in the synthesis track
         up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect')]
         up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
                                      groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
@@ -280,12 +280,12 @@ class Synthesizer(nn.Module):
         x = self.synthesis_track(x)
         return x
 
-    def forward_steps(self, x):
-        fx = self.synthesis_track[0](x)
+    def forward_steps(self, x, reconstruction_level=-2):
+        fx = self.synthesis_track[0](x.to(self.synthesis_track[0].weight.device))
         color_layer = self.synthesis_track[-1]
 
         x_r_ms = []
-        for up_layer in self.synthesis_track[1:-1]:
+        for up_layer in self.synthesis_track[1:(reconstruction_level+1)]:
             fx = up_layer(fx)
             x_r = color_layer(fx)
             x_r_ms.insert(0, x_r)

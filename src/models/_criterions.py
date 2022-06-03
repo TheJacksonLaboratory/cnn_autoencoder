@@ -1,4 +1,5 @@
-import logging 
+import logging
+from functools import reduce
 
 import numpy as np
 import torch
@@ -12,11 +13,7 @@ class RateDistortion(nn.Module):
         self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        # Distortion
-        dist = F.mse_loss(x_r, x.to(x_r.device))
-        
-        # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        dist, rate = self.compute_metrics(x, x_r, p_y)
         return self._distorsion_lambda * dist + rate, None
 
     def compute_metrics(self, x=None, x_r=None, p_y=None):
@@ -25,12 +22,20 @@ class RateDistortion(nn.Module):
         
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        
         return dist, rate
 
 
 class RateDistortionMultiscale(RateDistortion):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
         super(RateDistortionMultiscale, self).__init__(distorsion_lambda)
+        self._pyramid_downsample_kernel = torch.tensor(
+            [[[[1, 4, 6, 4, 1],
+               [4, 16, 24, 16, 4],
+               [6, 24, 36, 24, 6],
+               [4, 16, 24, 16, 4],
+               [1, 4, 6, 4, 1]
+            ]]], requires_grad=False) / 256.0
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):        
         if isinstance(self._distorsion_lambda, float):
@@ -38,15 +43,9 @@ class RateDistortionMultiscale(RateDistortion):
         else:
             distorsion_lambda = self._distorsion_lambda
 
-        # Distortion
-        dist = 0
-        x_org = x.clone()
-        for x_r_s, d_l in zip(x_r, distorsion_lambda):
-            dist += d_l * F.mse_loss(x_r_s, x_org.to(x_r_s.device))
-            x_org = F.interpolate(x_org, scale_factor=0.5)
-        
-        # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        dist, rate = self.compute_metrics(x, x_r, p_y)
+        dist = reduce(lambda d1, d2: d1+d2, map(lambda dl: dl[0] * dl[1], zip(dist, distorsion_lambda)), 0)
+
         return dist + rate, None
 
     def compute_metrics(self, x=None, x_r=None, p_y=None):
@@ -55,11 +54,14 @@ class RateDistortionMultiscale(RateDistortion):
         x_org = x.clone()
         for x_r_s in x_r:
             dist.append(F.mse_loss(x_r_s, x_org.to(x_r_s.device)))
-            x_org = F.interpolate(x_org, scale_factor=0.5)
+            with torch.no_grad():
+                x_org = F.conv2d(x_org, self._pyramid_downsample_kernel.repeat(x.size(1), 1, 1, 1), padding=2, groups=x.size(1))
+                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear', align_corners=False)
         
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
         return dist, rate
+
 
 class RateDistortionPenaltyA(RateDistortion):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):

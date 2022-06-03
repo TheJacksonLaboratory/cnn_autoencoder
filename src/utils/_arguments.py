@@ -235,6 +235,9 @@ def get_decompress_args(parser_only=False):
     parser.add_argument('-if', '--src-format', type=str, dest='source_format', help=argparse.SUPPRESS, default='zarr')
     parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
 
+    parser.add_argument('-rl', '--rec-level', type=int, dest='reconstruction_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
+    parser.add_argument('-pyr', '--pyramids', action='store_true', dest='compute_pyramids', help='Compute a pyramid representation of the image and store it in the same file', default=False)
+
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
     if parser_only:

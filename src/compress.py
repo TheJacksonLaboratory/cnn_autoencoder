@@ -53,6 +53,7 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     
     org_H, org_W = zarr_ds.get_img_shape(0)
     H, W = zarr_ds.get_shape()
+    org_channels = zarr_ds.get_channels()
     comp_patch_size = patch_size//2**comp_level
 
     # Output dir is actually the absolute path to the file where to store the compressed representation
@@ -63,6 +64,7 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     
     group.attrs['height'] = org_H
     group.attrs['width'] = org_W
+    group.attrs['channels'] = org_channels
     group.attrs['compression_level'] = comp_level
     group.attrs['model'] = str(comp_model)
 
