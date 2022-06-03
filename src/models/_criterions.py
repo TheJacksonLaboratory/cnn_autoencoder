@@ -9,8 +9,11 @@ import torch.nn.functional as F
 
 class RateDistortion(nn.Module):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
-        super(RateDistortion, self).__init__()
-        self._distorsion_lambda = distorsion_lambda
+        super(RateDistortion, self).__init__()     
+        if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
+            self._distorsion_lambda = distorsion_lambda[0]
+        else:
+            self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         dist, rate = self.compute_metrics(x, x_r, p_y)

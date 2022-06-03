@@ -66,7 +66,7 @@ def get_training_args(task='autoencoder', parser_only=False):
         parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', default=CAE_CRITERIONS[0], choices=CAE_CRITERIONS)
         parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
 
-        parser.add_argument('-dl', '--distl', type=float, dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
+        parser.add_argument('-dl', '--distl', type=float, nargs='+', dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
         parser.add_argument('-eK', '--entK', type=int, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
         parser.add_argument('-er', '--entr', type=int, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
 
