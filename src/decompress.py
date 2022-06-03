@@ -68,9 +68,9 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
     H = H_comp * 2**comp_level
     W = W_comp * 2**comp_level
 
-    if 'zarr' in destination_format.lower() and 'memory' not in destination_format.lower():
+    if '.zarr' in destination_format.lower() and 'memory' not in destination_format.lower():
         # If the output is a zarr file, but will not be kept in memory, create a group (folder) to store the output into a sub-group
-        group = zarr.group(output_dir, overwrite=True)
+        group = zarr.group(output_dir + '.zarr', overwrite=True)
     
     else:
         group = zarr.group()

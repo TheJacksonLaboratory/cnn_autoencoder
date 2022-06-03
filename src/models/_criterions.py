@@ -16,10 +16,10 @@ class RateDistortion(nn.Module):
             self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        dist, rate = self.compute_metrics(x, x_r, p_y)
+        dist, rate = self.compute_distortion(x, y, x_r, p_y, net)
         return self._distorsion_lambda * dist + rate, None
 
-    def compute_metrics(self, x=None, x_r=None, p_y=None):
+    def compute_distortion(self, x=None, x_r=None, p_y=None, net=None):
         # Distortion
         dist = F.mse_loss(x_r, x.to(x_r.device))
         
@@ -29,9 +29,14 @@ class RateDistortion(nn.Module):
         return dist, rate
 
 
-class RateDistortionMultiscale(RateDistortion):
+class RateDistortionMultiscale(nn.Module):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
-        super(RateDistortionMultiscale, self).__init__(distorsion_lambda)
+        super(RateDistortionMultiscale, self).__init__()
+        if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
+            self._distorsion_lambda = distorsion_lambda[0]
+        else:
+            self._distorsion_lambda = distorsion_lambda
+
         self._pyramid_downsample_kernel = torch.tensor(
             [[[[1, 4, 6, 4, 1],
                [4, 16, 24, 16, 4],
@@ -40,18 +45,18 @@ class RateDistortionMultiscale(RateDistortion):
                [1, 4, 6, 4, 1]
             ]]], requires_grad=False) / 256.0
 
-    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):        
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         if isinstance(self._distorsion_lambda, float):
             distorsion_lambda = [self._distorsion_lambda] * len(x_r)
         else:
             distorsion_lambda = self._distorsion_lambda
 
-        dist, rate = self.compute_metrics(x, x_r, p_y)
+        dist, rate = self.compute_distortion(x, y, x_r, p_y, net)
         dist = reduce(lambda d1, d2: d1+d2, map(lambda dl: dl[0] * dl[1], zip(dist, distorsion_lambda)), 0)
 
         return dist + rate, None
 
-    def compute_metrics(self, x=None, x_r=None, p_y=None):
+    def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
         dist = []
         x_org = x.clone()
@@ -66,12 +71,11 @@ class RateDistortionMultiscale(RateDistortion):
         return dist, rate
 
 
-class RateDistortionPenaltyA(RateDistortion):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionPenaltyA, self).__init__(distorsion_lambda)
-        self._penalty_beta = penalty_beta
+class PenaltyA(nn.Module):
+    def __init__(self, **kwargs):
+        super(PenaltyA, self).__init__()
 
-    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
+    def compute_penalty(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Compute A, the approximation to the variance introduced during the analysis track
         with torch.no_grad():
             x_mean = torch.mean(x, dim=1)
@@ -86,18 +90,14 @@ class RateDistortionPenaltyA(RateDistortion):
         
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
-        # Distortion and rate of compression loss:
-        dist_rate_loss, _ = super(RateDistortionPenaltyA, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
-
-        return dist_rate_loss + self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
+        return torch.mean(P_A), torch.mean(max_energy)
 
 
-class RateDistortionPenaltyB(RateDistortion):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionPenaltyB, self).__init__(distorsion_lambda)
-        self._penalty_beta = penalty_beta
-
-    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
+class PenaltyB(nn.Module):
+    def __init__(self, **kwargs):
+        super(PenaltyB, self).__init__()
+    
+    def compute_penalty(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Compute B, the approximation to the variance introduced during the quntization and synthesis track
         _, K, H, W = y.size()
 
@@ -123,7 +123,57 @@ class RateDistortionPenaltyB(RateDistortion):
         # Distortion and rate of compression loss:
         dist_rate_loss, _ = super(RateDistortionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
 
-        return dist_rate_loss + self._penalty_beta * torch.mean(P_B), P_B.detach().mean()
+        return torch.mean(P_B), P_B.detach().mean()
+
+
+class RateDistortionPenaltyA(RateDistortion, PenaltyA):
+    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateDistortionPenaltyA, self).__init__(distorsion_lambda)
+        self._penalty_beta = penalty_beta
+
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
+        # Distortion and rate of compression loss:
+        dist_rate, _ = super(RateDistortionPenaltyA, self).forward(x, y, x_r, p_y, net)
+        P_A, max_energy = self.compute_penalty(x, y, x_r, p_y, net)
+
+        return dist_rate + self._penalty_beta * P_A, max_energy
+
+
+class RateDistortionMSPenaltyA(RateDistortionMultiscale, PenaltyA):
+    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateDistortionMSPenaltyA, self).__init__(distorsion_lambda)
+        self._penalty_beta = penalty_beta
+
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
+        # Distortion and rate of compression loss:
+        dist_rate, _ = super(RateDistortionMSPenaltyA, self).forward(x, y, x_r, p_y, net)
+        P_A, max_energy = self.compute_penalty(x, y, x_r, p_y, net)
+
+        return dist_rate + self._penalty_beta * P_A, max_energy
+
+
+class RateDistortionPenaltyB(RateDistortion, PenaltyB):
+    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateDistortionPenaltyB, self).__init__(distorsion_lambda)
+        self._penalty_beta = penalty_beta
+
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
+        # Distortion and rate of compression loss:
+        dist_rate, _ = super(RateDistortionPenaltyB, self).forward(x, y, x_r, p_y, net)
+        P_B, P_B_mean = self.compute_penalty(x, y, x_r, p_y, net)
+        return dist_rate + self._penalty_beta * P_B, P_B_mean
+
+
+class RateDistortionMSPenaltyB(RateDistortionMultiscale, PenaltyB):
+    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateDistortionMSPenaltyB, self).__init__(distorsion_lambda)
+        self._penalty_beta = penalty_beta
+
+    def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
+        # Distortion and rate of compression loss:
+        dist_rate, _ = super(RateDistortionMSPenaltyB, self).forward(x, y, x_r, p_y, net)
+        P_B, P_B_mean = self.compute_penalty(x, y, x_r, p_y, net)
+        return dist_rate + self._penalty_beta * P_B, P_B_mean
 
 
 class StoppingCriterion(object):
