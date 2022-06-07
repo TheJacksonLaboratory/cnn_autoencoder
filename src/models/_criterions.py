@@ -120,9 +120,6 @@ class PenaltyB(nn.Module):
         # P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
         P_B = B[max_energy_channel]
         
-        # Distortion and rate of compression loss:
-        dist_rate_loss, _ = super(RateDistortionPenaltyB, self).forward(x=x, y=None, x_r=x_r, p_y=p_y, net=None)
-
         return torch.mean(P_B), P_B.detach().mean()
 
 
