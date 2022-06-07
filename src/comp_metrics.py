@@ -1,5 +1,6 @@
 import logging
 import argparse
+import os
 
 from time import perf_counter
 
@@ -26,11 +27,13 @@ def compute_rmse(img, rec):
     return np.sqrt(np.mean((rec[0, :]/255 - img[:]/255)**2))
 
 
-def compute_rate(img, p_comp):
-    return np.sum(-np.log2(p_comp[:]+1e-10)) / (img.shape[0] * img.shape[-2] * img.shape[-1])
+def compute_rate(img, comp):
+    # return np.sum(-np.log2(p_comp[:]+1e-10)) / (img.shape[0] * img.shape[-2] * img.shape[-1])
+    # Check compression directly from the information of the zarr file
+    return float(comp.nbytes_stored) / float(img.nbytes_stored)
 
 
-def metrics_image(img, rec, p_comp):
+def metrics_image(img, comp, rec):
     """ Compute distortion and compression ratio from the compressed representation and reconstruction from a single image.
     
     Parameters:
@@ -48,7 +51,7 @@ def metrics_image(img, rec, p_comp):
         Dictionary with the computed metrics (dist=Distortion, rate=Compression rate (bpp), psnr=Peak Dignal-to-Noise Ratio (dB)), delta_cielab=Distance between images in the CIELAB color space
     """    
     dist = compute_rmse(img, rec)
-    rate = compute_rate(img, p_comp)
+    rate = compute_rate(img, comp)
     psnr = compute_psnr(dist)
     delta_cielab = compute_deltaCIELAB(img, rec)
     
@@ -105,6 +108,8 @@ def metrics(args):
     args.source_format = 'zarr'
     args.workers = 0
     args.stitch_batches = False
+    args.reconstruction_level = -1
+    args.compute_pyramids = False
 
     # Create a zarr group on memory to store the batch of input images
     img_group = zarr.group()
@@ -125,17 +130,13 @@ def metrics(args):
         comp_group.attrs['rois'] = compute_rois(comp_group['0/0'])
         
         args.input = comp_group
-        # Compute the factorized entropy model of the compressed representations
-        p_comp_group = next(factorized_entropy.fact_ent(args))
-        p_comp_group.attrs['rois'] = img_group.attrs['rois']
-    
         # Reconstruct the images from their compressed representations
         rec_group = next(decompress.decompress(args))
 
         e_time = perf_counter() - e_time
 
         # Compute compression metrics
-        scores = metrics_image(img_group['0/0'], rec_group['0/0'], p_comp_group['0/0'])
+        scores = metrics_image(img_group['0/0'], comp_group['0/0'], rec_group['0/0'])
 
         for m_k in scores.keys():
             if scores[m_k] > 0.0:
