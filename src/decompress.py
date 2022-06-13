@@ -1,7 +1,9 @@
 import logging
 import os
+from attr import has
 
 import numpy as np
+from pyparsing import WordEnd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -60,14 +62,25 @@ def decompress_image(decomp_model, filename, output_dir, channels_org, comp_leve
         scales = [scales[0]]
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    zarr_ds = utils.ZarrDataset(root=filename, patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=None, source_format='.zarr')
+    zarr_ds = utils.ZarrDataset(root=filename, mode='all', patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=None, source_format='.zarr', workers=workers)
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
-    H_comp, W_comp = zarr_ds.get_shape()
-    org_H, org_W = zarr_ds.get_img_original_shape(0)
+    if workers > 0:
+        data_queue_iter = iter(data_queue)
+        x, _ = next(data_queue_iter)
+        _, _, H_comp, W_comp = x.size()
+        H_comp = H_comp - offset*2
+        W_comp = W_comp - offset*2
+        org_H = H_comp * 2**comp_level
+        org_W = W_comp * 2**comp_level
+
+    else:
+        H_comp, W_comp = zarr_ds.get_shape()
+        org_H, org_W = zarr_ds.get_img_original_shape(0)
+
     H = H_comp * 2**comp_level
     W = W_comp * 2**comp_level
-
+    
     if '.zarr' in destination_format.lower() and 'memory' not in destination_format.lower():
         # If the output is a zarr file, but will not be kept in memory, create a group (folder) to store the output into a sub-group
         group = zarr.group(output_dir + '.zarr', overwrite=True)
@@ -173,6 +186,12 @@ def decompress(args):
         output_fn_list = [None for _ in range(len(input_fn_list))]
     else:
         output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_rec'), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
+
+    if not hasattr(args, 'reconstruction_level'):
+        args.reconstruction_level = -1
+
+    if not hasattr(args, 'compute_pyramids'):
+        args.compute_pyramids = False
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):

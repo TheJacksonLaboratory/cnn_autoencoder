@@ -54,14 +54,18 @@ def fact_ent_image(fact_ent_model, filename, output_dir, channels_bn, comp_level
     comp_patch_size = patch_size//2**comp_level
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    zarr_ds = utils.ZarrDataset(root=filename, patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=transform, source_format=source_format)
+    zarr_ds = utils.ZarrDataset(root=filename, mode='all', patch_size=comp_patch_size, offset=1 if offset > 0 else 0, transform=transform, source_format=source_format, multithreaded=workers>0)
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
-    H_comp, W_comp = zarr_ds.get_shape()
+    if workers > 0:
+        data_queue_iter = iter(data_queue)
+        x, _ = next(data_queue_iter)
+        _, _, H_comp, W_comp = x.size()
+        H_comp = H_comp - offset*2
+        W_comp = W_comp - offset*2
 
-    # Compute the size of the reconstructed image
-    H = H_comp * 2**comp_level
-    W = W_comp * 2**comp_level
+    else:
+        H_comp, W_comp = zarr_ds.get_shape()
 
     # Output dir is actually the absolute path to the file where to store the compressed representation
     if 'memory' in destination_format.lower():

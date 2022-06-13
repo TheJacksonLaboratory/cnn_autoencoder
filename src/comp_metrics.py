@@ -95,21 +95,21 @@ def metrics(args):
 
     all_metrics = dict(dist=[], rate=[], psnr=[], delta_cielab=[], time=[])
 
+    if not args.source_format.startswith('.'):
+        args.source_format = '.' + args.source_format
+    
     if len(args.input) == 1 and not args.input[0].lower().endswith(args.source_format):
         args.input = args.input[0]
 
     zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, mode=args.mode_data, offset=False, transform=None, source_format=args.source_format)
-    zarr_dl = DataLoader(zarr_ds, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, worker_init_fn=utils.zarrdataset_worker_init)
+    zarr_dl = DataLoader(zarr_ds, batch_size=args.batch_size * args.workers if args.workers > 0 else 1, num_workers=0, shuffle=args.shuffle_test)
 
     if args.test_size < 0:
         args.test_size = len(zarr_ds)
 
     # Override some arguments to be passed to the compression, decompression modules
-    args.source_format = 'zarr'
-    args.workers = 0
+    args.source_format = '.zarr'
     args.stitch_batches = False
-    args.reconstruction_level = -1
-    args.compute_pyramids = False
 
     # Create a zarr group on memory to store the batch of input images
     img_group = zarr.group()

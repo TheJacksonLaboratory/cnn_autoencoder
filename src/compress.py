@@ -48,12 +48,23 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    zarr_ds = utils.ZarrDataset(root=filename, patch_size=patch_size, offset=offset, transform=transform, source_format=source_format)
+    zarr_ds = utils.ZarrDataset(root=filename, mode='all', patch_size=patch_size, offset=offset, transform=transform, source_format=source_format, workers=workers)
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
-    org_H, org_W = zarr_ds.get_img_shape(0)
-    H, W = zarr_ds.get_shape()
-    org_channels = zarr_ds.get_channels()
+    if workers > 0:
+        data_queue_iter = iter(data_queue)
+        x, _ = next(data_queue_iter)
+        _, org_channels, org_H, org_W = x.size()
+        org_H = org_H - offset*2
+        org_W = org_W - offset*2
+        H = org_H
+        W = org_W
+
+    else:
+        org_H, org_W = zarr_ds.get_img_original_shape(0)
+        H, W = zarr_ds.get_shape()
+        org_channels = zarr_ds.get_channels()
+    
     comp_patch_size = patch_size//2**comp_level
 
     # Output dir is actually the absolute path to the file where to store the compressed representation

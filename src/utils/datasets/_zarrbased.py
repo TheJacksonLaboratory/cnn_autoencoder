@@ -259,23 +259,32 @@ def zarrdataset_worker_init(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset_obj = worker_info.dataset
 
-    num_files_per_worker = int(math.ceil(len(dataset_obj._filenames) / worker_info.num_workers))
+    filenames_rois = list(map(parse_roi, dataset_obj._filenames))
     
-    curr_worker_filenames = dataset_obj._filenames[worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]
+    if len(filenames_rois) > 1 and len(filenames_rois) % worker_info.num_workers == 0:
+        num_files_per_worker = int(math.ceil(len(filenames_rois) / worker_info.num_workers))
+        curr_worker_filenames = dataset_obj._filenames[worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]
+        curr_worker_rois = None
+    elif len(filenames_rois) == 1 and len(filenames_rois[0][1]) % worker_info.num_workers == 0:
+        num_files_per_worker = int(math.ceil(len(filenames_rois[0][1]) / worker_info.num_workers))
+        curr_worker_filenames = [filenames_rois[0][0]]
+        curr_worker_rois = [filenames_rois[0][1][worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]]
+    else:
+        raise ValueError('Missmatching number of workers and input files/ROIs')
 
-    dataset_obj._z_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group='0')
+    dataset_obj._z_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group='0', rois=curr_worker_rois)
     if hasattr(dataset_obj, '_lab_list'):
-        dataset_obj._lab_list, _ = dataset_obj._preload_files(curr_worker_filenames, group='1')
+        dataset_obj._lab_list, _ = dataset_obj._preload_files(curr_worker_filenames, group='1', rois=curr_worker_rois)
     
-    dataset_obj._compute_size()
-
+    _, dataset_obj._max_H, dataset_obj._max_W, dataset_obj._org_channels, dataset_obj._imgs_sizes, dataset_obj._imgs_shapes = dataset_obj._compute_size(dataset_obj._z_list)
+    dataset_obj._dataset_size //= worker_info.num_workers
 
 class ZarrDataset(Dataset):
     """ A zarr-based dataset.
         The structure of the zarr file is considered fixed, and only the component '0/0' is used.
         Only two-dimensional (+color channels) data is supported by now.
     """
-    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, source_format='zarr', multithreaded=False, **kwargs):
+    def __init__(self, root, patch_size, dataset_size=-1, level=0, mode='train', offset=0, transform=None, source_format='zarr', workers=0, **kwargs):
         self._patch_size = patch_size
         self._dataset_size = dataset_size
         self._transform = transform
@@ -284,18 +293,16 @@ class ZarrDataset(Dataset):
         self._level = level
         self._source_format = source_format
         
-
         self._split_dataset(root, mode)
-        if not multithreaded:
-            self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
-            self._compute_size()
-        else:
-            self._org_channels = None
-            self._max_H = None
-            self._max_W = None
-            self._imgs_shapes = []
-            self._imgs_sizes = []
-            self._imgs_orginal_shapes = []
+        self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
+        dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list)
+
+        if self._dataset_size < 0:
+            self._dataset_size = dataset_size
+        
+        if workers > 0:
+            self._z_list.clear()
+
 
     def _split_dataset(self, root, mode):
         """ Identify are the inputs being passed and split the data according to the mode.
@@ -329,8 +336,11 @@ class ZarrDataset(Dataset):
                 # Use 20% of the data for testing
                 self._filenames = self._filenames[int(0.8 * len(self._filenames)):]
 
-    def _preload_files(self, filenames, group='0'):
-        filenames_rois = list(map(parse_roi, filenames))
+    def _preload_files(self, filenames, group='0', rois=None):
+        if rois is None:
+            filenames_rois = list(map(parse_roi, filenames))
+        else:
+            filenames_rois = zip(filenames, rois)
 
         imgs_orginal_shapes = []
         z_list = []
@@ -364,7 +374,7 @@ class ZarrDataset(Dataset):
                 org_width = arr.shape[-1]
 
             # Load from the lazily openned array the especified ROIs, if any
-            if len(rois) > 0:                            
+            if len(rois) > 0:
                 for (cx, cy, cz, cc, ct), (lx, ly, lz, lc, lt) in rois:
                     if arr.ndim == 5:
                         z_list.append(arr[ct:ct+lt, cc:cc+lc, cz:cz+lz, cy:cy+ly, cx:cx+lx])
@@ -385,29 +395,28 @@ class ZarrDataset(Dataset):
         
         return z_list, imgs_orginal_shapes
 
-    def _compute_size(self):
-        self._imgs_shapes = [(z.shape[-2], z.shape[-1]) for z in self._z_list]
-        self._imgs_sizes = np.cumsum([0] + [int(np.ceil((H * W) / self._patch_size**2)) for H, W in self._imgs_shapes])
+    def _compute_size(self, z_list):
+        imgs_shapes = [(z.shape[-2], z.shape[-1]) for z in z_list]
+        imgs_sizes = np.cumsum([0] + [int(np.ceil((H * W) / self._patch_size**2)) for H, W in imgs_shapes])
         
         # Get the upper bound of patches that can be obtained from all zarr files (images with smaller size will be padded)
-        max_H = max([z.shape[-2] for z in self._z_list])
-        max_W = max([z.shape[-1] for z in self._z_list])
+        max_H = max([z.shape[-2] for z in z_list])
+        max_W = max([z.shape[-1] for z in z_list])
         
-        self._max_H = self._patch_size * int(math.ceil(max_H / self._patch_size))
-        self._max_W = self._patch_size * int(math.ceil(max_W / self._patch_size))
+        max_H = self._patch_size * int(math.ceil(max_H / self._patch_size))
+        max_W = self._patch_size * int(math.ceil(max_W / self._patch_size))
         
         # Compute the size of the dataset from the valid patches
-        if self._dataset_size < 0:
-            self._dataset_size = self._imgs_sizes[-1]
+        if z_list[0].ndim < 3:
+            org_channels = 1
+        elif z_list[0].ndim == 3:
+            org_channels = z_list[0].shape[0]
+        elif z_list[0].ndim > 3:
+            org_channels = z_list[0].shape[1]
 
-        if self._z_list[0].ndim < 3:
-            self._org_channels = 1
-        elif self._z_list[0].ndim == 3:
-            self._org_channels = self._z_list[0].shape[0]
-        elif self._z_list[0].ndim > 3:
-            self._org_channels = self._z_list[0].shape[1]
-        
-    
+        # Return the dataset size and the information about the dataset
+        return imgs_sizes[-1], max_H, max_W, org_channels, imgs_sizes, imgs_shapes
+            
     def __len__(self):
         return self._dataset_size
 
