@@ -110,25 +110,23 @@ def get_testing_args(parser_only=False):
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
     
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=CAE_MODELS)
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
+    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     
+    parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the testing step', default=16)
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
-    parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
+    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
-    parser.add_argument('-n', '--nimgs', type=int, dest='n_imgs', help='Number of images to extract from the dataset and pass through the compression-decompression process', default=10)
-    parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Output directory to store the compressed and decompressed files', default='.')
-    parser.add_argument('-pth', '--store-pth', action='store_true', dest='store_pth', help='Store the compressed representation of the image before the arithmetic encoding inside a .pth file?')
+    parser.add_argument('-md', '--mode-data', type=str, dest='mode_data', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
+    parser.add_argument('-sht', '--shuffle-test', action='store_true', dest='shuffle_test', help='Shuffle the test set? Works for large images where only small regions will be used to test the performance instead of whole images.')
+    parser.add_argument('-nt', '--num-test', type=int, dest='test_size', help='Size of set of test images used to evaluate the model.', default=-1)
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
-    
-    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
-    parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the output image', default='zarr')
-    
-    parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
     
     parser.add_argument('-l', '--labeled', action='store_true', dest='is_labeled', help='Store the labels along woth the compressed representation (when provided)', default=False)
     

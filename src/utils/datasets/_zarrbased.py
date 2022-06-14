@@ -261,11 +261,11 @@ def zarrdataset_worker_init(worker_id):
 
     filenames_rois = list(map(parse_roi, dataset_obj._filenames))
     
-    if len(filenames_rois) > 1 and len(filenames_rois) % worker_info.num_workers == 0:
+    if len(filenames_rois) > 1 and len(filenames_rois) >= worker_info.num_workers:
         num_files_per_worker = int(math.ceil(len(filenames_rois) / worker_info.num_workers))
         curr_worker_filenames = dataset_obj._filenames[worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]
         curr_worker_rois = None
-    elif len(filenames_rois) == 1 and len(filenames_rois[0][1]) % worker_info.num_workers == 0:
+    elif len(filenames_rois) == 1 and len(filenames_rois[0][1]) >= worker_info.num_workers:
         num_files_per_worker = int(math.ceil(len(filenames_rois[0][1]) / worker_info.num_workers))
         curr_worker_filenames = [filenames_rois[0][0]]
         curr_worker_rois = [filenames_rois[0][1][worker_id*num_files_per_worker:(worker_id+1)*num_files_per_worker]]
@@ -278,6 +278,7 @@ def zarrdataset_worker_init(worker_id):
     
     _, dataset_obj._max_H, dataset_obj._max_W, dataset_obj._org_channels, dataset_obj._imgs_sizes, dataset_obj._imgs_shapes = dataset_obj._compute_size(dataset_obj._z_list)
     dataset_obj._dataset_size //= worker_info.num_workers
+
 
 class ZarrDataset(Dataset):
     """ A zarr-based dataset.
@@ -308,6 +309,9 @@ class ZarrDataset(Dataset):
         """ Identify are the inputs being passed and split the data according to the mode.
         The datasets will be splitted into 70% training, 10% validation, and 20% testing.
         """
+        if isinstance(root, list) and len(root) == 1 and not root[0].endswith(self._source_format):
+            root = root[0]
+        
         if isinstance(root, list):
             # If the input file is a list
             self._filenames = root

@@ -102,7 +102,7 @@ def metrics(args):
         args.input = args.input[0]
 
     zarr_ds = utils.ZarrDataset(root=args.input, patch_size=args.patch_size, dataset_size=args.test_size, mode=args.mode_data, offset=False, transform=None, source_format=args.source_format)
-    zarr_dl = DataLoader(zarr_ds, batch_size=args.batch_size * args.workers if args.workers > 0 else 1, num_workers=0, shuffle=args.shuffle_test)
+    zarr_dl = DataLoader(zarr_ds, batch_size=args.batch_size * (args.workers if args.workers > 0 else 1), num_workers=0, shuffle=args.shuffle_test)
 
     if args.test_size < 0:
         args.test_size = len(zarr_ds)
