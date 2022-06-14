@@ -137,7 +137,7 @@ def test(cae_model, data, args):
             
             all_metrics['time'].append(e_time)
 
-            if i % max(1, int(0.1 * len(data))) == 0:
+            if n_examples % max(1, int(0.1 * args.test_size)) == 0:
                 avg_metrics = ''
                 for m_k in all_metrics.keys():
                     avg_metric = np.nanmean(all_metrics[m_k])
