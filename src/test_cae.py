@@ -91,11 +91,15 @@ def test(cae_model, data, args):
     
     all_extra_info = {}
     
+    n_examples = 0
+
     with torch.no_grad():
         load_time = perf_counter()
-        for i, (x, _) in enumerate(data):
-            load_time = perf_counter() - load_time
+        for i, (x, _) in enumerate(data):            
+            load_time = perf_counter() - load_time            
             load_times.append(load_time)
+
+            n_examples += x.size(0)
             
             e_time = perf_counter()
             x_r, y, _ = cae_model(x)
@@ -138,9 +142,11 @@ def test(cae_model, data, args):
                 for m_k in all_metrics.keys():
                     avg_metric = np.nanmean(all_metrics[m_k])
                     avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
-                logger.debug('\t[{:05d}/{:05d}] Test metrics {}'.format(i, len(data), avg_metrics))
+                logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_size, avg_metrics))
             
             load_time = perf_counter()
+            if n_examples >= args.test_size:
+                break
     
     logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
     
@@ -227,9 +233,12 @@ def main(args):
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
 
-    zarr_ds = utils.ZarrDataset(root=args.data_dir, mode=args.mode_data, dataset_size=args.test_size, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
+    zarr_ds = utils.ZarrDataset(root=args.data_dir, dataset_size=1000000, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
     test_data = DataLoader(zarr_ds, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
+    if args.test_size < 0:
+        args.test_size = len(zarr_ds)
+
     all_metrics_stats = test(cae_model, test_data, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
     

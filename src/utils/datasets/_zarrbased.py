@@ -431,7 +431,6 @@ class ZarrDataset(Dataset):
 
     def __getitem__(self, index):
         i, tl_y, tl_x = compute_grid(index, self._imgs_shapes, self._imgs_sizes, self._patch_size)
-
         patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
         if self._transform is not None:
@@ -602,7 +601,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', patch_size=128, batch_siz
     
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if mode != 'training':
-        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=test_size, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, multithreaded=workers>0, **kwargs)
+        hist_data = histo_dataset(data_dir, patch_size=patch_size, dataset_size=test_size, level=pyramid_level, mode='test', transform=prep_trans, input_target_transform=target_trans, offset=offset, compression_level=compression_level, compressed_input=compressed_input, workers=workers, **kwargs)
         test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=workers, pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
 
