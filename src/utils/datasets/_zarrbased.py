@@ -295,16 +295,21 @@ class ZarrDataset(Dataset):
         self._source_format = source_format
         
         self._split_dataset(root, mode)
-        self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
-        dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list)
-
+        if workers == 0:
+            self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
+            dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list)
+        else:
+            self._z_list = None
+            self._imgs_orginal_shapes = None
+            self._max_H = None
+            self._max_W = None
+            self._org_channels = None
+            self._imgs_sizes = None
+            self._imgs_shapes = None
+        
         if self._dataset_size < 0:
             self._dataset_size = dataset_size
         
-        if workers > 0:
-            self._z_list.clear()
-
-
     def _split_dataset(self, root, mode):
         """ Identify are the inputs being passed and split the data according to the mode.
         The datasets will be splitted into 70% training, 10% validation, and 20% testing.

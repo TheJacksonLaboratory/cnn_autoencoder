@@ -137,22 +137,22 @@ def test(cae_model, data, args):
                 avg_metrics = ''
                 for m_k in all_metrics.keys():
                     avg_metric = np.nanmean(all_metrics[m_k])
-                    avg_metrics += '%s=%0.4f ' % (m_k, avg_metric)
-                logger.debug('\t[{:04d}/{:04d}] Test metrics {}'.format(i, len(data), avg_metrics))
+                    avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
+                logger.debug('\t[{:05d}/{:05d}] Test metrics {}'.format(i, len(data), avg_metrics))
             
             load_time = perf_counter()
     
-    logger.debug('Loading avg. time: {:0.4f} (+-{:0.4f}), evaluation avg. time: {:0.4f}(+-{:0.4f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
+    logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
     
     for m_k in metrics_eval_times.keys():
         avg_eval_time = np.mean(metrics_eval_times[m_k])
         std_eval_time = np.std(metrics_eval_times[m_k])
-        logger.debug('\tEvaluation of {} avg. time: {:0.4f} (+- {:0.4f})'.format(m_k, avg_eval_time, std_eval_time))    
+        logger.debug('\tEvaluation of {} avg. time: {:0.5f} (+- {:0.5f})'.format(m_k, avg_eval_time, std_eval_time))    
     
     for e_k in all_extra_info.keys():
         avg_ext_time = np.mean(all_extra_info[e_k])
         std_ext_time = np.std(all_extra_info[e_k])
-        logger.debug('\tExtra info of {} avg. time: {:0.4f} (+- {:0.4f})'.format(e_k, avg_ext_time, std_ext_time))
+        logger.debug('\tExtra info of {} avg. time: {:0.5f} (+- {:0.5f})'.format(e_k, avg_ext_time, std_ext_time))
         
     all_metrics_stats = {}
     for m_k in all_metrics.keys():
