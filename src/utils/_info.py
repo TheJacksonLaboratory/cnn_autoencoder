@@ -1,6 +1,6 @@
 VER = '0.5.5'
 
-DATASETS = ['MNIST', 'ImageNet', 'Zarr', 'Histology']
+DATASETS = ['MNIST', 'ImageNet', 'ImageNet.S3', 'Zarr', 'Histology']
 
 CAE_CRITERIONS = ['RD', 'RD_MS', 'RD_PA', 'RD_PB', 'RD_MS_PA', 'RD_MS_PB']
 SEG_CRITERIONS = ['CE']

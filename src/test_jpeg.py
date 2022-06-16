@@ -1,3 +1,4 @@
+from ctypes import util
 import logging
 import os
 
@@ -178,22 +179,33 @@ def main(args):
         The set of parameters passed to the different constructors to set up the convolutional autoencoder training
     """
     logger = logging.getLogger(args.mode + '_log')
-    
-    # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    transform, _ = utils.get_zarr_transform(normalize=True)
-    
+   
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
 
     args.batch_size = 1
 
-    zarr_ds = utils.ZarrDataset(root=args.data_dir, dataset_size=1000000, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
-    test_data = DataLoader(zarr_ds, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
+    if args.dataset.lower() == 'imagenet.s3':
+        if utils.ImageS3 is not None:
+            transform = utils.get_imagenet_transform(args.mode_data, normalize=True, patch_size=args.patch_size)
+            test_data = utils.ImageS3(root=args.data_dir, transform=transform)
+            test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
+        else:
+            raise ValueError('Boto3 is not installed, cannot use ImageNet from a S3 bucket')
+    elif args.dataset.lower() == 'imagenet':
+        transform = utils.get_imagenet_transform(args.mode_data, normalize=True, patch_size=args.patch_size)
+        test_data = utils.ImageFolder(root=args.data_dir, transform=transform)
+        test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
+    else:
+        # Generate a dataset from a single image to divide in patches and iterate using a dataloader
+        transform, _ = utils.get_zarr_transform(normalize=True)
+        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=1000000, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
+        test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
     if args.test_size < 0:
-        args.test_size = len(zarr_ds)
+        args.test_size = len(test_data)
 
-    all_metrics_stats = test(test_data, args)
+    all_metrics_stats = test(test_queue, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
     
     for m_k in list(metric_fun.keys()) + ['time']:
