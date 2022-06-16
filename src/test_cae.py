@@ -132,7 +132,7 @@ def test(cae_model, data, args):
                         
                         all_extra_info[e_k].append(extra_info[e_k])
                 
-                if score > 0.0:
+                if score >= 0.0:
                     all_metrics[m_k].append(score)
                 else:
                     all_metrics[m_k].append(np.nan)
