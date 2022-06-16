@@ -46,7 +46,7 @@ def compute_deltaCIELAB(x=None, x_r=None):
 
 def compute_psnr(x=None, x_r=None):
     rmse, _ = compute_rmse(x=x, x_r=x_r)
-    if rmse < 0.0:
+    if rmse < 1e-12:
         return -1.0, None
     return 20 * np.log10(1.0 / rmse), None
 
