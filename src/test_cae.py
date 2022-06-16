@@ -39,11 +39,16 @@ def compute_deltaCIELAB(x=None, x_r=None, y_q=None):
 
 def compute_psnr(x=None, x_r=None, y_q=None):
     rmse, _ = compute_rmse(x=x, x_r=x_r)
+    if rmse < 0.0:
+        return -1.0, None
     return 20 * np.log10(1.0 / rmse), None
 
 
 def compute_rmse(x=None, x_r=None, y_q=None):
-    return np.sqrt(np.mean((x_r/255.0 - x/255.0)**2)), None
+    rmse = np.sqrt(np.mean((x_r/255.0 - x/255.0)**2))
+    if rmse < 0.0:
+        return -1.0, None
+    return rmse, None
 
 
 def compute_rate(x=None, x_r=None, y_q=None):
