@@ -81,7 +81,7 @@ def test(data, args):
         Dictionary with the computed metrics         
     """
     logger = logging.getLogger(args.mode + '_log')
-    compressor = Jpeg2k(level=5)
+    compressor = Jpeg2k(level=0)
 
     all_metrics = dict([(m_k, []) for m_k in metric_fun])
     all_metrics['time'] = []
