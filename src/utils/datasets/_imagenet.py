@@ -83,7 +83,7 @@ class AddGaussianNoise(object):
         return tensor + torch.randn(tensor.size()) * self.std + self.mean
 
 
-def get_imagenet_transform(mode='training', normalize=True):
+def get_imagenet_transform(mode='training', normalize=True, patch_size=128):
     prep_trans_list = [
          transforms.PILToTensor(),
          transforms.ConvertImageDtype(torch.float32)
@@ -91,7 +91,8 @@ def get_imagenet_transform(mode='training', normalize=True):
 
     if mode == 'training':
         prep_trans_list.append(AddGaussianNoise(0., 0.01))
-        prep_trans_list.append(transforms.RandomCrop((128, 128), pad_if_needed=True))
+    
+    prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
 
     if normalize:
         # prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))

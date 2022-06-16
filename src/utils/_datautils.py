@@ -17,7 +17,7 @@ def get_data(args):
     if args_dict['dataset'] == 'MNIST':
         return get_MNIST(**args_dict)
 
-    elif args_dict['dataset'] == 'ImageNet':
+    elif args_dict['dataset'] in ['ImageNet', 'ImageNet.S3']:
         return get_ImageNet(**args_dict)
 
     elif args_dict['dataset'] in ['Zarr', 'Histology']:
