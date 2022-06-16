@@ -53,8 +53,6 @@ def compute_psnr(x=None, x_r=None):
 
 def compute_rmse(x=None, x_r=None):    
     rmse = np.sqrt(np.mean((x_r[:]/255. - x/255.)**2))
-    if rmse < 1e-12:
-        return -1.0, None
     return rmse, None
 
 

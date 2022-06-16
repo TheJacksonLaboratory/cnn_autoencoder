@@ -46,8 +46,6 @@ def compute_psnr(x=None, x_r=None, y_q=None):
 
 def compute_rmse(x=None, x_r=None, y_q=None):
     rmse = np.sqrt(np.mean((x_r/255.0 - x/255.0)**2))
-    if rmse < 0.0:
-        return -1.0, None
     return rmse, None
 
 
