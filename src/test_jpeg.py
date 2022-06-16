@@ -12,13 +12,16 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from numcodecs import Blosc, register_codec
-from imagecodecs.numcodecs import Jpeg2k, JpegXl
-import imageio
+from imagecodecs.numcodecs import Jpeg2k, JpegXl, JpegXr, Jpeg
 
 import utils
 
+COMPRESSORS = {'Jpeg': Jpeg, 'Jpeg2k': Jpeg2k, 'JpegXl': JpegXl, 'JpegXr': JpegXr}
+
+register_codec(Jpeg)
 register_codec(Jpeg2k)
 register_codec(JpegXl)
+register_codec(JpegXr)
 
 
 def compute_deltaCIELAB(x=None, x_r=None):
@@ -43,11 +46,16 @@ def compute_deltaCIELAB(x=None, x_r=None):
 
 def compute_psnr(x=None, x_r=None):
     rmse, _ = compute_rmse(x=x, x_r=x_r)
+    if rmse < 0.0:
+        return -1.0
     return 20 * np.log10(1.0 / rmse), None
 
 
-def compute_rmse(x=None, x_r=None):
-    return np.sqrt(np.mean((x_r[:]/255. - x/255.)**2)), None
+def compute_rmse(x=None, x_r=None):    
+    rmse = np.sqrt(np.mean((x_r[:]/255. - x/255.)**2))
+    if rmse < 1e-12:
+        return -1.0
+    return rmse, None
 
 
 def compute_rate(x=None, x_r=None):
@@ -81,7 +89,7 @@ def test(data, args):
         Dictionary with the computed metrics         
     """
     logger = logging.getLogger(args.mode + '_log')
-    compressor = Jpeg2k(level=0)
+    compressor = COMPRESSORS[args.compressor_type](level=100 - args.compression_level)
 
     all_metrics = dict([(m_k, []) for m_k in metric_fun])
     all_metrics['time'] = []
@@ -214,7 +222,13 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_testing_args()
+    parser = utils.get_testing_args(parser_only=True)
+
+    parser.add_argument('-ct', '--comp-type', type=str, dest='compressor_type', help='Compressor type', choices=COMPRESSORS.keys(), default=list(COMPRESSORS.keys())[0])
+    parser.add_argument('-cl', '--comp-level', type=int, dest='compression_level', help='Compression level (0-100)', default=50)
+
+    args = utils.override_config_file(parser)
+    args.mode = 'testing'
 
     utils.setup_logger(args)
 
