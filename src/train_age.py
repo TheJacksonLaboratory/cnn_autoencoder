@@ -6,23 +6,23 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import MaskedAutoEncoder, AutoEncoder, RateDistortion, RateDistortionPenaltyA, RateDistortionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
+from models import InceptionV3Age, MobileNetAge, ResNetAge, EarlyStoppingPatience
 from utils import checkpoint, get_training_args, setup_logger, get_data
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
+model_options = {"InceptionV3": InceptionV3Age, "MobileNet": MobileNetAge, "ResNet": ResNetAge}
 
 
-def valid(cae_model, data, criterion, args):
+def valid(age_model, data, criterion, args):
     """ Validation step.
     Evaluates the performance of the network in its current state using the full set of validation elements.
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
+    age_model : torch.nn.Module
         The network model in the current state
     data : torch.utils.data.DataLoader or list[tuple]
         The validation dataset. Because the target is recosntruct the input, the label associated is ignored
@@ -38,32 +38,35 @@ def valid(cae_model, data, criterion, args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    cae_model.eval()
+    age_model.eval()
     sum_loss = 0
 
     with torch.no_grad():
-        for i, (x, _) in enumerate(data):
-            x_r, y, p_y = cae_model(x)
+        for i, (x, t) in enumerate(data):
+            y = age_model(x)
 
-            loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
+            if isinstance(y, tuple):
+                y, aux = y
+
+            loss = criterion(y.squeeze(), t.long())
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
             if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(i, len(data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
+                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}).'.format(i, len(data), loss.item(), sum_loss / (i+1)))
 
     mean_loss = sum_loss / len(data)
 
     return mean_loss
 
 
-def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
+def train(age_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
     """ Training loop by steps.
     This loop involves validation and network training checkpoint creation.
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
+    age_model : torch.nn.Module
         The model to be trained
     train_data : torch.utils.data.DataLoader or list[tuple]
         The training data. Must contain the input and respective label; however, only the input is used because the target is reconstructing the input
@@ -99,26 +102,23 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         # Reset the average loss computation every epoch
         sum_loss = 0
 
-        for i, (x, _) in enumerate(train_data):
+        for i, (x, t) in enumerate(train_data):
             step += 1
 
             # Start of training step
             optimizer.zero_grad()
 
-            x_r, y, p_y = cae_model(x)
+            y = age_model(x)
+
+            if isinstance(y, tuple):
+                y, aux = y
             
-            synthesizer = DataParallel(cae_model.module.synthesis)
-            if args.gpu:
-                synthesizer.cuda()
-            
-            loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
-            if extra_info is not None:
-                extra_info = torch.mean(extra_info)
+            loss = criterion(y.squeeze(), t.long())
             loss = torch.mean(loss)
             loss.backward()
             
             # Clip the gradients to prevent from exploding gradients problems
-            nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
+            nn.utils.clip_grad_norm_(age_model.parameters(), max_norm=50.0)
             optimizer.step()
             sum_loss += loss.item()
 
@@ -126,14 +126,9 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 scheduler.step()
             # End of training step
 
-            # When training with penalty on the energy of the compression representation, 
-            # update the respective stopping criterion
-            if len(stopping_criteria) > 1:
-                stopping_criteria[1].update(iteration=step, metric=extra_info.item())
-
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1), y.detach().min(), y.detach().max(), x_r.detach().min(), x_r.detach().max()))
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}).'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1)))
 
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
@@ -142,9 +137,9 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(cae_model, valid_data, criterion, args)
+                valid_loss = valid(age_model, valid_data, criterion, args)
                 
-                cae_model.train()
+                age_model.train()
 
                 stopping_info = ';'.join(map(lambda sc: sc.__repr__(), stopping_criteria))
 
@@ -158,7 +153,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 valid_loss_history.append(valid_loss)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
+                best_valid_loss = checkpoint(step, age_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
@@ -186,19 +181,19 @@ def setup_network(args):
     
     Returns
     -------
-    cae_model : nn.Module
+    age_model : nn.Module
         The convolutional neural network autoencoder model.
     """
 
     # The autoencoder model contains all the modules
-    cae_model = model_options[args.model_type](**args.__dict__)
+    age_model = model_options[args.model_type](**args.__dict__)
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    cae_model = nn.DataParallel(cae_model)
+    age_model = nn.DataParallel(age_model)
     if args.gpu:
-        cae_model.cuda()
+        age_model.cuda()
 
-    return cae_model
+    return age_model
 
 
 def setup_criteria(args):
@@ -223,33 +218,24 @@ def setup_criteria(args):
     stopping_criteria = [EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
 
     # Loss function
-    if args.criterion == 'RD_PA':
-        criterion = RateDistortionPenaltyA(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
-
-    elif args.criterion == 'RD_PB':
-        criterion = RateDistortionPenaltyB(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
-
-    elif args.criterion == 'RD':
-        criterion = RateDistortion(**args.__dict__)
-
+    if args.criterion == 'CE':
+        criterion = nn.CrossEntropyLoss()
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
 
-    # criterion = nn.DataParallel(criterion)
-    # if args.gpu:
-    #     criterion = criterion.cuda()
+    criterion = nn.DataParallel(criterion)
+    if args.gpu:
+        criterion = criterion.cuda()
 
     return criterion, stopping_criteria
 
 
-def setup_optim(cae_model, args):
+def setup_optim(age_model, args):
     """ Setup a loss function for the neural network optimization, and training stopping criteria.
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
+    age_model : torch.nn.Module
         The convolutional autoencoder model to be optimized
     scheduler_type : str
         The type of learning rate scheduler used during the neural network training
@@ -263,7 +249,7 @@ def setup_optim(cae_model, args):
     """
 
     # By now, only the ADAM optimizer is used
-    optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(params=age_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
@@ -276,12 +262,12 @@ def setup_optim(cae_model, args):
     return optimizer, scheduler
 
 
-def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
+def resume_checkpoint(age_model, optimizer, scheduler, checkpoint, gpu=True):
     """ Resume training from a previous checkpoint
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
+    age_model : torch.nn.Module
         The convolutional autoencoder model to be optimized
     optimizer : torch.optim.Optimizer
         The neurla network optimizer method
@@ -298,10 +284,7 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
     else:
         checkpoint_state = torch.load(checkpoint)
     
-    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
-    cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
-    cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
-    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
+    age_model.module.load_state_dict(checkpoint_state['model'])
 
     optimizer.load_state_dict(checkpoint_state['optimizer'])
 
@@ -319,16 +302,16 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    cae_model = setup_network(args)
+    age_model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args)
-    optimizer, scheduler = setup_optim(cae_model, args)
+    optimizer, scheduler = setup_optim(age_model, args)
 
     if args.resume is not None:
-        resume_checkpoint(cae_model, optimizer, scheduler, args.resume, gpu=args.gpu)
+        resume_checkpoint(age_model, optimizer, scheduler, args.resume, gpu=args.gpu)
 
     # Log the training setup
     logger.info('Network architecture:')
-    logger.info(cae_model)
+    logger.info(age_model)
     
     logger.info('\nCriterion:')
     logger.info(criterion)
@@ -348,12 +331,14 @@ def main(args):
 
     train_data, valid_data = get_data(args)
     
-    train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
+    train(age_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
 
 
 if __name__ == '__main__':
-    args = get_training_args()
-
+    args = get_training_args('classification')
+    args.map_labels = True
+    args.num_classes = 4
+    
     setup_logger(args)
 
     main(args)

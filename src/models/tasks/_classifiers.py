@@ -46,7 +46,7 @@ class _UnsqueezeAs2D(nn.Module):
 
 
 class ViTAge(nn.Module):
-    def __init__(self, in_channels, num_classes, pretrained=False, consensus=True, **kwargs):
+    def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(ViTAge, self).__init__()
         self._base_model = timm.create_model('vit_base_patch16_224', pretrained=pretrained)
 
@@ -100,7 +100,7 @@ class _InceptionAuxAge(nn.Module):
 
 
 class InceptionV3Age(nn.Module):
-    def __init__(self, in_channels, num_classes, pretrained=False, aux_logits=True, consensus=True, **kwargs):
+    def __init__(self, channels_org, num_classes, pretrained=False, aux_logits=True, consensus=True, **kwargs):
         super(InceptionV3Age, self).__init__()
         self._base_model = inception.inception_v3(pretrained=pretrained, progress=False, transform_input=False, aux_logits=aux_logits, init_weights=not pretrained)
 
@@ -118,8 +118,8 @@ class InceptionV3Age(nn.Module):
                 self._base_model.AuxLogits.fc.weight = torch.nn.Parameter(aux_weights.reshape(num_classes, 768, 1, 1))
                 self._base_model.AuxLogits.fc.bias = torch.nn.Parameter(aux_bias)
 
-        if in_channels != 3:
-            self._base_model.Conv2d_1a_3x3 = inception.BasicConv2d(in_channels, 32, kernel_size=3, stride=2)
+        if channels_org != 3:
+            self._base_model.Conv2d_1a_3x3 = inception.BasicConv2d(channels_org, 32, kernel_size=3, stride=2)
         
         del self._base_model.avgpool
         fc_weights = self._base_model.fc.weight
@@ -192,7 +192,7 @@ class InceptionV3Age(nn.Module):
 
 
 class ResNetAge(nn.Module):
-    def __init__(self, in_channels, num_classes, pretrained=False, consensus=True, **kwargs):
+    def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(ResNetAge, self).__init__()
 
         self._base_model = resnet.resnet152(pretrained=pretrained, progress=False)
@@ -213,8 +213,8 @@ class ResNetAge(nn.Module):
             self._base_model.fc.weight = torch.nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
             self._base_model.fc.bias = torch.nn.Parameter(fc_bias)
         
-        if in_channels != 3:
-            self._base_model.conv1 = nn.Conv2d(in_channels, self._base_model.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        if channels_org != 3:
+            self._base_model.conv1 = nn.Conv2d(channels_org, self._base_model.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         
         if consensus:
             self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
@@ -244,7 +244,7 @@ class ResNetAge(nn.Module):
 
 
 class MobileNetAge(nn.Module):
-    def __init__(self, in_channels, num_classes, pretrained=False, consensus=True, **kwargs):
+    def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(MobileNetAge, self).__init__()
 
         self._base_model = mobilenet.mobilenet_v2(pretrained=pretrained, progress=False)
@@ -266,8 +266,8 @@ class MobileNetAge(nn.Module):
             self._base_model.classifier[1].weight = torch.nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
             self._base_model.classifier[1].bias = torch.nn.Parameter(fc_bias)
 
-        if in_channels != 3:
-            self._base_model.features[0][0] = nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        if channels_org != 3:
+            self._base_model.features[0][0] = nn.Conv2d(channels_org, 32, kernel_size=3, stride=2, padding=1, bias=False)
 
         if consensus:
             self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())

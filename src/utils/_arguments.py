@@ -4,7 +4,7 @@ import torch
 import json
 import argparse
 
-from ._info import DATASETS, SEG_MODELS, CAE_MODELS, PROJ_MODELS, FE_MODELS, CAE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS
+from ._info import DATASETS, SEG_MODELS, CAE_MODELS, PROJ_MODELS, FE_MODELS, CLASS_MODELS, CAE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS, MERGE_TYPES
 
 
 def override_config_file(parser):
@@ -52,6 +52,7 @@ def get_training_args(task='autoencoder', parser_only=False):
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory where the data is stored. If giving lists of filenames, provide first the traing set, and then the validation set.', default='.')
+    parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
 
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
     parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
@@ -75,6 +76,15 @@ def get_training_args(task='autoencoder', parser_only=False):
         parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
         parser.add_argument('-ms', '--masks-size', type=int, dest='masks_size', help='Standard size of the patched masks for the masked autoencoder training', default=4)
         
+    elif task == 'classification':
+        parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the classification evaluation', default=SEG_CRITERIONS[0], choices=SEG_CRITERIONS)
+        parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of classifier model', choices=CLASS_MODELS)
+
+        parser.add_argument('-pt', '--pre-trained', action='store_true', dest='pretrained', help='Use a pretrained model')
+        parser.add_argument('-cns', '--consensus', action='store_true', dest='consensus', help='Use consensus to define the models\'s predicted class')
+
+        parser.add_argument('-mrg', '--merge-labels', type=str, dest='merge_labels', help='Merge the labels spatialy to define the class of a patch', choices=MERGE_TYPES)
+
     elif task == 'segmentation':
         parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the segmentation evaluation', default=SEG_CRITERIONS[0], choices=SEG_CRITERIONS)
         parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
@@ -125,7 +135,7 @@ def get_testing_args(parser_only=False):
 
     parser.add_argument('-md', '--mode-data', type=str, dest='mode_data', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
     parser.add_argument('-sht', '--shuffle-test', action='store_true', dest='shuffle_test', help='Shuffle the test set? Works for large images where only small regions will be used to test the performance instead of whole images.')
-    parser.add_argument('-nt', '--num-test', type=int, dest='test_size', help='Size of set of test images used to evaluate the model.', default=-1)
+    parser.add_argument('-nt', '--num-test', type=int, dest='dataset_size', help='Size of set of test images used to evaluate the model.', default=-1)
 
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
     
