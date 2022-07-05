@@ -5,7 +5,6 @@ from functools import reduce
 import math
 import numpy as np
 import zarr
-import dask.array as da
 
 from PIL import Image
 
@@ -232,7 +231,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
     tl_x *= patch_size
 
     # TODO extract this information from the zarr metadata. For now, the color channel is considered to be in the second axis
-    c = z.shape[1]
+    c = z.shape[1 if z.ndim > 3 else 0]
     H, W = z.shape[-2:]
 
     tl_y_offset = tl_y - offset
@@ -255,9 +254,6 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
 
     # Pad the patch using the symmetric mode
     if offset > 0 or (patch.shape[-2] < patch_size or patch.shape[-1] < patch_size):
-        # An array cannot be padded more than its current size.
-        # For this reason, the array is first padded all the possible size,
-        # and then is padded with a mean value to complete the patch size
         pad_up = tl_y - tl_y_offset
         pad_down = br_y_offset - br_y
         pad_left = tl_x - tl_x_offset
@@ -268,24 +264,13 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
         valid_pad_left = min(pad_left, br_x - tl_x)
         valid_pad_right = min(pad_right, br_x - tl_x)
 
-        padded_patch  = da.pad(patch, 
+        patch  = np.pad(patch, 
             (*leading_padding, 
              (valid_pad_up, valid_pad_down),
              (valid_pad_left, valid_pad_right)),
             mode='symmetric', reflect_type='odd')
 
-        completion_pad_up = pad_up - valid_pad_up
-        completion_pad_down = pad_down - valid_pad_down
-        completion_pad_left = pad_left - valid_pad_left
-        completion_pad_right = pad_right - valid_pad_right
-
-        patch = da.pad(padded_patch, 
-            (*leading_padding, 
-             (completion_pad_up, completion_pad_down), 
-             (completion_pad_left, completion_pad_right)),
-            mode='mean')
-
-    return patch.compute()
+    return patch
 
 
 def zarrdataset_worker_init(worker_id):
@@ -305,11 +290,11 @@ def zarrdataset_worker_init(worker_id):
     else:
         raise ValueError('Missmatching number of workers and input files/ROIs')
 
-    dataset_obj._z_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group='0', rois=curr_worker_rois)
+    dataset_obj._z_list, dataset_obj._rois_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group='0', rois=curr_worker_rois)
     if hasattr(dataset_obj, '_lab_list'):
-        dataset_obj._lab_list, _ = dataset_obj._preload_files(curr_worker_filenames, group='1', rois=curr_worker_rois)
+        dataset_obj._lab_list, _, _ = dataset_obj._preload_files(curr_worker_filenames, group='1', rois=curr_worker_rois)
     
-    _, dataset_obj._max_H, dataset_obj._max_W, dataset_obj._org_channels, dataset_obj._imgs_sizes, dataset_obj._imgs_shapes = dataset_obj._compute_size(dataset_obj._z_list)
+    _, dataset_obj._max_H, dataset_obj._max_W, dataset_obj._org_channels, dataset_obj._imgs_sizes, dataset_obj._imgs_shapes = dataset_obj._compute_size(dataset_obj._z_list, dataset_obj._rois_list)
     dataset_obj._dataset_size //= worker_info.num_workers
 
 
@@ -335,10 +320,11 @@ class ZarrDataset(Dataset):
         self._filenames = self._split_dataset(root)
 
         if workers == 0:
-            self._z_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
-            dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list)
+            self._z_list, self._rois_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
+            dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list, self._rois_list)
         else:
             self._z_list = None
+            self._rois_list = None
             self._imgs_orginal_shapes = None
             self._max_H = None
             self._max_W = None
@@ -411,67 +397,68 @@ class ZarrDataset(Dataset):
 
         imgs_orginal_shapes = []
         z_list = []
+        rois_list = []
         
-        for arr_src, rois in filenames_rois:
+        for id, (arr_src, rois) in enumerate(filenames_rois):
             org_height, org_width = None, None
             if isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str) and '.zarr' in self._source_format):
+                # If the passed object is a zarr group/file, open it and extract the level from the specified group
                 if isinstance(arr_src, str):
-                    # If the passed object is a string containing the path to a zarr file, open it before passing it to dask.
                     arr_src = zarr.open(arr_src, mode='r')
                 
-                z = arr_src['%s/%s' % (group, self._level)]
+                arr = arr_src['%s/%s' % (group, self._level)]
+
+                # The original height and width is stored as an attribute when compressing the image with the CAE
                 org_height = arr_src.attrs.get('height', None)
                 org_width = arr_src.attrs.get('width', None)
-            elif isinstance(arr_src, str) and '.zarr' not in self._source_format:
-                z = load_image(arr_src)
-            else:
-                # Otherwise, move the zarr array to dask using the same command
-                z = arr_src
-            
-            # Lazily open the array files using dask, that will be more efficient when retrieving ROIs from large images
-            if isinstance(z, np.ndarray):
-                arr = da.from_array(z)
-            else:
-                arr = da.from_zarr(z)
 
+            elif isinstance(arr_src, str) and '.zarr' not in self._source_format:
+                # If the input is a path to an image stored in a format supported by PIL, open it and use it as a numpy array
+                arr = load_image(arr_src)
+            else:
+                # Otherwise, use directly the zarr array
+                arr = arr_src
+
+            if arr.ndim < 2 or arr.ndim > 5:
+                raise(ValueError, 'Incorrect number of dimensions of the input array. It has %i dimensions while only from 2 to 5 are supported' % arr.ndim)
+            
             # Store the original image's shapes
             if org_height is None:
                 org_height = arr.shape[-2]
             if org_width is None:
                 org_width = arr.shape[-1]
 
-            # Load from the lazily openned array the especified ROIs, if any
+            imgs_orginal_shapes.append((org_height, org_width))
+            z_list.append(arr)
+
+            # List all ROIs in this image
             if len(rois) > 0:
                 for (cx, cy, cz, cc, ct), (lx, ly, lz, lc, lt) in rois:
+                    roi = []
+                    if arr.ndim >= 4:
+                        roi.append(slice(ct, ct+lt, 1))
+                    if arr.ndim >= 3:
+                        roi.append(slice(cc, cc+lc, 1))
                     if arr.ndim == 5:
-                        arr = arr[ct:ct+lt, cc:cc+lc, cz:cz+lz, cy:cy+ly, cx:cx+lx]
-                    elif arr.ndim == 4:
-                        arr = arr[ct:ct+lt, cc:cc+lc, cy:cy+ly, cx:cx+lx]
-                    elif arr.ndim == 3:
-                        arr = arr[cc:cc+lc, cy:cy+ly, cx:cx+lx]
-                    elif arr.ndim == 2:
-                        arr = arr[cy:cy+ly, cx:cx+lx]
-                    elif arr.ndim < 2 or arr.ndim > 5:
-                        raise(ValueError, 'Incorrect number of dimensions of the input array. It has %i dimensions while only from 2 to 5 are supported' % arr.ndim)
+                        roi.append(slice(cz, cz+lz, 1))
+                    
+                    roi += [slice(cy, cy+ly, 1), slice(cx, cx+lx, 1)]
                     
                     # Take the ROI as the original size of the image
-                    imgs_orginal_shapes.append((ly-cy, lx-cx))
-                    arr = arr.rechunk(chunks=arr.shape)
-                    z_list.append(arr)
+                    rois_list.append((id, tuple(roi)))
+            
             else:
-                imgs_orginal_shapes.append((org_height, org_width))
-                z_list.append(arr)
+                roi = [slice(0, s, 1) for s in arr.shape]
+                rois_list.append((id, tuple(roi)))
+            
+        return z_list, rois_list, imgs_orginal_shapes
 
-        
-        return z_list, imgs_orginal_shapes
-
-    def _compute_size(self, z_list):
-        imgs_shapes = [(z.shape[-2], z.shape[-1]) for z in z_list]
+    def _compute_size(self, z_list, rois_list):
+        imgs_shapes = [((roi[-2].stop - roi[-2].start)//roi[-2].step, (roi[-1].stop - roi[-1].start)//roi[-1].step) for _, roi in rois_list]
         imgs_sizes = np.cumsum([0] + [int(np.ceil((H * W) / self._patch_size**2)) for H, W in imgs_shapes])
         
         # Get the upper bound of patches that can be obtained from all zarr files (images with smaller size will be padded)
-        max_H = max([z.shape[-2] for z in z_list])
-        max_W = max([z.shape[-1] for z in z_list])
+        max_H, max_W = np.max(np.array(imgs_shapes), axis=0)
         
         max_H = self._patch_size * int(math.ceil(max_H / self._patch_size))
         max_W = self._patch_size * int(math.ceil(max_W / self._patch_size))
@@ -486,13 +473,14 @@ class ZarrDataset(Dataset):
 
         # Return the dataset size and the information about the dataset
         return imgs_sizes[-1], max_H, max_W, org_channels, imgs_sizes, imgs_shapes
-            
+
     def __len__(self):
         return self._dataset_size
 
     def __getitem__(self, index):
         i, tl_y, tl_x = compute_grid(index, self._imgs_shapes, self._imgs_sizes, self._patch_size)
-        patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
+        id, roi = self._rois_list[i]
+        patch = get_patch(self._z_list[id].get_orthogonal_selection(roi), tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
@@ -521,7 +509,7 @@ class LabeledZarrDataset(ZarrDataset):
         super(LabeledZarrDataset, self).__init__(root=root, patch_size=patch_size, dataset_size=dataset_size, level=level, mode=mode, offset=offset, transform=transform, source_format=source_format)
         
         # Open the labels from group 1
-        self._lab_list, _ = self._preload_files(self._filenames, group='1')
+        self._lab_list, _, _ = self._preload_files(self._filenames, group='1')
 
         self._compression_level = compression_level
         self._compressed_input = compressed_input
@@ -534,14 +522,14 @@ class LabeledZarrDataset(ZarrDataset):
         
     def __getitem__(self, index):
         i, tl_y, tl_x = compute_grid(index, self._imgs_shapes, self._imgs_sizes, self._patch_size)
-
-        patch = get_patch(self._z_list[i], tl_y, tl_x, self._patch_size, self._offset).squeeze()
+        id, roi = self._rois_list[i]
+        patch = get_patch(self._z_list[id].get_orthogonal_selection(roi), tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
             
         patch_size = self._patch_size * ((2**self._compression_level) if self._compressed_input else 1)
-        target = get_patch(self._lab_list[i], tl_y, tl_x, patch_size, 0).astype(np.float32)
+        target = get_patch(self._lab_list[id].get_orthogonal_selection(roi), tl_y, tl_x, patch_size, 0).astype(np.float32)
         
         if self._input_target_transform:
             patch, target = self._input_target_transform((patch, target))
@@ -683,7 +671,7 @@ if __name__ == '__main__':
     parser.add_argument('-sht', '--shuffle-tst', action='store_true', dest='shuffle_test', help='Shuffle test data?')
     parser.add_argument('-t', '--task', dest='task', help='Task for what the data is used', choices=['autoencoder', 'segmentation', 'classification'], default='autoencoder')
     parser.add_argument('-ts', '--test-size', type=int, dest='test_size', help='Number of samples extracted from the test dataset', default=-1)
-    parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test'], default='train')
+    parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test', 'all'], default='train')
     parser.add_argument('-o', '--offset', type=int, dest='offset', help='Offset added to the patches', default=0)
     parser.add_argument('-cl', '--comp-level', type=int, dest='compression_level', help='Compression level of the input', default=0)
     parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
@@ -709,7 +697,10 @@ if __name__ == '__main__':
     print('Batched dataset size:', len(dl))
     q = tqdm(total = len(dl))
     for i, (x, t) in enumerate(dl):
-        q.set_description('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size()))
+        if isinstance(t, list):
+            q.set_description('Batch {} of size: {}, target: {}'.format(i, x.size(), len(t)))
+        else:
+            q.set_description('Batch {} of size: {}, target: {}'.format(i, x.size(), t.size()))
         q.update()
 
     q.close()

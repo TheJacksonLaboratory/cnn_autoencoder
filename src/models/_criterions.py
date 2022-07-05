@@ -16,7 +16,7 @@ class RateDistortion(nn.Module):
             self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        dist, rate = self.compute_distortion(x, y, x_r, p_y, net)
+        dist, rate = self.compute_distortion(x, x_r, p_y, net)
         return self._distorsion_lambda * dist + rate, None
 
     def compute_distortion(self, x=None, x_r=None, p_y=None, net=None):
