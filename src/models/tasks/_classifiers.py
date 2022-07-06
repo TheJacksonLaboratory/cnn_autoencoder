@@ -1,3 +1,4 @@
+import sys
 import math
 from functools import partial
 from collections import OrderedDict
@@ -424,8 +425,8 @@ if __name__ == '__main__':
                 ])
 
     x = []
-    # data_dir = r'C:\Users\cervaf\Documents\Datasets\ImageNet\ILSVRC\Data\CLS-LOC\train\n01484850'
-    data_dir = r'C:\Users\cervaf\Documents\Datasets\Kodak'
+
+    data_dir = sys.argv[1]
     for im_fn in [fn for fn in os.listdir(data_dir)[-10:] if fn.lower().endswith('.jpeg')]:
         fn = os.path.join(data_dir, im_fn)
         im = Image.open(fn)
