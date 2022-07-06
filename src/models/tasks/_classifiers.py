@@ -427,7 +427,7 @@ if __name__ == '__main__':
     x = []
 
     data_dir = sys.argv[1]
-    for im_fn in [fn for fn in os.listdir(data_dir)[-10:] if fn.lower().endswith('.jpeg')]:
+    for im_fn in [fn for fn in os.listdir(data_dir)[-10:] if fn.lower().endswith('.png')]:
         fn = os.path.join(data_dir, im_fn)
         im = Image.open(fn)
         im = transform(im).unsqueeze(0)
