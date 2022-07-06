@@ -8,3 +8,4 @@ zarr
 elasticdeform
 scipy
 boto3
+torchvision>=0.13.0

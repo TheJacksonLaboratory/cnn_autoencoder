@@ -1,9 +1,9 @@
-import logging
-import torchvision
-from torchvision.models import inception, resnet, mobilenet
-import timm
-
 import math
+from functools import partial
+from collections import OrderedDict
+
+from torchvision.models import inception, resnet, mobilenet, vision_transformer
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -45,33 +45,155 @@ class _UnsqueezeAs2D(nn.Module):
         return x.view(b, c, 1, 1)
 
 
+class _Encoder(nn.Module):
+    """Transformer Model Encoder for sequence to sequence translation.
+    Based on the torchvision implementation.
+    This version allows to process sequences of arbitrary length (up to 4097)
+    """
+
+    def __init__(
+        self,
+        max_seq_length,
+        num_layers,
+        num_heads,
+        hidden_dim,
+        mlp_dim,
+        dropout,
+        attention_dropout,
+        norm_layer = partial(nn.LayerNorm, eps=1e-6),
+    ):
+        super().__init__()
+        # Note that batch_size is on the first dim because
+        # we have batch_first=True in nn.MultiAttention() by default
+        self._max_seq_length = max_seq_length
+        self._hidden_dim = hidden_dim
+
+        self.pos_embedding = nn.Parameter(torch.empty(1, max_seq_length, hidden_dim).normal_(std=0.02))  # from BERT        
+        self.dropout = nn.Dropout(dropout)
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        for i in range(num_layers):
+            # layers[f"encoder_layer_{i}"] = vision_transformer.EncoderBlock(
+            layers[f"encoder_layer_{i}"] = vision_transformer.EncoderBlock(
+                num_heads,
+                hidden_dim,
+                mlp_dim,
+                dropout,
+                attention_dropout,
+                norm_layer,
+            )
+        self.layers = nn.Sequential(layers)
+        self.ln = norm_layer(hidden_dim)
+
+    def initialize(self, encoder_src):
+        # The source positional embedding might have a smaller size.
+        # For that reason, take all the available values from it to initialize this encoder
+        src_pos_embedding = torch.empty(1, self._max_seq_length, self._hidden_dim).normal_(std=0.02)
+        src_pos_embedding[:, :encoder_src.pos_embedding.size(1), :] = encoder_src.pos_embedding
+        self.pos_embedding = torch.nn.Parameter(src_pos_embedding)
+
+        # Initialize this layers with the weights from the source encoder
+        self.layers.load_state_dict(encoder_src.layers.state_dict())
+        self.ln.load_state_dict(encoder_src.ln.state_dict())
+
+    def forward(self, input):
+        torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}")
+        seq_length = input.size(1)
+        input = input + self.pos_embedding[:, :seq_length, :]
+        return self.ln(self.layers(self.dropout(input)))
+
+
 class ViTAge(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(ViTAge, self).__init__()
-        self._base_model = timm.create_model('vit_base_patch16_224', pretrained=pretrained)
+        self._base_model = vision_transformer.vit_b_16(weights=vision_transformer.ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1, progress=False)
+        self._org_image_h, self._org_image_w = 384, 384
 
-        fc_weights = self._base_model.head.weight
-        fc_bias = self._base_model.head.bias
+        pretrained_encoder = self._base_model.encoder
+        self._base_model.encoder = _Encoder(
+            4097,
+            12,
+            12,
+            self._base_model.hidden_dim,
+            self._base_model.mlp_dim,
+            self._base_model.dropout,
+            self._base_model.attention_dropout,
+            self._base_model.norm_layer,
+        )
+
+        if pretrained:
+            self._base_model.encoder.initialize(pretrained_encoder)
         
-        self._base_model.head = nn.Sequential(_UnsqueezeAs2D(),  nn.Conv2d(fc_weights.size(1), num_classes, kernel_size=1, stride=1))
+        # fc_weights = self._base_model.head.weight
+        # fc_bias = self._base_model.head.bias
+        
+        # self._base_model.head = nn.Sequential(_UnsqueezeAs2D(), nn.Conv2d(fc_weights.size(1), num_classes, kernel_size=1, stride=1))
 
-        if num_classes == fc_weights.size(0):
-            self._base_model.head[1].weight = nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
-            self._base_model.head[1].bias = nn.Parameter(fc_bias)
+        self._num_classes = num_classes
+        # if num_classes == fc_weights.size(0):
+        #     self._base_model.head[1].weight = nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
+        #     self._base_model.head[1].bias = nn.Parameter(fc_bias)
 
-        if consensus:
-            self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
-        else:
-            self._consensus = nn.Identity()      
+        # if consensus:
+        #     self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
+        # else:
+        #     self._consensus = nn.Identity()      
 
         # Fix the weights of the base model when pretrained is True
         if pretrained:
             for param in self._base_model.parameters():
                 param.requires_grad = False
 
+    def _process_input(self, x):
+        n, c, h, w = x.shape
+        p = self._base_model.patch_size
+        n_h = self._org_image_h // p
+        n_w = self._org_image_w // p
+
+        # (n, c, h, w) -> (n, hidden_dim, n_h, n_w)
+        x = self._base_model.conv_proj(x)
+        
+        # This allows to take an image of arbitrary size.
+        # If and only if the input image has a shape that is multiple of the patch size.
+        offset_h, offset_w = n_h * int(math.ceil(h//p / n_h)) - h//p, n_w * int(math.ceil(w//p / n_w)) - w//p
+        offset_h += offset_h % 2
+        offset_w += offset_w % 2
+
+        new_h, new_w = (h//p + 1 + offset_h)//n_h, (w//p + 1 + offset_w)//n_w
+        x = F.unfold(x, kernel_size=(n_h, n_w), stride=(n_h, n_w), padding=(offset_h//2, offset_w//2))
+        x = x.permute(0, 2, 1)
+
+        # (n, hidden_dim, n_h, n_w) -> (n, hidden_dim, (n_h * n_w))
+        x = x.reshape(-1, self._base_model.hidden_dim, n_h * n_w)
+
+        # (n, hidden_dim, (n_h * n_w)) -> (n, (n_h * n_w), hidden_dim)
+        # The self attention layer expects inputs in the format (N, S, E)
+        # where S is the source sequence length, N is the batch size, E is the
+        # embedding dimension
+        x = x.permute(0, 2, 1)
+
+        return x, new_h, new_w
+
     def forward(self, x):
-        x = self._base_model(x)
-        x = self._consensus(x)
+        b = x.shape[0]
+
+        # Reshape and permute the input tensor
+        x, new_h, new_w = self._process_input(x)
+        n = x.shape[0]
+
+        # Expand the class token to the full batch
+        batch_class_token = self._base_model.class_token.expand(n, -1, -1)
+        x = torch.cat([batch_class_token, x], dim=1)
+
+        x = self._base_model.encoder(x)
+
+        # Classifier "token" as used by standard language architectures
+        x = x[:, 0]
+
+        x = self._base_model.heads(x)
+
+        x = x.reshape(b, new_h, new_w, self._num_classes)
+        x = x.permute(0, 3, 1, 2)
+
         return x
     
 
@@ -296,7 +418,7 @@ if __name__ == '__main__':
     
 
     transform = transforms.Compose([
-                    transforms.CenterCrop(768),
+                    transforms.CenterCrop((512, 768)),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 ])
@@ -311,18 +433,8 @@ if __name__ == '__main__':
         x.append(im)
     x = torch.cat(x, dim=0)
 
-    net_inc_v3 = inception.inception_v3(pretrained=True, progress=False)
-    net_inc_v3.eval()
-
-    with torch.no_grad():
-        y_inc = net_inc_v3(x)
-        if isinstance(y_inc, tuple):
-            y_inc, aux_y_inc = y_inc
-        top5_prob, top5_catid = torch.topk(torch.softmax(y_inc.squeeze(), dim=1), 3, dim=1)
-        print('Inception V3\n', top5_catid)
-
     # -------------------------------------------------------------------------------------------------
-    net = InceptionV3Age(in_channels=3, num_classes=1000, pretrained=True, aux_logits=True, consensus=True)
+    net = ViTAge(channels_org=3, num_classes=1000, pretrained=True, consensus=False)
 
     net.eval()
     with torch.no_grad():
@@ -330,19 +442,7 @@ if __name__ == '__main__':
         if isinstance(y, tuple):
             y, aux_y = y
         
-        top5_prob, top5_catid = torch.topk(torch.softmax(y.squeeze(), dim=1), 3, dim=1)
-        print('Inception V3 (Consensus: max confidence)\n', top5_catid)
-       
-    # -------------------------------------------------------------------------------------------------
-    net = InceptionV3Age(in_channels=3, num_classes=1000, pretrained=True, aux_logits=True, consensus=False)
-
-    net.eval()
-    with torch.no_grad():
-        y = net(x)
-        if isinstance(y, tuple):
-            y, aux_y = y
-        
-        top5_prob, top5_catid = torch.topk(torch.softmax(y.squeeze(), dim=1), 3, dim=1)
-        print('Inception V3 (Consensus: none)\n', top5_catid)
+        top5_prob, top5_catid = torch.topk(torch.softmax(y.squeeze(), dim=1), 2, dim=1)
+        print('Vision Transformer (Consensus: none), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid)
        
     print('End experiment')
