@@ -6,5 +6,5 @@ from ._criterions import RateDistortion, RateDistortionMultiscale, \
 from .tasks import ColorEmbedding, Analyzer, Synthesizer, FactorizedEntropy, FactorizedEntropyLaplace, \
     AutoEncoder, MaskedAutoEncoder,\
     UNet, UNetNoBridge, DecoderUNet, \
-    InceptionV3Age, MobileNetAge, ResNetAge, \
+    InceptionV3Age, MobileNetAge, ResNetAge, ViTAge, \
     KernelLayer

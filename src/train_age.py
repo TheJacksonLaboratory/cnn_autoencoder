@@ -6,14 +6,14 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import InceptionV3Age, MobileNetAge, ResNetAge, EarlyStoppingPatience
+from models import InceptionV3Age, MobileNetAge, ResNetAge, ViTAge, EarlyStoppingPatience
 from utils import checkpoint, get_training_args, setup_logger, get_data
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"InceptionV3": InceptionV3Age, "MobileNet": MobileNetAge, "ResNet": ResNetAge}
+model_options = {"InceptionV3": InceptionV3Age, "MobileNet": MobileNetAge, "ResNet": ResNetAge, "ViT": ViTAge}
 
 
 def valid(age_model, data, criterion, args):
@@ -40,6 +40,8 @@ def valid(age_model, data, criterion, args):
 
     age_model.eval()
     sum_loss = 0
+    sum_acc = 0
+    total_examples = 0
 
     with torch.no_grad():
         for i, (x, t) in enumerate(data):
@@ -52,12 +54,23 @@ def valid(age_model, data, criterion, args):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
+            curr_acc = torch.sum(y.squeeze().argmax(dim=1) == t.long())
+            curr_batch_size = x.size(0)
+
+            sum_acc += curr_acc
+            total_examples += curr_batch_size
+
             if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}).'.format(i, len(data), loss.item(), sum_loss / (i+1)))
+                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}). Accuracy {:.4f} ({:.4f})'.format(
+                        i, len(data), 
+                        loss.item(), sum_loss / (i+1),
+                        curr_acc / curr_batch_size, sum_acc / total_examples
+                        )
+                    )
 
     mean_loss = sum_loss / len(data)
-
-    return mean_loss
+    acc = sum_acc / total_examples
+    return mean_loss, acc
 
 
 def train(age_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
@@ -101,7 +114,8 @@ def train(age_model, train_data, valid_data, criterion, stopping_criteria, optim
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
-
+        sum_acc = 0
+        total_examples = 0
         for i, (x, t) in enumerate(train_data):
             step += 1
 
@@ -122,31 +136,45 @@ def train(age_model, train_data, valid_data, criterion, stopping_criteria, optim
             optimizer.step()
             sum_loss += loss.item()
 
+            # Compute the model accuracy
+            with torch.no_grad():
+                curr_acc = torch.sum(y.squeeze().argmax(dim=1) == t.long())
+                curr_batch_size = x.size(0)
+
+                sum_acc += curr_acc
+                total_examples += curr_batch_size
+
             if scheduler is not None and 'metrics' not in dict(signature(scheduler.step).parameters).keys():
                 scheduler.step()
             # End of training step
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}).'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1)))
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}). Accuracy {:.4f} ({:.4f})'.format(
+                        step, i, len(train_data), 
+                        loss.item(), sum_loss / (i+1), 
+                        curr_acc / curr_batch_size, sum_acc / total_examples
+                        )
+                    )
 
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
 
             if not keep_training or (step >= args.warmup and (step-args.warmup) % args.checkpoint_steps == 0):
                 train_loss = sum_loss / (i+1)
+                train_acc = sum_acc / total_examples
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(age_model, valid_data, criterion, args)
-                
+                valid_loss, valid_acc = valid(age_model, valid_data, criterion, args)
+
                 age_model.train()
 
                 stopping_info = ';'.join(map(lambda sc: sc.__repr__(), stopping_criteria))
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
-                logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
-                    step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
+                logger.info('[Step {:06d} ({})] Training loss {:0.4f} (accuracy {:0.4f}), validation loss {:.4f} (accuracy {:0.4f}), best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
+                    step, 'training' if keep_training else 'stopping', train_loss, train_acc, valid_loss, valid_acc, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
                 )
 
                 train_loss_history.append(train_loss)

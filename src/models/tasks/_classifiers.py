@@ -19,24 +19,6 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.0)
 
 
-class _ViewAs3D(nn.Module):
-    def __init__(self):
-        super(_ViewAs3D, self).__init__()
-    
-    def forward(self, x):
-        b, c, h, w = x.size()
-        return x.view(b, 1, c, h, w)
-
-
-class _ViewAs2D(nn.Module):
-    def __init__(self):
-        super(_ViewAs2D, self).__init__()
-    
-    def forward(self, x):
-        b, _, c, h, w = x.size()
-        return x.view(b, c, h, w)
-
-
 class _UnsqueezeAs2D(nn.Module):
     def __init__(self):
         super(_UnsqueezeAs2D, self).__init__()
@@ -44,6 +26,18 @@ class _UnsqueezeAs2D(nn.Module):
     def forward(self, x):
         b, c = x.size()
         return x.view(b, c, 1, 1)
+
+
+class _ConsensusAge(nn.Module):
+    def __init__(self):
+        super(_ConsensusAge, self).__init__()
+
+    def forward(self, x):
+        b, c, h, w = x.size()        
+        conf_pos = torch.argmax(x.reshape(b, -1), dim=1) % (h * w)
+        conf_pos_y = torch.div(conf_pos, h, rounding_mode='floor')
+        conf_pos_x = conf_pos % w
+        return x[(range(b), slice(None), conf_pos_y, conf_pos_x)]
 
 
 class _Encoder(nn.Module):
@@ -123,26 +117,36 @@ class ViTAge(nn.Module):
 
         if pretrained:
             self._base_model.encoder.initialize(pretrained_encoder)
-        
-        # fc_weights = self._base_model.head.weight
-        # fc_bias = self._base_model.head.bias
-        
-        # self._base_model.head = nn.Sequential(_UnsqueezeAs2D(), nn.Conv2d(fc_weights.size(1), num_classes, kernel_size=1, stride=1))
-
-        self._num_classes = num_classes
-        # if num_classes == fc_weights.size(0):
-        #     self._base_model.head[1].weight = nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
-        #     self._base_model.head[1].bias = nn.Parameter(fc_bias)
-
-        # if consensus:
-        #     self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
-        # else:
-        #     self._consensus = nn.Identity()      
-
-        # Fix the weights of the base model when pretrained is True
-        if pretrained:
             for param in self._base_model.parameters():
                 param.requires_grad = False
+        
+        if channels_org != 3:
+            if isinstance(self._base_model.conv_proj, nn.Conv2d):
+                self._base_model.conv_proj = nn.Conv2d(in_channels=channels_org, out_channels=self._base_model.hidden_dim, kernel_size=1)
+            else:
+                raise ValueError('Early Convolutions are not implemented yet on the Vision Transformer for image classification within this package')
+        
+        fc_weights = self._base_model.heads[-1].weight
+        fc_bias = self._base_model.heads[-1].bias
+        self._base_model.heads[-1] = nn.Sequential(nn.Conv2d(fc_weights.size(1), num_classes, kernel_size=1, stride=1))
+
+        self._num_classes = num_classes
+        if num_classes == fc_weights.size(0):
+            self._base_model.heads[1].weight = nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
+            self._base_model.heads[1].bias = nn.Parameter(fc_bias)
+
+        if consensus:
+            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
+        else:
+            self._consensus = nn.Identity()
+
+        if pretrained:
+            if num_classes == fc_weights.size(0):
+                self._base_model.heads[-1].apply(initialize_weights)
+            if channels_org != 3:
+                self._base_model.conv_proj.apply(initialize_weights)
+        else:            
+            self._base_model.apply(initialize_weights)
 
     def _process_input(self, x):
         n, c, h, w = x.shape
@@ -190,10 +194,12 @@ class ViTAge(nn.Module):
         # Classifier "token" as used by standard language architectures
         x = x[:, 0]
 
+        x = x.reshape(b, new_h, new_w, -1)
+        x = x.permute(0, 3, 1, 2)
+
         x = self._base_model.heads(x)
 
-        x = x.reshape(b, new_h, new_w, self._num_classes)
-        x = x.permute(0, 3, 1, 2)
+        x = self._consensus(x)
 
         return x
     
@@ -237,27 +243,40 @@ class InceptionV3Age(nn.Module):
             aux_bias = self._base_model.AuxLogits.fc.bias            
             self._base_model.AuxLogits = _InceptionAuxAge(768, num_classes)
 
-            if num_classes == 1000:
+            if num_classes == aux_weights.size(0):
                 self._base_model.AuxLogits.fc.weight = torch.nn.Parameter(aux_weights.reshape(num_classes, 768, 1, 1))
                 self._base_model.AuxLogits.fc.bias = torch.nn.Parameter(aux_bias)
 
         if channels_org != 3:
             self._base_model.Conv2d_1a_3x3 = inception.BasicConv2d(channels_org, 32, kernel_size=3, stride=2)
         
+        # The average pooling module is replaced by the consensus
         del self._base_model.avgpool
+
         fc_weights = self._base_model.fc.weight
         fc_bias = self._base_model.fc.bias        
         self._base_model.fc = nn.Conv2d(in_channels= 2048, out_channels=num_classes, kernel_size=1, stride=1)
-        if num_classes == 1000:
+
+        if num_classes == fc_weights.size(0):
             self._base_model.fc.weight = torch.nn.Parameter(fc_weights.reshape(num_classes, 2048, 1, 1))
             self._base_model.fc.bias = torch.nn.Parameter(fc_bias)
 
         if consensus:
-            self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
+            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()        
 
-        if not pretrained:
+        if pretrained:
+            # Initialize only the modules that were added after fixing the weights
+            if num_classes != fc_weights.size(0):
+                self._base_model.fc.apply(initialize_weights)
+                if aux_logits:
+                    self._base_model.AuxLogits.fc.apply(initialize_weights)
+            if channels_org != 3:
+                self._base_model.Conv2d_1a_3x3.apply(initialize_weights)
+            
+        else:
+            # Initialize all weights
             self.apply(initialize_weights)
 
     def forward(self, x):
@@ -329,10 +348,11 @@ class ResNetAge(nn.Module):
         fc_weights = self._base_model.fc.weight
         fc_bias = self._base_model.fc.bias
 
+        # The average pooling module is replaced by the consensus
         del self._base_model.avgpool
         self._base_model.fc = nn.Conv2d(in_channels=fc_weights.size(1), out_channels=num_classes, kernel_size=1, stride=1)
         
-        if num_classes == 1000:
+        if num_classes == fc_weights.size(0):
             self._base_model.fc.weight = torch.nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
             self._base_model.fc.bias = torch.nn.Parameter(fc_bias)
         
@@ -340,11 +360,18 @@ class ResNetAge(nn.Module):
             self._base_model.conv1 = nn.Conv2d(channels_org, self._base_model.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         
         if consensus:
-            self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
+            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()        
 
-        if not pretrained:
+        if pretrained:
+            # Initialize only the modules that were added after fixing the weights
+            if num_classes != fc_weights.size(0):
+                self._base_model.fc.apply(initialize_weights)
+            if channels_org != 3:
+                self._base_model.conv1
+        else:
+            # Initialize all weights
             self.apply(initialize_weights)
 
     def forward(self, x):
@@ -370,7 +397,6 @@ class MobileNetAge(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(MobileNetAge, self).__init__()
         
-        
         self._base_model = mobilenet.mobilenet_v2(weights=mobilenet.MobileNet_V2_Weights.DEFAULT if pretrained else None, progress=False)
         
         # Fix the weights of the base model when pretrained is True
@@ -386,7 +412,7 @@ class MobileNetAge(nn.Module):
             nn.Conv2d(fc_weights.size(1), num_classes, kernel_size=1, stride=1),
         )
         
-        if num_classes == 1000:
+        if num_classes == fc_weights.size(0):
             self._base_model.classifier[1].weight = torch.nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
             self._base_model.classifier[1].bias = torch.nn.Parameter(fc_bias)
 
@@ -394,11 +420,18 @@ class MobileNetAge(nn.Module):
             self._base_model.features[0][0] = nn.Conv2d(channels_org, 32, kernel_size=3, stride=2, padding=1, bias=False)
 
         if consensus:
-            self._consensus = nn.Sequential(_ViewAs3D(), nn.AdaptiveMaxPool3d(output_size=(num_classes, 1, 1)), _ViewAs2D())
+            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()        
 
-        if not pretrained:
+        if pretrained:
+            # Initialize only the modules that were added after fixing the weights
+            if num_classes != fc_weights.size(0):
+                self._base_model.classifier.apply(initialize_weights)
+            if channels_org != 3:
+                self._base_model.features[0][0].apply(initialize_weights)
+        else:
+            # Initialize all weights
             self.apply(initialize_weights)
 
     def forward(self, x):
