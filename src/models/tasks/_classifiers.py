@@ -106,7 +106,7 @@ class _Encoder(nn.Module):
 class ViTAge(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(ViTAge, self).__init__()
-        self._base_model = vision_transformer.vit_b_16(weights=vision_transformer.ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1, progress=False)
+        self._base_model = vision_transformer.vit_b_16(weights=vision_transformer.ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1 if pretrained else None, progress=False)
         self._org_image_h, self._org_image_w = 384, 384
 
         pretrained_encoder = self._base_model.encoder
@@ -225,7 +225,7 @@ class _InceptionAuxAge(nn.Module):
 class InceptionV3Age(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, aux_logits=True, consensus=True, **kwargs):
         super(InceptionV3Age, self).__init__()
-        self._base_model = inception.inception_v3(pretrained=pretrained, progress=False, transform_input=False, aux_logits=aux_logits, init_weights=not pretrained)
+        self._base_model = inception.inception_v3(weights=inception.Inception_V3_Weights.DEFAULT if pretrained else None, progress=False, transform_input=False, aux_logits=aux_logits, init_weights=not pretrained)
 
         # Fix the weights of the base model when pretrained is True
         if pretrained:
@@ -318,7 +318,7 @@ class ResNetAge(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(ResNetAge, self).__init__()
 
-        self._base_model = resnet.resnet152(pretrained=pretrained, progress=False)
+        self._base_model = resnet.resnet152(weights=resnet.ResNet152_Weights.DEFAULT if pretrained else None, progress=False)
         
         # Fix the weights of the base model when pretrained is True
         if pretrained:
@@ -369,8 +369,9 @@ class ResNetAge(nn.Module):
 class MobileNetAge(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
         super(MobileNetAge, self).__init__()
-
-        self._base_model = mobilenet.mobilenet_v2(pretrained=pretrained, progress=False)
+        
+        
+        self._base_model = mobilenet.mobilenet_v2(weights=mobilenet.MobileNet_V2_Weights.DEFAULT if pretrained else None, progress=False)
         
         # Fix the weights of the base model when pretrained is True
         if pretrained:
