@@ -54,7 +54,7 @@ def valid(age_model, data, criterion, args):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            curr_acc = torch.sum(y.squeeze().argmax(dim=1) == t.long())
+            curr_acc = torch.sum(y.detach().cpu().squeeze().argmax(dim=1) == t.long())
             curr_batch_size = x.size(0)
 
             sum_acc += curr_acc
@@ -138,7 +138,7 @@ def train(age_model, train_data, valid_data, criterion, stopping_criteria, optim
 
             # Compute the model accuracy
             with torch.no_grad():
-                curr_acc = torch.sum(y.squeeze().argmax(dim=1) == t.long())
+                curr_acc = torch.sum(y.detach().cpu().squeeze().argmax(dim=1) == t.long())
                 curr_batch_size = x.size(0)
 
                 sum_acc += curr_acc
