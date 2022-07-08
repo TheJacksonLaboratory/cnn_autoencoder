@@ -343,6 +343,14 @@ class ZarrDataset(Dataset):
 
         elif isinstance(source, list):
             # If the input is a list of any supported inputs, iterate each element
+            # Check if an element in the list corresponds to the current data mode
+            source_mode = list(filter(lambda fn: self._mode in fn, source))
+            
+            if len(source_mode) > 0:
+                # Only if there is at least one element specific to the data mode, use it.
+                # Otherwise, recurse the original source list
+                source = source_mode
+            
             return reduce(lambda l1, l2: l1 + l2, map(self._get_filenames, source), [])
         
         elif isinstance(source, str) and source.lower().endswith('txt'):
@@ -544,7 +552,9 @@ class LabeledZarrDataset(ZarrDataset):
 def get_zarr_transform(mode='testing',
         normalize=True, compressed_input=False,
         rotation=False, elastic_deformation=False,
-        map_labels=None, merge_labels=None, **kwargs):
+        map_labels=None, merge_labels=None, 
+        add_noise=False, 
+        **kwargs):
     """ Define the transformations that are commonly applied to zarr-based datasets.
     When the input is compressed, it has a range of [0, 255], which is convenient to shift into a range of [-127.5, 127.5].
     If the input is a color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
@@ -560,7 +570,7 @@ def get_zarr_transform(mode='testing',
         else:
             prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
 
-    if mode == 'training':
+    if add_noise:
         prep_trans_list.append(AddGaussianNoise(0., 0.1))
     
     prep_trans = transforms.Compose(prep_trans_list)

@@ -70,7 +70,7 @@ def save_state(name, model_state, args):
     logger.info('Saved model in %s' % save_fn)
 
 
-def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args):
+def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args, extra_info={}):
     """ Creates a checkpoint with the current trainig state
 
     Parameters
@@ -91,7 +91,8 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         A list of all validation criterion evaluation during the training
     args : Namespace
         The input arguments passed at running time
-    
+    extra_info : dict
+
     Returns
     -------
     best_valid_loss : float
@@ -108,6 +109,9 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         valid_loss=valid_loss_history,
         code_version=args.version
     )
+
+    # Append any extra information passed by the training loop
+    training_state.update(extra_info)
     
     if args.task == 'autoencoder':
         training_state['embedding'] = model.module.embedding.state_dict()

@@ -109,6 +109,8 @@ def train(age_model, train_data, valid_data, criterion, stopping_criteria, optim
     best_valid_loss = float('inf')
     train_loss_history = []
     valid_loss_history = []
+    train_acc_history = []
+    valid_acc_history = []
 
     step = 0
     while keep_training:
@@ -179,9 +181,11 @@ def train(age_model, train_data, valid_data, criterion, stopping_criteria, optim
 
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
+                train_acc_history.append(train_acc)
+                valid_acc_history.append(valid_acc)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = checkpoint(step, age_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
+                best_valid_loss = checkpoint(step, age_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args, extra_info=dict(train_acc=train_acc_history, valid_acc=valid_acc_history))
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
