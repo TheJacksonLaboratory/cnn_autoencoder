@@ -20,7 +20,7 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
 
     """
 
-    # Prepare a mix of two normal distributions as "unknown" actual distribution
+    # Prepare a mix of different normal distributions as the "unknown" actual distribution
     x = []
     for c in range(channels):
         mix_size = np.array([0] + list(range(size//modes, size, size//modes)))
@@ -30,7 +30,7 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
 
         x_new = []
         for s in mix_size:
-            var, mean = torch.rand(1) * 10, torch.rand(1) * 20
+            var, mean = torch.rand(1) * 50, torch.rand(1) * 20
             x_new.append(torch.randn([s, 1, 1, 1]) * var + mean)
         x_new = torch.cat(x_new, dim=0)
         x.append(x_new)
@@ -76,11 +76,11 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
             print('[{}] Mean loss: {}, P [{}, {}]'.format(s, batch * mean_loss / size, p.min(), p.max()))
             mean_loss = 0
 
-    cols = int(np.ceil(np.sqrt(channels)))
-    rows = int(np.ceil(channels // cols))
+    cols = max(int(np.ceil(np.sqrt(channels))), 2)
+    rows = max(int(np.ceil(channels / cols)), 2)
+
     print('Ploting results [%d, %d]' % (rows, cols))
     fig, ax = plt.subplots(cols, rows)
-    ax = ax.reshape(rows, cols)
     with torch.no_grad():
         sampled_p = fact_entropy(sampled_space + 0.5) - fact_entropy(sampled_space - 0.5)
         for c in range(channels):
@@ -97,7 +97,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--size', type=int, dest='size', help='Size of the population drawn from a mix of two normal distributions', default=1000)
     parser.add_argument('-e', '--epochs', type=int, dest='epochs', help='Number of epochs to train the factorized entropy model', default=100)
     parser.add_argument('-b', '--batch', type=int, dest='batch', help='Batch size', default=10)
-    parser.add_argument('-c', '--channels', type=int, dest='channels', help='Number of channels for the compressed representation', default=1)
+    parser.add_argument('-c', '--channels', type=int, dest='channels', help='Number of channels for the compressed representation', default=3)
     parser.add_argument('-m', '--modes', type=int, dest='modes', help='Number of modes for the mix of gaussian distributions for each channel', default=2)
 
     args = parser.parse_args()
