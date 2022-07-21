@@ -31,14 +31,12 @@ def save_cdf(args):
     fact_ent.eval()
 
     with torch.no_grad():
-        cdf = fact_ent(x + 0.5) - fact_ent(x - 0.5)
+        cdf = fact_ent(x)
         cdf = cdf.unsqueeze(dim=3).cpu()
         
         # cdf = torch.cat((torch.zeros(1, 48, 1, 1, 1), cdf), dim=-1)
 
     # Convert to int 16 for its use wit the compress and decompress functions
-    cdf.mul_(2**16)
-    cdf = cdf.round().to(torch.int16)
     torch.save(cdf, args.output)
 
 

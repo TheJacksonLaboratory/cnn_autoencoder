@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# TODO: Implement a version of the Inception V3, Mobilenet
 
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d):

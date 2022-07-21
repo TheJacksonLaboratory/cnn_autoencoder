@@ -204,7 +204,7 @@ def main(args):
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
     else:
         # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-        transform, _ = utils.get_zarr_transform(normalize=True)
+        transform, _, _ = utils.get_zarr_transform(normalize=True)
         test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=1000000, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     

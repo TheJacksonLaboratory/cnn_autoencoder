@@ -268,7 +268,7 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
             (*leading_padding, 
              (valid_pad_up, valid_pad_down),
              (valid_pad_left, valid_pad_right)),
-            mode='symmetric', reflect_type='odd')
+            mode='symmetric', reflect_type='even')
 
     return patch
 
@@ -424,6 +424,7 @@ class ZarrDataset(Dataset):
             elif isinstance(arr_src, str) and '.zarr' not in self._source_format:
                 # If the input is a path to an image stored in a format supported by PIL, open it and use it as a numpy array
                 arr = load_image(arr_src)
+                arr = zarr.array(arr, chunks=(1, arr.shape[1], 1, self._patch_size, self._patch_size))
             else:
                 # Otherwise, use directly the zarr array
                 arr = arr_src
@@ -622,7 +623,7 @@ def get_zarr_dataset(
         TRAIN_DATASIZE = 1200000
         VALID_DATASIZE = 50000
         
-    elif task == 'segmentation':        
+    elif task == 'segmentation':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
         if 'train' in mode:
             histo_dataset = LabeledZarrDataset
@@ -633,7 +634,7 @@ def get_zarr_dataset(
         
     elif task == 'classification':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels)
-        if 'train' in mode:
+        if 'train' in mode or 'testing' in mode:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
@@ -642,7 +643,7 @@ def get_zarr_dataset(
     
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if 'train' not in mode:
-        hist_data = histo_dataset(root=data_dir, mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_trans=target_trans, compressed_input=compressed_input, **kwargs)
+        hist_data = histo_dataset(root=data_dir, mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
         test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=min(workers, len(hist_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
     

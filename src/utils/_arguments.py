@@ -120,7 +120,8 @@ def get_testing_args(parser_only=False):
     parser.add_argument('-c', '--config', type=str, dest='config_file', help='A configuration .json file')
     
     parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
-    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=CAE_MODELS)
+    # parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of autoencoder model', choices=CAE_MODELS)
+    
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be tested')
     parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
     parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
@@ -131,6 +132,7 @@ def get_testing_args(parser_only=False):
     parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
     parser.add_argument('-dd', '--datadir', type=str, dest='data_dir', help='Directory where the data is stored', default='.')
     parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
+    parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
     parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
     parser.add_argument('-md', '--mode-data', type=str, dest='mode_data', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
@@ -147,7 +149,6 @@ def get_testing_args(parser_only=False):
     args = override_config_file(parser)
     
     args.mode = 'testing'
-
     return args
 
 
