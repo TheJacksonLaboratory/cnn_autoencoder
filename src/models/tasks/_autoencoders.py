@@ -92,7 +92,7 @@ class FactorizedEntropyLayer(nn.Module):
 
         # The non-parametric density model is initialized with random normal distributed weights
         self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r, d, 1, 1), 0.0, 0.01))
-        self._b = nn.Parameter(torch.zeros(channels_bn * r))
+        self._b = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r), 0.0, 0.01))
         self._a = nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r, 1, 1), 0.0, 0.01))
 
     def forward(self, x):

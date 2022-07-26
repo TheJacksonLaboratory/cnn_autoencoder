@@ -19,6 +19,8 @@ def save_cdf(args):
         state = torch.load(save_fn)
 
     fact_ent = models.FactorizedEntropy(**state['args'])
+    # Load the state into the factorized entropy model
+    fact_ent.load_state_dict(state['fact_ent'])
 
     fact_ent = nn.DataParallel(fact_ent)
 
@@ -31,12 +33,8 @@ def save_cdf(args):
     fact_ent.eval()
 
     with torch.no_grad():
-        cdf = fact_ent(x)
-        cdf = cdf.unsqueeze(dim=3).cpu()
-        
-        # cdf = torch.cat((torch.zeros(1, 48, 1, 1, 1), cdf), dim=-1)
-
-    # Convert to int 16 for its use wit the compress and decompress functions
+        cdf = fact_ent(x).cpu()
+    
     torch.save(cdf, args.output)
 
 
