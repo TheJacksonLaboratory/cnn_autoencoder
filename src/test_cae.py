@@ -235,6 +235,9 @@ def main(args):
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
 
+    if not hasattr(args, "test_size"):
+        args.test_size = -1
+
     if args.dataset.lower() == 'imagenet.s3':
         if utils.ImageS3 is not None:
             transform = utils.get_imagenet_transform(args.mode_data, normalize=True, patch_size=args.patch_size)
@@ -249,12 +252,12 @@ def main(args):
     else:
         # Generate a dataset from a single image to divide in patches and iterate using a dataloader
         transform, _, _ = utils.get_zarr_transform(normalize=True)
-        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=1000000, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
+        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_size, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
     if args.test_size < 0:
         args.test_size = len(test_data)
-
+    
     all_metrics_stats = test(cae_model, test_queue, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
     
