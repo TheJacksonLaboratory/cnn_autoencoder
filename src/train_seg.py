@@ -6,14 +6,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from models import EarlyStoppingPatience, UNet, UNetNoBridge, DecoderUNet, Synthesizer
-from utils import checkpoint, get_training_args, setup_logger, get_data, load_state
+import models
+import utils
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": partial(optim.lr_scheduler.ReduceLROnPlateau, mode='min', patience=2)}
-seg_model_types = {"UNetNoBridge": UNetNoBridge, "UNet": UNet, "DecoderUNet": DecoderUNet}
+seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
 
 
 # Variation of the forward step can be implemented here and used with 'partial' to be used inside training and validation steps.
@@ -175,7 +175,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 valid_loss_history.append(valid_loss)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = checkpoint(step, seg_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
+                best_valid_loss = utils.checkpoint(step, seg_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
@@ -221,7 +221,7 @@ def setup_network(args):
         else:
             checkpoint_state = torch.load(args.autoencoder_model)
        
-        decoder_model = Synthesizer(**checkpoint_state['args'])
+        decoder_model = models.Synthesizer(**checkpoint_state['args'])
         decoder_model.load_state_dict(checkpoint_state['decoder'])
 
         if args.gpu:
@@ -283,11 +283,14 @@ def setup_criteria(args):
     """
 
     # Early stopping criterion:
-    stopping_criteria = [EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
+    stopping_criteria = [models.EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
 
     # Loss function
     if args.criterion == 'CE':
-        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        if args.classes == 1:
+            criterion = nn.BCEWithLogitsLoss(reduction='none')
+        else:
+            criterion = models.CrossEnropy2D()
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
@@ -398,15 +401,15 @@ def main(args):
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
-    train_data, valid_data = get_data(args)
+    train_data, valid_data = utils.get_data(args)
     
     train(seg_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args, forward_function)
 
 
 if __name__ == '__main__':
-    args = get_training_args(task='segmentation')
+    args = utils.get_args(task='segmentation', mode='training')
 
-    setup_logger(args)
+    utils.setup_logger(args)
 
     main(args)
     

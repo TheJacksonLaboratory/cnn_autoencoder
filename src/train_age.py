@@ -6,14 +6,14 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import InceptionV3Age, MobileNetAge, ResNetAge, ViTAge, EarlyStoppingPatience
-from utils import checkpoint, get_training_args, setup_logger, get_data
+import models
+import utils
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"InceptionV3": InceptionV3Age, "MobileNet": MobileNetAge, "ResNet": ResNetAge, "ViT": ViTAge}
+model_options = {"InceptionV3": models.InceptionV3Age, "MobileNet": models.MobileNetAge, "ResNet": models.ResNetAge, "ViT": models.ViTAge}
 
 
 def valid(age_model, data, criterion, args):
@@ -185,7 +185,7 @@ def train(age_model, train_data, valid_data, criterion, stopping_criteria, optim
                 valid_acc_history.append(valid_acc)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = checkpoint(step, age_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args, extra_info=dict(train_acc=train_acc_history, valid_acc=valid_acc_history))
+                best_valid_loss = utils.checkpoint(step, age_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args, extra_info=dict(train_acc=train_acc_history, valid_acc=valid_acc_history))
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
@@ -247,7 +247,7 @@ def setup_criteria(args):
     """
 
     # Early stopping criterion:
-    stopping_criteria = [EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
+    stopping_criteria = [models.EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
 
     # Loss function
     if args.criterion == 'CE':
@@ -361,17 +361,17 @@ def main(args):
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
-    train_data, valid_data = get_data(args)
+    train_data, valid_data = utils.get_data(args)
     
     train(age_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
 
 
 if __name__ == '__main__':
-    args = get_training_args('classification')
+    args = utils.get_args(task='classifier', mode='training')
     args.map_labels = True
     args.num_classes = 4
     
-    setup_logger(args)
+    utils.setup_logger(args)
 
     main(args)
     

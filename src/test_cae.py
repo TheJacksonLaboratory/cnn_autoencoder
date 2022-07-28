@@ -267,7 +267,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_testing_args()
+    args = utils.get_args(tas='autoencoder', mode='test')
 
     utils.setup_logger(args)
 

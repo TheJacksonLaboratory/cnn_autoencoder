@@ -173,6 +173,16 @@ class RateDistortionMSPenaltyB(RateDistortionMultiscale, PenaltyB):
         return dist_rate + self._penalty_beta * P_B, P_B_mean
 
 
+class CrossEnropy2D(nn.Module):
+    def __init__(self):
+        super(CrossEnropy2D, self).__init__()
+
+        self._my_ce = nn.CrossEntropyLoss(reduction='none')
+    
+    def forward(self, y, t):
+        return self._my_ce(y, t.squeeze().long())
+
+
 class StoppingCriterion(object):
     def __init__(self, max_iterations, **kwargs):
         self._max_iterations = max_iterations

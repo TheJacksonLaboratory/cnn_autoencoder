@@ -215,7 +215,7 @@ def decompress(args):
     
 
 if __name__ == '__main__':
-    args = utils.get_decompress_args()
+    args = utils.get_args(task='decompress', mode='inference')
     
     utils.setup_logger(args)
     

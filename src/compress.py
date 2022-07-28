@@ -179,7 +179,7 @@ def compress(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_compress_args()
+    args = utils.get_args(task='compress', mode='inference')
     
     utils.setup_logger(args)
     

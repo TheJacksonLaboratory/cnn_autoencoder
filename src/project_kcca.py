@@ -130,7 +130,7 @@ def project(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_project_args()
+    args = utils.get_args(task='project', mode='inference')
     
     utils.setup_logger(args)
     

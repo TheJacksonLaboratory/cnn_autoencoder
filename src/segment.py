@@ -249,7 +249,7 @@ def segment(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_segment_args()
+    args = utils.get_args(task='segmentation', mode='inference')
     
     utils.setup_logger(args)
     

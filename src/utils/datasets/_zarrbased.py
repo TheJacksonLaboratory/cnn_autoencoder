@@ -290,9 +290,9 @@ def zarrdataset_worker_init(worker_id):
     else:
         raise ValueError('Missmatching number of workers and input files/ROIs')
 
-    dataset_obj._z_list, dataset_obj._rois_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group='0', rois=curr_worker_rois)
+    dataset_obj._z_list, dataset_obj._rois_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._data_group, rois=curr_worker_rois)
     if hasattr(dataset_obj, '_lab_list'):
-        dataset_obj._lab_list, _, _ = dataset_obj._preload_files(curr_worker_filenames, group='1', rois=curr_worker_rois)
+        dataset_obj._lab_list, _, _ = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._labels_group, rois=curr_worker_rois)
     
     _, dataset_obj._max_H, dataset_obj._max_W, dataset_obj._org_channels, dataset_obj._imgs_sizes, dataset_obj._imgs_shapes = dataset_obj._compute_size(dataset_obj._z_list, dataset_obj._rois_list)
     dataset_obj._dataset_size //= worker_info.num_workers
@@ -300,17 +300,17 @@ def zarrdataset_worker_init(worker_id):
 
 class ZarrDataset(Dataset):
     """ A zarr-based dataset.
-        The structure of the zarr file is considered fixed, and only the component '0/0' is used.
-        Only two-dimensional (+color channels) data is supported by now.
+        The structure of the zarr file is considered as it follows the OME-NGFF standard and the data from 'data_group' is hte one accessed and used.
+        Only two-dimensional (+color channels) data is supported by now. This is because 2D image operations are used for pre-/post-processing.
     """
-    def __init__(self, root, patch_size=128, dataset_size=-1, pyramid_level=0, mode='train', offset=0, transform=None, source_format='zarr', workers=0, data_axes='TCZYX', **kwargs):
+    def __init__(self, root, patch_size=128, dataset_size=-1, mode='train', offset=0, transform=None, source_format='zarr', workers=0, data_axes='TCZYX', data_group='0/0', **kwargs):
         self._patch_size = patch_size
         self._dataset_size = dataset_size
         self._transform = transform
         self._offset = offset
         self._data_axes = data_axes
 
-        self._pyramid_level = pyramid_level
+        self._data_group = data_group
         self._source_format = source_format.lower()
         if not self._source_format.startswith('.'):
             self._source_format = '.' + self._source_format
@@ -321,7 +321,7 @@ class ZarrDataset(Dataset):
         self._filenames = self._split_dataset(root)
 
         if workers == 0:
-            self._z_list, self._rois_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group='0')
+            self._z_list, self._rois_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group=self._data_group)
             dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list, self._rois_list)
         else:
             self._z_list = None
@@ -398,7 +398,7 @@ class ZarrDataset(Dataset):
         
         return filenames
 
-    def _preload_files(self, filenames, group='0', rois=None):
+    def _preload_files(self, filenames, group='0/0', rois=None):
         if rois is None:
             filenames_rois = list(map(parse_roi, filenames))
         else:
@@ -415,7 +415,7 @@ class ZarrDataset(Dataset):
                 if isinstance(arr_src, str):
                     arr_src = zarr.open(arr_src, mode='r')
                 
-                arr = arr_src['%s/%s' % (group, self._pyramid_level)]
+                arr = arr_src[group]
 
                 # The original height and width is stored as an attribute when compressing the image with the CAE
                 org_height = arr_src.attrs.get('height', None)
@@ -514,11 +514,12 @@ class LabeledZarrDataset(ZarrDataset):
     """ A labeled dataset based on the zarr dataset class.
         The densely labeled targets are extracted from group '1'.
     """
-    def __init__(self, root, input_target_transform=None, target_transform=None, compression_level=0, compressed_input=False, **kwargs):
+    def __init__(self, root, input_target_transform=None, target_transform=None, compression_level=0, compressed_input=False, labels_group='labels/0/0', **kwargs):
         super(LabeledZarrDataset, self).__init__(root, **kwargs)
         
-        # Open the labels from group 1
-        self._lab_list, _, _ = self._preload_files(self._filenames, group='1')
+        # Open the labels from the labels group
+        self._labels_group = labels_group
+        self._lab_list, _, _ = self._preload_files(self._filenames, group=self._labels_group)
 
         self._compression_level = compression_level
         self._compressed_input = compressed_input
@@ -607,7 +608,9 @@ def get_zarr_dataset(
     data_dir='.', task='autoencoder', 
     batch_size=1, val_batch_size=1, workers=0,
     mode='training', normalize=True, compressed_input=False, 
-    shuffle_training=True, shuffle_test=False, gpu=False,
+    shuffle_train=True, shuffle_val=True, shuffle_test=False,
+    train_dataset_size=-1, val_dataset_size=-1, test_dataset_size=-1,
+    gpu=False,
     rotation=False, elastic_deformation=False,
     map_labels=False, merge_labels=None, **kwargs):
     """ Creates a data queue using pytorch\'s DataLoader module to retrieve patches from images stored in zarr format.
@@ -620,8 +623,6 @@ def get_zarr_dataset(
     if task == 'autoencoder':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input)
         histo_dataset = ZarrDataset
-        TRAIN_DATASIZE = 1200000
-        VALID_DATASIZE = 50000
         
     elif task == 'segmentation':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
@@ -629,8 +630,6 @@ def get_zarr_dataset(
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
-        TRAIN_DATASIZE = -1
-        VALID_DATASIZE = -1
         
     elif task == 'classification':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels)
@@ -638,21 +637,19 @@ def get_zarr_dataset(
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
-        TRAIN_DATASIZE = 4000
-        VALID_DATASIZE = 400
-    
+
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if 'train' not in mode:
-        hist_data = histo_dataset(root=data_dir, mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
-        test_queue = DataLoader(hist_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=min(workers, len(hist_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
+        zarr_data = histo_dataset(root=data_dir, dataset_size=test_dataset_size, mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+        test_queue = DataLoader(zarr_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=min(workers, len(zarr_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
     
-    hist_train_data = histo_dataset(root=data_dir, dataset_size=TRAIN_DATASIZE, mode='train', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
-    hist_valid_data = histo_dataset(root=data_dir, dataset_size=VALID_DATASIZE, mode='val', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+    zarr_train_data = histo_dataset(root=data_dir, dataset_size=train_dataset_size, mode='train', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+    zarr_valid_data = histo_dataset(root=data_dir, dataset_size=val_dataset_size, mode='val', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
 
     # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
-    train_queue = DataLoader(hist_train_data, batch_size=batch_size, shuffle=shuffle_training, num_workers=min(workers, len(hist_train_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
-    valid_queue = DataLoader(hist_valid_data, batch_size=val_batch_size, shuffle=False, num_workers=min(workers, len(hist_valid_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
+    train_queue = DataLoader(zarr_train_data, batch_size=batch_size, shuffle=shuffle_train, num_workers=min(workers, len(zarr_train_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
+    valid_queue = DataLoader(zarr_valid_data, batch_size=val_batch_size, shuffle=shuffle_val, num_workers=min(workers, len(zarr_valid_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
 
     return train_queue, valid_queue
 
@@ -671,7 +668,7 @@ if __name__ == '__main__':
     parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of workers', default=0)
     parser.add_argument('-bs', '--batch-size', type=int, dest='batch_size', help='Batch size', default=8)
     parser.add_argument('-ps', '--patch-size', type=int, dest='patch_size', help='Size of the patch -> patch_size x patch_size', default=128)
-    parser.add_argument('-shr', '--shuffle-trn', action='store_true', dest='shuffle_training', help='Shuffle training data?')
+    parser.add_argument('-shr', '--shuffle-trn', action='store_true', dest='shuffle_train', help='Shuffle training data?')
     parser.add_argument('-sht', '--shuffle-tst', action='store_true', dest='shuffle_test', help='Shuffle test data?')
     parser.add_argument('-t', '--task', dest='task', help='Task for what the data is used', choices=['autoencoder', 'segmentation', 'classification'], default='autoencoder')
     parser.add_argument('-ts', '--test-size', type=int, dest='test_size', help='Number of samples extracted from the test dataset', default=-1)

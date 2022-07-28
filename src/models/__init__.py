@@ -1,7 +1,8 @@
 from ._criterions import RateDistortion, RateDistortionMultiscale, \
     RateDistortionPenaltyA, RateDistortionPenaltyB, \
     RateDistortionMSPenaltyA, RateDistortionMSPenaltyB, \
-    StoppingCriterion, EarlyStoppingPatience, EarlyStoppingTarget
+    StoppingCriterion, EarlyStoppingPatience, EarlyStoppingTarget, \
+    CrossEnropy2D
 
 from .tasks import ColorEmbedding, Analyzer, Synthesizer, FactorizedEntropy, FactorizedEntropyLaplace, \
     AutoEncoder, MaskedAutoEncoder,\

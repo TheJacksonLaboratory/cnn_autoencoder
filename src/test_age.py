@@ -6,14 +6,14 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import InceptionV3Age, MobileNetAge, ResNetAge, ViTAge, EarlyStoppingPatience
-from utils import get_testing_args, setup_logger, get_data
+import models
+import utils
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"InceptionV3": InceptionV3Age, "MobileNet": MobileNetAge, "ResNet": ResNetAge, "ViT": ViTAge}
+model_options = {"InceptionV3": models.InceptionV3Age, "MobileNet": models.MobileNetAge, "ResNet": models.ResNetAge, "ViT": models.ViTAge}
 
 
 def test_step(age_model, data, criterion, args):
@@ -170,19 +170,19 @@ def main(args):
     logger.info('\nCriterion:')
     logger.info(criterion)
     
-    test_data = get_data(args)
+    test_data = utils.get_data(args)
     test_loss, test_acc = test_step(age_model, test_data, criterion, args)
     logger.debug('Testing Loss {:.4f}. Accuracy {:.4f}'.format(
             test_loss, test_acc)
         )
 
 if __name__ == '__main__':
-    args = get_testing_args()
-    args.task = 'classification'
+    args = utils.get_args(task='classifier', mode='test')
+
     args.map_labels = True
     args.num_classes = 4
 
-    setup_logger(args)
+    utils.setup_logger(args)
 
     main(args)
     

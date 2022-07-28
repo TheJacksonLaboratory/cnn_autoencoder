@@ -6,14 +6,14 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import MaskedAutoEncoder, AutoEncoder, RateDistortionMultiscale, RateDistortionMSPenaltyA, RateDistortionMSPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
-from utils import checkpoint, get_training_args, setup_logger, get_data
+import models
+import utils
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
+model_options = {"AutoEncoder": models.AutoEncoder, "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
 
 def valid(cae_model, data, criterion, args):
@@ -162,7 +162,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 valid_loss_history.append(valid_loss)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
+                best_valid_loss = utils.checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
@@ -224,19 +224,19 @@ def setup_criteria(args):
     """
 
     # Early stopping criterion:
-    stopping_criteria = [EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
+    stopping_criteria = [models.EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
 
     # Loss function
     if args.criterion == 'RD_MS_PA':
-        criterion = RateDistortionMSPenaltyA(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
+        criterion = models.RateDistortionMSPenaltyA(**args.__dict__)
+        stopping_criteria.append(models.EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
 
     elif args.criterion == 'RD_MS_PB':
-        criterion = RateDistortionMSPenaltyB(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
+        criterion = models.RateDistortionMSPenaltyB(**args.__dict__)
+        stopping_criteria.append(models.EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
 
     elif args.criterion == 'RD_MS':
-        criterion = RateDistortionMultiscale(**args.__dict__)
+        criterion = models.RateDistortionMultiscale(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
@@ -350,15 +350,15 @@ def main(args):
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
-    train_data, valid_data = get_data(args)
+    train_data, valid_data = utils.get_data(args)
     
     train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
 
 
 if __name__ == '__main__':
-    args = get_training_args()
+    args = utils.get_args(task='autoencoder', mode='training')
 
-    setup_logger(args)
+    utils.setup_logger(args)
 
     main(args)
     
