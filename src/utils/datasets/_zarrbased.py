@@ -290,7 +290,7 @@ def zarrdataset_worker_init(worker_id):
     else:
         raise ValueError('Missmatching number of workers and input files/ROIs')
 
-    dataset_obj._z_list, dataset_obj._rois_list, dataset_obj._imgs_orginal_shapes = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._data_group, rois=curr_worker_rois)
+    dataset_obj._z_list, dataset_obj._rois_list = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._data_group, rois=curr_worker_rois)
     if hasattr(dataset_obj, '_lab_list'):
         dataset_obj._lab_list, _, _ = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._labels_group, rois=curr_worker_rois)
     
@@ -303,7 +303,18 @@ class ZarrDataset(Dataset):
         The structure of the zarr file is considered as it follows the OME-NGFF standard and the data from 'data_group' is hte one accessed and used.
         Only two-dimensional (+color channels) data is supported by now. This is because 2D image operations are used for pre-/post-processing.
     """
-    def __init__(self, root, patch_size=128, dataset_size=-1, mode='train', offset=0, transform=None, source_format='zarr', workers=0, data_axes='TCZYX', data_group='0/0', **kwargs):
+    def __init__(self, root,
+            patch_size=128,
+            dataset_size=-1,
+            data_mode='train',
+            offset=0,
+            transform=None,
+            source_format='zarr',
+            workers=0,
+            data_axes='TCZYX',
+            data_group='0/0',
+            **kwargs):
+        
         self._patch_size = patch_size
         self._dataset_size = dataset_size
         self._transform = transform
@@ -315,18 +326,17 @@ class ZarrDataset(Dataset):
         if not self._source_format.startswith('.'):
             self._source_format = '.' + self._source_format
 
-        self._mode = mode
+        self._data_mode = data_mode
         self._requires_split = False
 
         self._filenames = self._split_dataset(root)
 
         if workers == 0:
-            self._z_list, self._rois_list, self._imgs_orginal_shapes = self._preload_files(self._filenames, group=self._data_group)
+            self._z_list, self._rois_list = self._preload_files(self._filenames, group=self._data_group)
             dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list, self._rois_list)
         else:
             self._z_list = None
             self._rois_list = None
-            self._imgs_orginal_shapes = None
             self._max_H = None
             self._max_W = None
             self._org_channels = None
@@ -344,7 +354,7 @@ class ZarrDataset(Dataset):
         elif isinstance(source, list):
             # If the input is a list of any supported inputs, iterate each element
             # Check if an element in the list corresponds to the current data mode
-            source_mode = list(filter(lambda fn: self._mode in fn, source))
+            source_mode = list(filter(lambda fn: self._data_mode in fn, source))
             
             if len(source_mode) > 0:
                 # Only if there is at least one element specific to the data mode, use it.
@@ -354,7 +364,7 @@ class ZarrDataset(Dataset):
             return reduce(lambda l1, l2: l1 + l2, map(self._get_filenames, source), [])
         
         elif isinstance(source, str) and source.lower().endswith('txt'):
-            self._requires_split = not self._mode.lower() in source.lower()
+            self._requires_split = not self._data_mode.lower() in source.lower()
 
             # If the input is a text file with a list of url/paths or directories, recurse to get the filenames from the text file content
             with open(source, mode='r') as f:
@@ -363,7 +373,7 @@ class ZarrDataset(Dataset):
             return self._get_filenames(filenames)
 
         elif isinstance(source, str):
-            self._requires_split = not self._mode.lower() in source.lower()
+            self._requires_split = not self._data_mode.lower() in source.lower()
 
             # Otherwise, the input is a directory, create the filenames list from each element in that directory that meets the criteria
             return reduce(lambda l1, l2: l1 + l2, 
@@ -386,13 +396,13 @@ class ZarrDataset(Dataset):
         filenames = self._get_filenames(root)
 
         if self._requires_split:
-            if self._mode == 'train':
+            if self._data_mode == 'train':
                 # Use 70% of the data for traning
                 filenames = filenames[:int(0.7 * len(filenames))]
-            elif self._mode == 'val':
+            elif self._data_mode == 'val':
                 # Use 10% of the data for validation
                 filenames = filenames[int(0.7 * len(filenames)):int(0.8 * len(filenames))]
-            elif self._mode == 'test':
+            elif self._data_mode == 'test':
                 # Use 20% of the data for testing
                 filenames = filenames[int(0.8 * len(filenames)):]
         
@@ -404,22 +414,16 @@ class ZarrDataset(Dataset):
         else:
             filenames_rois = zip(filenames, rois)
 
-        imgs_orginal_shapes = []
         z_list = []
         rois_list = []
         
         for id, (arr_src, rois) in enumerate(filenames_rois):
-            org_height, org_width = None, None
             if isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str) and '.zarr' in self._source_format):
                 # If the passed object is a zarr group/file, open it and extract the level from the specified group
                 if isinstance(arr_src, str):
                     arr_src = zarr.open(arr_src, mode='r')
                 
                 arr = arr_src[group]
-
-                # The original height and width is stored as an attribute when compressing the image with the CAE
-                org_height = arr_src.attrs.get('height', None)
-                org_width = arr_src.attrs.get('width', None)
 
             elif isinstance(arr_src, str) and '.zarr' not in self._source_format:
                 # If the input is a path to an image stored in a format supported by PIL, open it and use it as a numpy array
@@ -428,14 +432,6 @@ class ZarrDataset(Dataset):
             else:
                 # Otherwise, use directly the zarr array
                 arr = arr_src
-            
-            # Store the original image's shapes
-            if org_height is None:
-                org_height = arr.shape[-2]
-            if org_width is None:
-                org_width = arr.shape[-1]
-
-            imgs_orginal_shapes.append((org_height, org_width))
 
             z_list.append(arr)
 
@@ -460,7 +456,7 @@ class ZarrDataset(Dataset):
                 roi = [slice(0, s, 1) for s in arr.shape]
                 rois_list.append((id, tuple(roi)))
             
-        return z_list, rois_list, imgs_orginal_shapes
+        return z_list, rois_list
 
     def _compute_size(self, z_list, rois_list):
         imgs_shapes = [((roi[-2].stop - roi[-2].start)//roi[-2].step, (roi[-1].stop - roi[-1].start)//roi[-1].step) for _, roi in rois_list]
@@ -502,12 +498,6 @@ class ZarrDataset(Dataset):
 
     def get_shape(self):
         return self._max_H, self._max_W
-
-    def get_img_shape(self, i):
-        return self._imgs_shapes[i]
-
-    def get_img_original_shape(self, i):
-        return self._imgs_orginal_shapes[i]
 
 
 class LabeledZarrDataset(ZarrDataset):
@@ -551,7 +541,7 @@ class LabeledZarrDataset(ZarrDataset):
         return patch, target
 
 
-def get_zarr_transform(mode='testing',
+def get_zarr_transform(data_mode='testing',
         normalize=True, compressed_input=False,
         rotation=False, elastic_deformation=False,
         map_labels=None, merge_labels=None, 
@@ -607,7 +597,7 @@ def get_zarr_transform(mode='testing',
 def get_zarr_dataset(
     data_dir='.', task='autoencoder', 
     batch_size=1, val_batch_size=1, workers=0,
-    mode='training', normalize=True, compressed_input=False, 
+    data_mode='training', normalize=True, compressed_input=False, 
     shuffle_train=True, shuffle_val=True, shuffle_test=False,
     train_dataset_size=-1, val_dataset_size=-1, test_dataset_size=-1,
     gpu=False,
@@ -621,31 +611,31 @@ def get_zarr_dataset(
     """
 
     if task == 'autoencoder':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input)
+        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input)
         histo_dataset = ZarrDataset
         
     elif task == 'segmentation':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
-        if 'train' in mode:
+        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
+        if 'train' in data_mode:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
         
     elif task == 'classification':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(mode=mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels)
-        if 'train' in mode or 'testing' in mode:
+        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels)
+        if 'train' in data_mode or 'testing' in data_mode:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
 
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
-    if 'train' not in mode:
-        zarr_data = histo_dataset(root=data_dir, dataset_size=test_dataset_size, mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+    if 'train' not in data_mode:
+        zarr_data = histo_dataset(root=data_dir, dataset_size=test_dataset_size, data_mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
         test_queue = DataLoader(zarr_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=min(workers, len(zarr_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
     
-    zarr_train_data = histo_dataset(root=data_dir, dataset_size=train_dataset_size, mode='train', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
-    zarr_valid_data = histo_dataset(root=data_dir, dataset_size=val_dataset_size, mode='val', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+    zarr_train_data = histo_dataset(root=data_dir, dataset_size=train_dataset_size, data_mode='train', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+    zarr_valid_data = histo_dataset(root=data_dir, dataset_size=val_dataset_size, data_mode='val', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
 
     # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
     train_queue = DataLoader(zarr_train_data, batch_size=batch_size, shuffle=shuffle_train, num_workers=min(workers, len(zarr_train_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
@@ -672,7 +662,7 @@ if __name__ == '__main__':
     parser.add_argument('-sht', '--shuffle-tst', action='store_true', dest='shuffle_test', help='Shuffle test data?')
     parser.add_argument('-t', '--task', dest='task', help='Task for what the data is used', choices=['autoencoder', 'segmentation', 'classification'], default='autoencoder')
     parser.add_argument('-ts', '--test-size', type=int, dest='test_size', help='Number of samples extracted from the test dataset', default=-1)
-    parser.add_argument('-m', '--mode', dest='mode', help='The network use mode', choices=['train', 'val', 'test', 'all'], default='train')
+    parser.add_argument('-m', '--mode', dest='data_mode', help='The network use mode', choices=['train', 'val', 'test', 'all'], default='train')
     parser.add_argument('-o', '--offset', type=int, dest='offset', help='Offset added to the patches', default=0)
     parser.add_argument('-cl', '--comp-level', type=int, dest='compression_level', help='Compression level of the input', default=0)
     parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
@@ -690,7 +680,7 @@ if __name__ == '__main__':
 
     args.compressed_input = args.compression_level > 0
 
-    if args.mode in ['train', 'val']:
+    if args.data_mode in ['train', 'val']:
         dl, _ = get_zarr_dataset(**args.__dict__)
     else:
         dl = get_zarr_dataset(**args.__dict__)

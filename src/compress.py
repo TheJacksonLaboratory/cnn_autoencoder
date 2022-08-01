@@ -1,3 +1,4 @@
+from genericpath import isdir
 import logging
 import os
 
@@ -12,6 +13,9 @@ from numcodecs import Blosc
 import models
 
 import utils
+
+
+COMP_VERSION='0.1'
 
 
 def setup_network(state, use_gpu=False):
@@ -35,8 +39,8 @@ def setup_network(state, use_gpu=False):
 
     comp_model = nn.Sequential(embedding, comp_model)
 
+    comp_model = nn.DataParallel(comp_model)
     if use_gpu:
-        comp_model = nn.DataParallel(comp_model)
         comp_model.cuda()
     
     comp_model.eval()
@@ -44,52 +48,83 @@ def setup_network(state, use_gpu=False):
     return comp_model
 
 
-def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, patch_size, offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1, stitch_batches=False):
+def compress_image(comp_model, input_filename, output_filename, channels_bn, comp_level, 
+        patch_size=512,
+        offset=0, 
+        stitch_batches=False, 
+        transform=None, 
+        destination_format='zarr', 
+        workers=0, 
+        batch_size=1,
+        data_mode='train',
+        data_axes='TCZYX',
+        data_group='0/0'):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    zarr_ds = utils.ZarrDataset(root=filename, mode='all', patch_size=patch_size, offset=offset, transform=transform, source_format=source_format, workers=workers)
+    zarr_ds = utils.ZarrDataset(root=input_filename,
+            patch_size=patch_size,
+            dataset_size=-1,
+            data_mode=data_mode,
+            offset=offset,
+            transform=transform,
+            source_format='zarr',
+            workers=workers,
+            data_axes=data_axes,
+            data_group=data_group)
+    
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
     if workers > 0:
         data_queue_iter = iter(data_queue)
         x, _ = next(data_queue_iter)
-        _, org_channels, org_H, org_W = x.size()
-        org_H = org_H - offset*2
-        org_W = org_W - offset*2
-        H = org_H
-        W = org_W
+        _, channels_org, patch_H, patch_W = x.size()
+        patch_H = patch_H - offset*2
+        patch_W = patch_W - offset*2
+        H = patch_H
+        W = patch_W
 
     else:
-        org_H, org_W = zarr_ds.get_img_original_shape(0)
         H, W = zarr_ds.get_shape()
-        org_channels = zarr_ds.get_channels()
+        channels_org = zarr_ds.get_channels()
     
     comp_patch_size = patch_size//2**comp_level
 
-    # Output dir is actually the absolute path to the file where to store the compressed representation
     if 'memory' in destination_format.lower():
         group = zarr.group()
     else:
-        group = zarr.group(output_dir, overwrite=True)
+        if os.path.isdir(output_filename):
+            group = zarr.open_group(output_filename, mode='rw')
+        else:
+            group = zarr.group(output_filename)
     
-    group.attrs['height'] = org_H
-    group.attrs['width'] = org_W
-    group.attrs['channels'] = org_channels
-    group.attrs['compression_level'] = comp_level
-    group.attrs['model'] = str(comp_model)
+    comp_group = group.create_group('compressed', overwrite=True)
 
-    comp_group = group.create_group('0', overwrite=True)
+    # Add metadata to the compressed zarr file
+    comp_group.attrs['compression_metadata'] = dict(
+        height=H,
+        width=W,
+        channels=channels_org,        
+        compressed_channels=channels_bn,
+        axes='TCZYX',
+        compression_level=comp_level,
+        patch_size=patch_size,
+        offset=offset,
+        stitch_batches=stitch_batches,
+        model=str(comp_model),
+        original=zarr_ds._data_group,
+        version=COMP_VERSION
+    )
     
     if stitch_batches:
-        z_comp = comp_group.create_dataset('0', 
-                shape=(1, channels_bn, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), 
-                chunks=(1, channels_bn, comp_patch_size, comp_patch_size), 
+        z_comp = comp_group.create_dataset(zarr_ds._data_group, 
+                shape=(1, channels_bn, 1, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), 
+                chunks=(1, channels_bn, 1, comp_patch_size, comp_patch_size), 
                 dtype='u1', compressor=compressor)
     else:
-        z_comp = comp_group.create_dataset('0', 
-                shape=(len(zarr_ds), channels_bn, comp_patch_size, comp_patch_size), 
-                chunks=(1, channels_bn, comp_patch_size, comp_patch_size),
+        z_comp = comp_group.create_dataset(zarr_ds._data_group, 
+                shape=(len(zarr_ds), channels_bn, 1, comp_patch_size, comp_patch_size), 
+                chunks=(1, channels_bn, 1, comp_patch_size, comp_patch_size),
                 dtype='u1', compressor=compressor)
     
     with torch.no_grad():
@@ -108,15 +143,13 @@ def compress_image(comp_model, filename, output_dir, channels_bn, comp_level, pa
                     _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
                     tl_y *= comp_patch_size
                     tl_x *= comp_patch_size
-                    z_comp[0, ..., tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
+                    z_comp[0, :, 0, tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
             else:
-                z_comp[i*batch_size:i*batch_size+x.size(0), ...] = y_q
+                z_comp[i*batch_size:i*batch_size+x.size(0), :, 0, :, :] = y_q
 
-    
-    if is_labeled:
-        label_group = group.create_group('1', overwrite=True)
-        z_org = zarr.open(filename, 'r')
-        zarr.copy(z_org['1/0'], label_group)
+    z_org = zarr.open_group(input_filename.split(';')[0], 'r')
+    if 'labels' in z_org.keys() and z_org.store.path != group.store.path:
+        zarr.copy(z_org, group, 'labels')
     
     if 'memory' in destination_format.lower():
         return group
@@ -133,9 +166,7 @@ def compress(args):
     state = utils.load_state(args)
 
     comp_model = setup_network(state, args.gpu)
-    
-    # Conver the single zarr file into a dataset to be iterated
-    transform, _ = utils.get_zarr_transform(normalize=True)
+    transform, _, _ = utils.get_zarr_transform(normalize=True)
 
     # Get the compression level from the model checkpoint
     comp_level = state['args']['compression_level']
@@ -143,43 +174,50 @@ def compress(args):
     
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
-        
-    if isinstance(args.input, (zarr.Group, zarr.Array, np.ndarray)):
-        input_fn_list = [args.input]
-    elif args.source_format.lower() not in args.input[0].lower():
-        # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: args.source_format.lower() in fn.lower(), os.listdir(args.input[0]))))
-    else:
-        input_fn_list = args.input
     
-    if 'memory' in args.destination_format.lower():
-        output_fn_list = [None for _ in range(len(input_fn_list))]
+    if isinstance(args.data_dir, (zarr.Group, zarr.Array, np.ndarray)):
+        input_fn_list = [args.data_dir]
+    elif args.source_format.lower() not in args.data_dir[0].lower():
+        # If a directory has been passed, get all image files inside to compress
+        input_fn_list = list(map(lambda fn: os.path.join(args.data_dir[0], fn), filter(lambda fn: args.source_format.lower() in fn.lower(), os.listdir(args.data_dir[0]))))
     else:
-        output_fn_list = [os.path.join(args.output_dir, '%04d_comp.zarr' % i) for i in range(len(input_fn_list))]
+        input_fn_list = args.data_dir
+    
+    if 'memory' in args.destination_format.lower() or isinstance(args.data_dir, (zarr.Group, zarr.Array, np.ndarray)):
+        output_fn_list = [None for _ in range(len(input_fn_list))]
+    elif args.destination_format.lower() not in args.output_dir[0].lower():
+        # If the output path is a directory, append the input filenames to it, so the compressed files have the same name as the original file
+        fn_list = map(lambda fn: fn.split(args.source_format)[0].replace('\\', '/').split('/')[-1], input_fn_list)
+        output_fn_list = [os.path.join(args.output_dir[0], '%s%s.zarr' % (fn, args.comp_identifier)) for fn in fn_list]
+    else:
+        output_fn_list = args.output_dir
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
         comp_group = compress_image(
-            comp_model=comp_model, 
-            filename=in_fn,
-            output_dir=out_fn, 
-            channels_bn=state['args']['channels_bn'], 
+            comp_model=comp_model,
+            input_filename=in_fn,
+            output_filename=out_fn,
+            channels_bn=state['args']['channels_bn'],
             comp_level=comp_level, 
-            patch_size=args.patch_size, 
+            patch_size=args.patch_size,
             offset=offset, 
+            stitch_batches=args.stitch_batches, 
             transform=transform, 
-            source_format=args.source_format, 
             destination_format=args.destination_format, 
             workers=args.workers, 
-            is_labeled=args.is_labeled,
             batch_size=args.batch_size,
-            stitch_batches=args.stitch_batches)
+            data_mode=args.data_mode,
+            data_axes=args.data_axes,
+            data_group=args.data_group)
+
+        logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 
         yield comp_group
 
 
 if __name__ == '__main__':
-    args = utils.get_args(task='compress', mode='inference')
+    args = utils.get_args(task='encoder', mode='inference')
     
     utils.setup_logger(args)
     
