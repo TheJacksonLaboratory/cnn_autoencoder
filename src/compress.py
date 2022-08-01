@@ -1,4 +1,3 @@
-from genericpath import isdir
 import logging
 import os
 
@@ -77,6 +76,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=0, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
 
     H, W = zarr_ds._imgs_shapes[0]
+    comp_H, comp_W = int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))
     channels_org = zarr_ds.get_channels()
     
     comp_patch_size = patch_size//2**comp_level
@@ -109,7 +109,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
     
     if stitch_batches:
         z_comp = comp_group.create_dataset(zarr_ds._data_group, 
-                shape=(1, channels_bn, 1, int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))), 
+                shape=(1, channels_bn, 1, comp_patch_size * int(np.ceil(comp_H / comp_patch_size)), comp_patch_size * int(np.ceil(comp_W / comp_patch_size))), 
                 chunks=(1, channels_bn, 1, comp_patch_size, comp_patch_size), 
                 dtype='u1', compressor=compressor)
     else:
@@ -134,7 +134,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
                     _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
                     tl_y *= comp_patch_size
                     tl_x *= comp_patch_size
-                    z_comp[0, :, 0, tl_y:tl_y + comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
+
+                    z_comp[0, :, 0, tl_y:tl_y+comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
             else:
                 z_comp[i*batch_size:i*batch_size+x.size(0), :, 0, :, :] = y_q
 

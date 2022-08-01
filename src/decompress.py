@@ -158,8 +158,10 @@ def decompress_image(decomp_model, input_filename, output_filename,
                         _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H//2**r, W//2**r)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size//2**r)
                         tl_y *= patch_size // 2**r
                         tl_x *= patch_size // 2**r
+
                         br_y = min(tl_y + patch_size//2**r, H//2**r)
                         br_x = min(tl_x + patch_size//2**r, W//2**r)
+                        
                         valid_patch_size_y = br_y - tl_y
                         valid_patch_size_x = br_x - tl_x
 

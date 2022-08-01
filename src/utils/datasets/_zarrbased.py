@@ -259,15 +259,10 @@ def get_patch(z, tl_y, tl_x, patch_size, offset=0):
         pad_left = tl_x - tl_x_offset
         pad_right = br_x_offset - br_x
 
-        valid_pad_up = min(pad_up, br_y - tl_y)
-        valid_pad_down = min(pad_down, br_y - tl_y)
-        valid_pad_left = min(pad_left, br_x - tl_x)
-        valid_pad_right = min(pad_right, br_x - tl_x)
-
         patch  = np.pad(patch, 
             (*leading_padding, 
-             (valid_pad_up, valid_pad_down),
-             (valid_pad_left, valid_pad_right)),
+             (pad_up, pad_down),
+             (pad_left, pad_right)),
             mode='symmetric', reflect_type='even')
 
     return patch
@@ -461,7 +456,7 @@ class ZarrDataset(Dataset):
 
     def _compute_size(self, z_list, rois_list):
         imgs_shapes = [((roi[-2].stop - roi[-2].start)//roi[-2].step, (roi[-1].stop - roi[-1].start)//roi[-1].step) for _, roi in rois_list]
-        imgs_sizes = np.cumsum([0] + [int(np.ceil((H * W) / self._patch_size**2)) for H, W in imgs_shapes])
+        imgs_sizes = np.cumsum([0] + [int(np.ceil(H/ self._patch_size)) * int(np.ceil(W / self._patch_size)) for H, W in imgs_shapes])
         
         # Get the upper bound of patches that can be obtained from all zarr files (images with smaller size will be padded)
         max_H, max_W = np.max(np.array(imgs_shapes), axis=0)
