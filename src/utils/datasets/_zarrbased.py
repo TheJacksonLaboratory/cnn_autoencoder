@@ -342,6 +342,7 @@ class ZarrDataset(Dataset):
             self._org_channels = None
             self._imgs_sizes = None
             self._imgs_shapes = None
+            self._dataset_size = 1
         
         if self._dataset_size < 0:
             self._dataset_size = dataset_size
@@ -373,7 +374,7 @@ class ZarrDataset(Dataset):
             return self._get_filenames(filenames)
 
         elif isinstance(source, str):
-            self._requires_split = not self._data_mode.lower() in source.lower()
+            self._requires_split = self._data_mode.lower() != 'all' and not self._data_mode.lower() in source.lower()
 
             # Otherwise, the input is a directory, create the filenames list from each element in that directory that meets the criteria
             return reduce(lambda l1, l2: l1 + l2, 

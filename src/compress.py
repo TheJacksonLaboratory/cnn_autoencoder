@@ -53,9 +53,10 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
         offset=0, 
         stitch_batches=False, 
         transform=None, 
+        source_format='zarr',
         destination_format='zarr', 
         workers=0, 
-        batch_size=1,
+        batch_size=1,        
         data_mode='train',
         data_axes='TCZYX',
         data_group='0/0'):
@@ -68,25 +69,15 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
             data_mode=data_mode,
             offset=offset,
             transform=transform,
-            source_format='zarr',
-            workers=workers,
+            source_format=source_format,
+            workers=0,
             data_axes=data_axes,
             data_group=data_group)
     
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
-    
-    if workers > 0:
-        data_queue_iter = iter(data_queue)
-        x, _ = next(data_queue_iter)
-        _, channels_org, patch_H, patch_W = x.size()
-        patch_H = patch_H - offset*2
-        patch_W = patch_W - offset*2
-        H = patch_H
-        W = patch_W
+    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=0, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
 
-    else:
-        H, W = zarr_ds.get_shape()
-        channels_org = zarr_ds.get_channels()
+    H, W = zarr_ds._imgs_shapes[0]
+    channels_org = zarr_ds.get_channels()
     
     comp_patch_size = patch_size//2**comp_level
 
@@ -147,8 +138,12 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
             else:
                 z_comp[i*batch_size:i*batch_size+x.size(0), :, 0, :, :] = y_q
 
-    z_org = zarr.open_group(input_filename.split(';')[0], 'r')
-    if 'labels' in z_org.keys() and z_org.store.path != group.store.path:
+    if 'zarr' in source_format:
+        z_org = zarr.open_group(input_filename.split(';')[0], 'r')
+    else:
+        z_org = None
+    
+    if z_org is not None and 'labels' in z_org.keys() and z_org.store.path != group.store.path:
         zarr.copy(z_org, group, 'labels')
     
     if 'memory' in destination_format.lower():
@@ -204,6 +199,7 @@ def compress(args):
             offset=offset, 
             stitch_batches=args.stitch_batches, 
             transform=transform, 
+            source_format=args.source_format,
             destination_format=args.destination_format, 
             workers=args.workers, 
             batch_size=args.batch_size,

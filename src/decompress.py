@@ -48,7 +48,7 @@ def setup_network(state, use_gpu=False):
     return decomp_model    
 
 
-def decompress_image(decomp_model, input_filename, output_filename, channels_org, comp_level,
+def decompress_image(decomp_model, input_filename, output_filename,
         patch_size=512,
         offset=0,
         stitch_batches=False,
@@ -62,10 +62,21 @@ def decompress_image(decomp_model, input_filename, output_filename, channels_org
         data_group='0/0'):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
+    src_group = zarr.open(input_filename, mode='r')
+    comp_metadata = src_group[data_group.split('/')[0]].attrs['compression_metadata']
+
+    # Extract the compression level, original channels, and original shape from the compression metadata
+    comp_level = comp_metadata['compression_level']
+    channels_org = comp_metadata['channels']
+    H = comp_metadata['height']
+    W = comp_metadata['width']
+
     comp_patch_size = patch_size//2**comp_level
 
-    if reconstruction_level < 0:
-        reconstruction_level = comp_level
+    # If the reconstruction level is set to <= 0, use the compression level of the model
+    # When a higher reconstruction level is given, use the original compression level of the model instead
+    reconstruction_level = max(reconstruction_level, comp_level)
+    reconstruction_level = min(reconstruction_level, comp_level)
     
     # Compute the scales of the pyramids and take only thse taht will be stored on disk
     scales = [r for r in range(comp_level-reconstruction_level, comp_level)]
@@ -80,24 +91,11 @@ def decompress_image(decomp_model, input_filename, output_filename, channels_org
         data_mode=data_mode,
         offset=1 if offset > 0 else 0,
         source_format='zarr',
-        workers=workers,
+        workers=0,
         data_axes=data_axes,
         data_group=data_group)
     
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
-    
-    if workers > 0:
-        data_queue_iter = iter(data_queue)
-        x, _ = next(data_queue_iter)
-        _, _, H_comp, W_comp = x.size()
-        H_comp = H_comp - offset*2
-        W_comp = W_comp - offset*2
-
-    else:
-        H_comp, W_comp = zarr_ds.get_shape()
-
-    H = H_comp * 2**comp_level
-    W = W_comp * 2**comp_level
+    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=0, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
 
     if '.zarr' in destination_format.lower() and 'memory' not in destination_format.lower():
         # If the output is a zarr file, but will not be kept in memory, create a group (folder) to store the output into a sub-group
@@ -111,9 +109,6 @@ def decompress_image(decomp_model, input_filename, output_filename, channels_org
     
     comp_group = group.create_group('0', overwrite=False)
     comp_group.attrs['decompression_metadata'] = dict(
-        compressed_height=H_comp,
-        compressed_width=W_comp,
-        channels=channels_org,
         compression_level=comp_level,
         axes='TCZYX',
         patch_size=patch_size,
@@ -185,7 +180,7 @@ def decompress_image(decomp_model, input_filename, output_filename, channels_org
             output_filenames = [output_filename]
         
         for r, out_fn in zip(scales, output_filenames):
-            im = Image.fromarray(z_decomp[r][0].transpose(1, 2, 0))
+            im = Image.fromarray(z_decomp[r][0, :, 0].transpose(1, 2, 0))
             im.save(out_fn + destination_format)
 
     return True
@@ -234,8 +229,6 @@ def decompress(args):
             decomp_model=decomp_model,
             input_filename=in_fn,
             output_filename=out_fn,
-            channels_org=state['args']['channels_org'],
-            comp_level=comp_level,
             patch_size=args.patch_size,
             offset=offset,
             stitch_batches=args.stitch_batches,
