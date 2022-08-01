@@ -170,6 +170,9 @@ def compress(args):
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
     
+    if not args.destination_format.startswith('.'):
+        args.destination_format = '.' + args.destination_format
+
     if isinstance(args.data_dir, (zarr.Group, zarr.Array, np.ndarray)):
         input_fn_list = [args.data_dir]
     elif args.source_format.lower() not in args.data_dir[0].lower():
