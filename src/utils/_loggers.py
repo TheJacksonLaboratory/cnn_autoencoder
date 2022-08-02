@@ -1,5 +1,6 @@
 import os
 import logging
+from numpy import save
 import torch
 from inspect import signature
 
@@ -31,8 +32,8 @@ def setup_logger(args):
 
     # By now, only if the model is training or testing, the logs are stored into a file
     if args.mode in ['training', 'testing']:
-        logger_fn = os.path.join(args.log_dir, '%s_ver%s_%s.log' % (args.mode, args.version, args.seed))
-        fh = logging.FileHandler(logger_fn)
+        logger_fn = os.path.join(args.log_dir, '%s_ver%s_%s%s.log' % (args.mode, args.version, args.seed, args.log_identifier))
+        fh = logging.FileHandler(logger_fn, mode='w')
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     
@@ -59,14 +60,17 @@ def save_state(name, model_state, args):
     args : Namespace
         The input arguments passed at running time. Only the code version and random seed are used from this.
     """
-    save_fn = os.path.join(args.log_dir, name + '_ver%s_%s.pth' % (args.version, args.seed))
+    if isinstance(args, dict):
+        save_fn = os.path.join(args['log_dir'], name + '_ver%s_%s.pth' % (args['version'], args['seed']))
+    else:
+        save_fn = os.path.join(args.log_dir, name + '_ver%s_%s.pth' % (args.version, args.seed))
 
     torch.save(model_state, save_fn)
     logger = logging.getLogger('training_log')
     logger.info('Saved model in %s' % save_fn)
 
 
-def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args):
+def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args, extra_info={}):
     """ Creates a checkpoint with the current trainig state
 
     Parameters
@@ -87,7 +91,8 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         A list of all validation criterion evaluation during the training
     args : Namespace
         The input arguments passed at running time
-    
+    extra_info : dict
+
     Returns
     -------
     best_valid_loss : float
@@ -96,7 +101,7 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
 
     # Create a dictionary with the current state as checkpoint
     training_state = dict(
-        optimizer=optimizer.state_dict(),
+        optimizer=optimizer.state_dict() if optimizer is not None else None,
         args=args.__dict__,
         best_val=best_valid_loss,
         step=step,
@@ -104,6 +109,9 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         valid_loss=valid_loss_history,
         code_version=args.version
     )
+
+    # Append any extra information passed by the training loop
+    training_state.update(extra_info)
     
     if args.task == 'autoencoder':
         training_state['embedding'] = model.module.embedding.state_dict()
@@ -111,7 +119,7 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         training_state['decoder'] = model.module.synthesis.state_dict()
         training_state['fact_ent'] = model.module.fact_entropy.state_dict()
 
-    elif args.task == 'segmentation':
+    elif args.task in ['segmentation', 'projection', 'classification']:
         training_state['model'] = model.module.state_dict()
 
     if scheduler is not None:
@@ -150,7 +158,10 @@ def load_state(args):
     if args.mode == 'training':
         save_fn = os.path.join(args.log_dir, 'last_ver%s_%s.pth' % (args.version, args.seed))
     else:
-        save_fn = os.path.join(args.trained_model)
+        save_fn = args.trained_model
+
+    if not os.path.exists(save_fn):
+        return None
 
     if not torch.cuda.is_available() or not args.gpu:
         state = torch.load(save_fn, map_location=torch.device('cpu'))

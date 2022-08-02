@@ -5,7 +5,12 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from models import FactorizedEntropy
+from models import FactorizedEntropy, FactorizedEntropyLaplace
+
+model_types = {
+    'FactorizedEntropy': FactorizedEntropy,
+    'Laplacian': FactorizedEntropyLaplace    
+}
 
 
 def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2):
@@ -43,7 +48,7 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
     x = x.round()
 
     # Use a Factorized entropy model to approximate the real distribution
-    fact_entropy = FactorizedEntropy(channels_bn=channels, K=4, r=3)
+    fact_entropy = model_types[args.model_type](channels_bn=channels, K=4, r=3)
     print(fact_entropy)
     for par in fact_entropy.parameters():
         print('\t', par.size())
@@ -61,10 +66,12 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
     for s, s_i in enumerate(sample_idx):
 
         optimizer.zero_grad()
-        p = fact_entropy(x[s_i] + 0.5) - fact_entropy(x[s_i] - 0.5) + 1e-10
-        p = torch.prod(p, dim=1).unsqueeze(dim=1)
+        
+        fact_entropy.reset(x[s_i])
 
-        loss = torch.mean(-torch.log2(p))
+        p = fact_entropy(x[s_i] + 0.5) - fact_entropy(x[s_i] - 0.5) + 1e-10        
+
+        loss = torch.mean(torch.sum(-torch.log2(p), dim=1))
 
         loss.backward()
         mean_loss += loss.item()
@@ -99,6 +106,7 @@ if __name__ == '__main__':
     parser.add_argument('-b', '--batch', type=int, dest='batch', help='Batch size', default=10)
     parser.add_argument('-c', '--channels', type=int, dest='channels', help='Number of channels for the compressed representation', default=3)
     parser.add_argument('-m', '--modes', type=int, dest='modes', help='Number of modes for the mix of gaussian distributions for each channel', default=2)
+    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Model to approximate the entropy model of the latent layer', choices=model_types.keys(), default=model_types.keys()[0])
 
     args = parser.parse_args()
 

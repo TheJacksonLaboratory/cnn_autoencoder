@@ -14,14 +14,14 @@ def get_data(args):
     if isinstance(args_dict['data_dir'], list) and len(args_dict['data_dir']) == 1:
         args_dict['data_dir'] = args_dict['data_dir'][0]
     
-    if args.dataset == 'MNIST':
+    if args_dict['dataset'] == 'MNIST':
         return get_MNIST(**args_dict)
 
-    elif args.dataset == 'ImageNet':
+    elif args_dict['dataset'] in ['ImageNet', 'ImageNet.S3']:
         return get_ImageNet(**args_dict)
 
-    elif args.dataset in ['Zarr', 'Histology']:
+    elif args_dict['dataset'] in ['Zarr', 'Histology']:
         return get_zarr_dataset(**args_dict)
 
     else:
-        raise ValueError('The dataset \'%s\' is not available for training.' % args.dataset)
+        raise ValueError('The dataset \'%s\' is not available for training.' % args_dict['dataset'])

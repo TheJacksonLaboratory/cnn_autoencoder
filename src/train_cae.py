@@ -6,14 +6,14 @@ import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
-from models import MaskedAutoEncoder, AutoEncoder, RateDistorsion, RateDistorsionPenaltyA, RateDistorsionPenaltyB, EarlyStoppingPatience, EarlyStoppingTarget
-from utils import checkpoint, get_training_args, setup_logger, get_data
+import models
+import utils
 
 from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"AutoEncoder": AutoEncoder, "MaskedAutoEncoder": MaskedAutoEncoder}
+model_options = {"AutoEncoder": models.AutoEncoder, "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
 
 def valid(cae_model, data, criterion, args):
@@ -116,7 +116,9 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 extra_info = torch.mean(extra_info)
             loss = torch.mean(loss)
             loss.backward()
-
+            
+            # Clip the gradients to prevent from exploding gradients problems
+            nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
             optimizer.step()
             sum_loss += loss.item()
 
@@ -136,7 +138,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
 
-            if not keep_training or step % args.checkpoint_steps == 0:
+            if not keep_training or (step >= args.warmup and (step-args.warmup) % args.checkpoint_steps == 0):
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
@@ -156,7 +158,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 valid_loss_history.append(valid_loss)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
+                best_valid_loss = utils.checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
@@ -218,19 +220,19 @@ def setup_criteria(args):
     """
 
     # Early stopping criterion:
-    stopping_criteria = [EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
+    stopping_criteria = [models.EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
 
     # Loss function
     if args.criterion == 'RD_PA':
-        criterion = RateDistorsionPenaltyA(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit))
+        criterion = models.RateDistortionPenaltyA(**args.__dict__)
+        stopping_criteria.append(models.EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
 
     elif args.criterion == 'RD_PB':
-        criterion = RateDistorsionPenaltyB(**args.__dict__)
-        stopping_criteria.append(EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit))
+        criterion = models.RateDistortionPenaltyB(**args.__dict__)
+        stopping_criteria.append(models.EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
 
     elif args.criterion == 'RD':
-        criterion = RateDistorsion(**args.__dict__)
+        criterion = models.RateDistortion(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
@@ -344,15 +346,15 @@ def main(args):
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
-    train_data, valid_data = get_data(args)
+    train_data, valid_data = utils.get_data(args)
     
     train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
 
 
 if __name__ == '__main__':
-    args = get_training_args()
+    args = utils.get_args(task='autoencoder', mode='training')
 
-    setup_logger(args)
+    utils.setup_logger(args)
 
     main(args)
     

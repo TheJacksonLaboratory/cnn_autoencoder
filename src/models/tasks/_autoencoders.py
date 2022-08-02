@@ -92,7 +92,7 @@ class FactorizedEntropyLayer(nn.Module):
 
         # The non-parametric density model is initialized with random normal distributed weights
         self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r, d, 1, 1), 0.0, 0.01))
-        self._b = nn.Parameter(torch.zeros(channels_bn * r))
+        self._b = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r), 0.0, 0.01))
         self._a = nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r, 1, 1), 0.0, 0.01))
 
     def forward(self, x):
@@ -127,6 +127,9 @@ class FactorizedEntropy(nn.Module):
         self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r[-1], d[-1], 1, 1), 0.0, 0.01))
         self._b = nn.Parameter(torch.zeros(channels_bn * r[-1]))
 
+    def reset(self, x):
+        pass
+    
     def forward(self, x):
         fx = self._layers(x)
 
@@ -134,6 +137,20 @@ class FactorizedEntropy(nn.Module):
         fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels))
 
         return fx
+
+
+class FactorizedEntropyLaplace(nn.Module):
+    """ Univariate non-parametric density model to approximate the factorized entropy prior using a laplace distribution
+    """
+    def __init__(self, **kwargs):
+        super(FactorizedEntropyLaplace, self).__init__()
+        self._gaussian_approx = None
+        
+    def reset(self, x):
+        self._gaussian_approx = torch.distributions.Laplace(torch.zeros_like(x), torch.var(x.detach(), dim=(0, 2,3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
+
+    def forward(self, x):
+        return self._gaussian_approx.cdf(x)
 
 
 class DownsamplingUnit(nn.Module):
@@ -231,7 +248,7 @@ class Synthesizer(nn.Module):
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, **kwargs):
         super(Synthesizer, self).__init__()
 
-        # Initial deconvolution in the synthesis track
+        # Initial convolution in the synthesis track
         up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect')]
         up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
                                      groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
@@ -250,7 +267,7 @@ class Synthesizer(nn.Module):
         fx = x.clone().to(self.synthesis_track[0].weight.device)
         for layer in self.synthesis_track[:-1]:
             fx = layer(fx)
-            x_brg.append(fx / 127.5)
+            x_brg.append(fx)
         
         if not color:
             return x_brg
@@ -262,6 +279,18 @@ class Synthesizer(nn.Module):
     def forward(self, x):
         x = self.synthesis_track(x)
         return x
+
+    def forward_steps(self, x, reconstruction_level=-2):
+        fx = self.synthesis_track[0](x.to(self.synthesis_track[0].weight.device))
+        color_layer = self.synthesis_track[-1]
+
+        x_r_ms = []
+        for up_layer in self.synthesis_track[1:(reconstruction_level+1)]:
+            fx = up_layer(fx)
+            x_r = color_layer(fx)
+            x_r_ms.insert(0, x_r)
+
+        return x_r_ms
 
 
 class AutoEncoder(nn.Module):
@@ -287,11 +316,27 @@ class AutoEncoder(nn.Module):
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
-        p_y = torch.prod(p_y, dim=1) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
         
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
+
+    def forward_steps(self, x, synthesize_only=False):
+        if synthesize_only:
+            return self.synthesis(x.to(self.synthesis.synthesis_track[0].weight.device))
+        
+        fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
+        
+        y_q, y = self.analysis(fx)
+        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
+        
+        # Get the reconstruction at multiple scales
+        x_r_ms = self.synthesis.forward_steps(y_q)
+
+        return x_r_ms, y, p_y
+
 
 
 class MaskedAutoEncoder(nn.Module):
@@ -320,11 +365,28 @@ class MaskedAutoEncoder(nn.Module):
         
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
-        p_y = torch.prod(p_y, dim=1) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
+
+    def forward_steps(self, x, synthesize_only=False):
+        if synthesize_only:
+            return self.synthesis(x.to(self.synthesis.synthesis_track[0].weight.device))
+
+        fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
+        fx = self.masking(fx)
+        fx = self.pos_enc(fx)
+        
+        y_q, y = self.analysis(fx)
+        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        # p_y = torch.prod(p_y, dim=1) + 1e-10
+
+        # Get the reconstruction at multiple scales
+        x_r_ms = self.synthesis.forward_steps(y_q)
+
+        return x_r_ms, y, p_y
 
 
 if __name__ == '__main__':
