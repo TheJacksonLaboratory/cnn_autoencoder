@@ -240,19 +240,19 @@ def main(args):
 
     if args.dataset.lower() == 'imagenet.s3':
         if utils.ImageS3 is not None:
-            transform = utils.get_imagenet_transform(args.mode_data, normalize=True, patch_size=args.patch_size)
+            transform = utils.get_imagenet_transform(args.data_mode, normalize=True, patch_size=args.patch_size)
             test_data = utils.ImageS3(root=args.data_dir, transform=transform)
             test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
         else:
             raise ValueError('Boto3 is not installed, cannot use ImageNet from a S3 bucket')
     elif args.dataset.lower() == 'imagenet':
-        transform = utils.get_imagenet_transform(args.mode_data, normalize=True, patch_size=args.patch_size)
+        transform = utils.get_imagenet_transform(args.data_mode, normalize=True, patch_size=args.patch_size)
         test_data = utils.ImageFolder(root=args.data_dir, transform=transform)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
     else:
         # Generate a dataset from a single image to divide in patches and iterate using a dataloader
         transform, _, _ = utils.get_zarr_transform(normalize=True)
-        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_size, mode=args.mode_data, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
+        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_size, mode=args.data_mode, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
     if args.test_size < 0:
@@ -267,7 +267,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_args(task='autoencoder', mode='test')
+    args = utils.get_args(tas='autoencoder', mode='test')
 
     utils.setup_logger(args)
 
