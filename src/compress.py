@@ -218,12 +218,12 @@ def compress(args):
 
 if __name__ == '__main__':
     args = utils.get_args(task='encoder', mode='inference')
-    
+
     utils.setup_logger(args)
-    
+
     logger = logging.getLogger(args.mode + '_log')
 
     for _ in compress(args):
         logger.info('Image compressed successfully')
-        
+
     logging.shutdown()

@@ -31,7 +31,7 @@ def setup_logger(args):
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
     # By now, only if the model is training or testing, the logs are stored into a file
-    if args.mode in ['training', 'testing']:
+    if args.mode in ['training', 'test']:
         logger_fn = os.path.join(args.log_dir, '%s_ver%s_%s%s.log' % (args.mode, args.version, args.seed, args.log_identifier))
         fh = logging.FileHandler(logger_fn, mode='w')
         fh.setFormatter(formatter)

@@ -100,7 +100,7 @@ def test(cae_model, data, args):
     with torch.no_grad():
         load_time = perf_counter()
         for i, (x, _) in enumerate(data):            
-            load_time = perf_counter() - load_time            
+            load_time = perf_counter() - load_time           
             load_times.append(load_time)
 
             n_examples += x.size(0)
@@ -141,16 +141,14 @@ def test(cae_model, data, args):
             
             all_metrics['time'].append(e_time)
 
-            if n_examples % max(1, int(0.1 * args.test_size)) == 0:
+            if n_examples % max(1, int(0.1 * args.test_dataset_size)) == 0:
                 avg_metrics = ''
                 for m_k in all_metrics.keys():
                     avg_metric = np.nanmean(all_metrics[m_k])
                     avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
-                logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_size, avg_metrics))
+                logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_dataset_size, avg_metrics))
             
             load_time = perf_counter()
-            if n_examples >= args.test_size:
-                break
     
     logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
     
@@ -235,8 +233,8 @@ def main(args):
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
 
-    if not hasattr(args, "test_size"):
-        args.test_size = -1
+    if not hasattr(args, "test_dataset_size"):
+        args.test_dataset_size = -1
 
     if args.dataset.lower() == 'imagenet.s3':
         if utils.ImageS3 is not None:
@@ -252,11 +250,11 @@ def main(args):
     else:
         # Generate a dataset from a single image to divide in patches and iterate using a dataloader
         transform, _, _ = utils.get_zarr_transform(normalize=True)
-        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_size, mode=args.data_mode, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
+        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_dataset_size, data_mode=args.data_mode, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
     
-    if args.test_size < 0:
-        args.test_size = len(test_data)
+    if args.test_dataset_size < 0:
+        args.test_dataset_size = len(test_data)
     
     all_metrics_stats = test(cae_model, test_queue, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))

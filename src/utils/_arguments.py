@@ -43,23 +43,23 @@ def add_logging_args(parser):
 
 
 def add_data_args(parser, task, mode='training'):
-    parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
-    parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
-
-    parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
-    parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='0/0')
 
     if task in ['classifier', 'segmentation']:
         parser.add_argument('-lg', '--labels-group', type=str, dest='labels_group', help='For Zarr datasets, the group from where the lables are retrieved', default='labels/0/0')
-    
+
+    parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='0/0')
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
-    parser.add_argument('-md', '--mode-data', type=str, dest='data_mode', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
-    parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
-    
-    if mode == 'inference':
-        parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
-        parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
-        parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
+    if task in ['encoder', 'decoder', 'classifier', 'segmentation', 'autoencoder']:
+        parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
+        parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
+        parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
+        parser.add_argument('-md', '--mode-data', type=str, dest='data_mode', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
+        parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+
+        if mode == 'inference':
+            parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
+            parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
+            parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
 
     elif mode == 'training':
         parser.add_argument('-aed', '--elastic-def', action='store_true', dest='elastic_deformation', help='Use elastic deformation to augment the original data')
@@ -73,11 +73,11 @@ def add_data_args(parser, task, mode='training'):
     elif mode == 'test':
         parser.add_argument('-shte', '--shuffle-test', action='store_true', dest='shuffle_test', help='Shuffle the test set? Works for large images where only small regions will be used to test the performance instead of whole images.')
         parser.add_argument('-nte', '--num-test', type=int, dest='test_dataset_size', help='Size of set of test images used to evaluate the model.', default=-1)
-    
+
     if mode in ['training', 'test']:
         parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
-    
-    if task in ['encoder', 'decoder']:
+
+    if task in ['encoder', 'decoder', 'arithmetic_encoder']:
         parser.add_argument('-o', '--output', type=str, nargs='+', dest='output_dir', help='Output directory, or list of filenames where to store the compressed image')
         parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added  as suffix to the output filename of a compression/decompression process', default='')
 
@@ -110,11 +110,11 @@ def add_config_args(parser, mode=True):
     parser.add_argument('-cl', '--compl', type=int, dest='compression_level', help='Level of compression', default=3)
 
 
-def add_model_args(parser, task, mode=True):    
+def add_model_args(parser, task, mode=True):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
     if mode not in ['training']: return
 
-    if task == 'autoencoder': 
+    if task == 'autoencoder':
         model_choices = CAE_MODELS
 
         parser.add_argument('-eK', '--entK', type=int, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
@@ -163,17 +163,25 @@ def add_criteria_args(parser, task, mode=True):
     parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', choices=criteria_choices)
 
 
-def get_args(task, mode, parser_only=False):
-    parser = argparse.ArgumentParser('Arguments for running ' + task + ' in mode ' +  mode)
+def get_args(task, mode, add_model=True, add_criteria=True, add_config=True, add_data=True, add_logging=True, parser_only=False):
+    parser = argparse.ArgumentParser('Arguments for running ' + task + ' in mode ' +  mode, conflict_handler='resolve')
     parser.add_argument('-c', '--config', dest='config_file', type=str, help='A configuration .json file')
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu', help='Use GPU when available')
 
-    # Is the model used for training?
-    add_model_args(parser, task, mode)
-    add_criteria_args(parser, task, mode)
-    add_config_args(parser, mode)
-    add_data_args(parser, task, mode)
-    add_logging_args(parser)
+    if add_model:
+        add_model_args(parser, task, mode)
+
+    if add_criteria:
+        add_criteria_args(parser, task, mode)
+
+    if add_config:
+        add_config_args(parser, mode)
+
+    if add_data:
+        add_data_args(parser, task, mode)
+
+    if add_logging:
+        add_logging_args(parser)
 
     if parser_only:
         return parser
