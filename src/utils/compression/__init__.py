@@ -1,1 +1,0 @@
-from ._arithmetic_encoder import define_buffer_compressor

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.profiler import profile, record_function, ProfilerActivity
 
 import zarr
 from numcodecs import Blosc
@@ -80,6 +81,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
     channels_org = zarr_ds.get_channels()
     
     comp_patch_size = patch_size//2**comp_level
+    comp_H = comp_patch_size * int(np.ceil(comp_H / comp_patch_size))
+    comp_W = comp_patch_size * int(np.ceil(comp_W / comp_patch_size))
 
     if 'memory' in destination_format.lower():
         group = zarr.group()
@@ -95,6 +98,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
     comp_group.attrs['compression_metadata'] = dict(
         height=H,
         width=W,
+        compressed_height=comp_H,
+        compressed_width=comp_W,
         channels=channels_org,        
         compressed_channels=channels_bn,
         axes='TCZYX',
@@ -109,18 +114,19 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
     
     if stitch_batches:
         z_comp = comp_group.create_dataset(zarr_ds._data_group, 
-                shape=(1, channels_bn, 1, comp_patch_size * int(np.ceil(comp_H / comp_patch_size)), comp_patch_size * int(np.ceil(comp_W / comp_patch_size))), 
-                chunks=(1, channels_bn, 1, comp_patch_size, comp_patch_size), 
+                shape=(1, channels_bn, 1, comp_H, comp_W),
+                chunks=(1, channels_bn, 1, patch_size, patch_size), 
                 dtype='u1', compressor=compressor)
     else:
         z_comp = comp_group.create_dataset(zarr_ds._data_group, 
                 shape=(len(zarr_ds), channels_bn, 1, comp_patch_size, comp_patch_size), 
                 chunks=(1, channels_bn, 1, comp_patch_size, comp_patch_size),
                 dtype='u1', compressor=compressor)
-    
-    with torch.no_grad():
+
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof, torch.no_grad():
         for i, (x, _) in enumerate(data_queue):
-            y_q, _ = comp_model(x)
+            with record_function("model_inference"):
+                y_q, _ = comp_model(x)
             y_q = y_q + 127.5
             
             y_q = y_q.round().to(torch.uint8)
@@ -138,6 +144,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
                     z_comp[0, :, 0, tl_y:tl_y+comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
             else:
                 z_comp[i*batch_size:i*batch_size+x.size(0), :, 0, :, :] = y_q
+
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
     if 'zarr' in source_format:
         z_org = zarr.open_group(input_filename.split(';')[0], 'r')

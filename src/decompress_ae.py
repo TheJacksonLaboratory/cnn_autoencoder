@@ -278,7 +278,24 @@ def get_args():
     return args
 
 
-def compress_image(input_filename, output_filename, data_group='0/0', **kwargs):
+def decompress_image(input_filename, output_filename, data_group='0/0', **kwargs):
+    compressor = codecs.Blosc(cname='zlib', clevel=9, shuffle=codecs.Blosc.BITSHUFFLE)
+    
+    # This file should have been compressed using the Arithmetic encoding compressor
+    z_org = zarr.open(input_filename, mode='r')
+    comp_H = z_org['compressed'].attrs['compression_metadata']['compressed_height']
+    comp_W = z_org['compressed'].attrs['compression_metadata']['compressed_width']
+
+    cdfs = np.load(args.cdfs)
+    channels_bn = cdfs.shape[0]
+    _ = define_buffer_compressor(kwargs['cdfs'],
+                                 channels_bn,
+                                 kwargs['compression_method'],
+                                 kwargs['compression_level'],
+                                 kwargs['compression_precision'],
+                                 kwargs['patch_size'],
+                                 org_shape=(comp_H, comp_W))
+    
     if os.path.isdir(output_filename):
         group = zarr.open_group(output_filename, mode='rw')
     else:
@@ -286,44 +303,30 @@ def compress_image(input_filename, output_filename, data_group='0/0', **kwargs):
 
     comp_group = group.create_group('compressed', overwrite=True)
 
-    # Add metadata to the compressed zarr file
-    z_org = zarr.open(input_filename, mode='r')
-
-    _, channels_bn, _, comp_H, comp_W = z_org['compressed/' + data_group].shape
-        
-    metadata_dict = {}
-    if z_org['compressed'].attrs['compression_metadata'].get('compressed_width', None) is None:
-        metadata_dict['compressed_width'] = comp_W
-    
-    if z_org['compressed'].attrs['compression_metadata'].get('compressed_height', None) is None: 
-        metadata_dict['compressed_height'] = comp_H
-    
-    metadata_dict.update(**z_org['compressed'].attrs['compression_metadata'])
-
-    comp_group.attrs['compression_metadata'] = metadata_dict
-
-    compressor = define_buffer_compressor(kwargs['cdfs'],
-                                          channels_bn,
-                                          kwargs['compression_method'],
-                                          kwargs['compression_level'],
-                                          kwargs['compression_precision'],
-                                          kwargs['patch_size'],
-                                          org_shape=(comp_H, comp_W))
-
+    print('Source\n', z_org.info)
+    comp_group.attrs['compression_metadata'] = \
+        z_org['compressed'].attrs['compression_metadata']
+    print('Compressed shape\n', z_org['compressed/' + data_group].shape, z_org['compressed/' + data_group].chunks)
     z_comp = comp_group.create_dataset(data_group,
-                                       data=z_org['compressed/' + data_group],
                                        shape=z_org['compressed/' + data_group].shape,
                                        chunks=z_org['compressed/' + data_group].chunks,
                                        dtype=z_org['compressed/' + data_group].dtype,
                                        compressor=compressor)
 
+    # Copying pxels from compressed with AE to intermediate compressed representation
+    print('Decompress', z_org['compressed/' + data_group].shape, 'into:', z_comp.shape)
+    z_comp[:]=z_org['compressed/' + data_group][:]
 
-def compress(args):
-    """ Compress any supported file format (zarr, or any supported by PIL) into
+    if z_org is not None \
+       and 'labels' in z_org.keys() and z_org.store.path != group.store.path:
+        zarr.copy(z_org, group, 'labels')
+
+
+def decompress(args):
+    """ Decompress any supported file format (zarr, or any supported by PIL) into
     a compressed representation in zarr format.
     """
     logger = logging.getLogger(args.mode + '_log')
-    
     args.destination_format = '.zarr'
 
     if isinstance(args.data_dir, zarr.Group):
@@ -343,9 +346,9 @@ def compress(args):
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        compress_image(in_fn, out_fn, **args.__dict__)
+        decompress_image(in_fn, out_fn, **args.__dict__)
 
-        logger.info('Compressed image %s into %s' % (in_fn, out_fn))
+        logger.info('Decompressed image %s into %s' % (in_fn, out_fn))
 
 
 if __name__ == '__main__':
@@ -355,6 +358,6 @@ if __name__ == '__main__':
 
     logger = logging.getLogger(args.mode + '_log')
 
-    compress(args)
+    decompress(args)
 
     logging.shutdown()
