@@ -54,8 +54,8 @@ def compute_rate(x=None, x_r=None, y_q=None):
     z_y_q = zarr.array(data=y_q, chunks=(1, y_q.shape[1], y_q.shape[2], y_q.shape[3]), dtype='u1', compressor=Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE))
     return float(z_y_q.nbytes_stored) / np.prod(x.shape), None
 
-"""
-Available metrics (can add more later):
+
+"""Available metrics (can add more later):
     dist=Distortion
     rate=Compression rate (bpp)
     psnr=Peak Dignal-to-Noise Ratio (dB)

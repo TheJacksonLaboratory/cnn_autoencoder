@@ -319,7 +319,7 @@ def decompress_image(input_filename, output_filename, data_group='0/0', **kwargs
 
     if z_org is not None \
        and 'labels' in z_org.keys() and z_org.store.path != group.store.path:
-        zarr.copy(z_org, group, 'labels')
+        zarr.copy(z_org['labels'], group)
 
 
 def decompress(args):

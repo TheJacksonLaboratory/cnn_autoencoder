@@ -268,12 +268,12 @@ class Synthesizer(nn.Module):
         for layer in self.synthesis_track[:-1]:
             fx = layer(fx)
             x_brg.append(fx)
-        
+
         if not color:
             return x_brg
-        
+
         fx = self.synthesis_track[-1](fx)
-        
+
         return fx, x_brg
 
     def forward(self, x):

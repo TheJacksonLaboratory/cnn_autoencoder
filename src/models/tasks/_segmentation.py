@@ -1,7 +1,6 @@
 import argparse
 import logging 
 
-#import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -257,18 +256,18 @@ class DecoderUNet(nn.Module):
         fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level+1)]
         if color:
             return torch.zeros([b, self._channels_org, h * 2**self._compression_level, w * 2**self._compression_level]).to(x.device), fx_brg
-        
+
         return fx_brg
 
-    def forward(self, x, fx_brg):        
+    def forward(self, x, fx_brg):  
         y = self.synthesis(x, fx_brg)
         return y
 
     def extract_features(self, x, fx_brg):
         y, fx = self.synthesis.extract_features(x, fx_brg)
         return y, fx
-    
-    
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Test implementation of segmentation models')
     parser.add_argument('-m', '--model', type=str, dest='model_type', help='Type of model to test', choices=['UNet', 'UNetNoBridge', 'DecoderUNet'], default='UNetNoBridge')

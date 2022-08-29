@@ -129,7 +129,7 @@ def parse_roi(filename):
     elif isinstance(filename, str) and filename.lower().endswith('.zarr') and not ';' in filename:
         # The input is a zarr file, and the rois should be taken from it
         fn = filename
-        z = zarr.open(filename, 'r')         
+        z = zarr.open(filename, 'r')      
         rois = z.attrs.get('rois', [])
     
     elif isinstance(filename, str):
@@ -285,9 +285,9 @@ def zarrdataset_worker_init(worker_id):
     else:
         raise ValueError('Missmatching number of workers and input files/ROIs')
 
-    dataset_obj._z_list, dataset_obj._rois_list = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._data_group, rois=curr_worker_rois)
+    dataset_obj._z_list, dataset_obj._rois_list = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._data_group, data_axes=dataset_obj._data_axes, rois=curr_worker_rois)
     if hasattr(dataset_obj, '_lab_list'):
-        dataset_obj._lab_list, _, _ = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._labels_group, rois=curr_worker_rois)
+        dataset_obj._lab_list, dataset_obj._lab_rois_list = dataset_obj._preload_files(curr_worker_filenames, group=dataset_obj._labels_group, data_axes=dataset_obj._labels_data_axes, rois=curr_worker_rois)
     
     _, dataset_obj._max_H, dataset_obj._max_W, dataset_obj._org_channels, dataset_obj._imgs_sizes, dataset_obj._imgs_shapes = dataset_obj._compute_size(dataset_obj._z_list, dataset_obj._rois_list)
     dataset_obj._dataset_size //= worker_info.num_workers
@@ -327,7 +327,7 @@ class ZarrDataset(Dataset):
         self._filenames = self._split_dataset(root)
 
         if workers == 0:
-            self._z_list, self._rois_list = self._preload_files(self._filenames, group=self._data_group)
+            self._z_list, self._rois_list = self._preload_files(self._filenames, group=self._data_group, data_axes=self._data_axes)
             dataset_size, self._max_H, self._max_W, self._org_channels, self._imgs_sizes, self._imgs_shapes = self._compute_size(self._z_list, self._rois_list)
         else:
             self._z_list = None
@@ -403,7 +403,7 @@ class ZarrDataset(Dataset):
         
         return filenames
 
-    def _preload_files(self, filenames, group='0/0', rois=None):
+    def _preload_files(self, filenames, group='0/0', data_axes='TCZYX', rois=None):
         if rois is None:
             filenames_rois = list(map(parse_roi, filenames))
         else:
@@ -442,7 +442,7 @@ class ZarrDataset(Dataset):
                         ]
                     
                     # Because data could have been passed in a different axes ordering, slicing is reordered to match the input data axes ordering
-                    roi = [roi['XYZCT'.index(a)] for a in self._data_axes]
+                    roi = [roi['XYZCT'.index(a)] for a in data_axes]
 
                     # Take the ROI as the original size of the image
                     rois_list.append((id, tuple(roi)))
@@ -499,12 +499,15 @@ class LabeledZarrDataset(ZarrDataset):
     """ A labeled dataset based on the zarr dataset class.
         The densely labeled targets are extracted from group '1'.
     """
-    def __init__(self, root, input_target_transform=None, target_transform=None, compression_level=0, compressed_input=False, labels_group='labels/0/0', **kwargs):
+    def __init__(self, root, input_target_transform=None, target_transform=None, compression_level=0, compressed_input=False, labels_group='labels/0/0', labels_data_axes=None, **kwargs):
         super(LabeledZarrDataset, self).__init__(root, **kwargs)
         
         # Open the labels from the labels group
         self._labels_group = labels_group
-        self._lab_list, _, _ = self._preload_files(self._filenames, group=self._labels_group)
+        if labels_data_axes is None:
+            labels_data_axes = self._data_axes
+        self._labels_data_axes = labels_data_axes
+        self._lab_list, self._lab_rois_list = self._preload_files(self._filenames, group=self._labels_group, data_axes=self._labels_data_axes)
 
         self._compression_level = compression_level
         self._compressed_input = compressed_input
@@ -517,12 +520,13 @@ class LabeledZarrDataset(ZarrDataset):
         
     def __getitem__(self, index):
         i, tl_y, tl_x = compute_grid(index, self._imgs_shapes, self._imgs_sizes, self._patch_size)
-        id, roi = self._rois_list[i]        
+        id, roi = self._rois_list[i]
         patch = get_patch(self._z_list[id].get_orthogonal_selection(roi), tl_y, tl_x, self._patch_size, self._offset).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
-            
+        
+        id, roi = self._lab_rois_list[i]
         patch_size = self._patch_size * ((2**self._compression_level) if self._compressed_input else 1)
         target = get_patch(self._lab_list[id].get_orthogonal_selection(roi), tl_y, tl_x, patch_size, 0).astype(np.float32)
         

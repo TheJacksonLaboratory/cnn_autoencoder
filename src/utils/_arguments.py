@@ -43,9 +43,9 @@ def add_logging_args(parser):
 
 
 def add_data_args(parser, task, mode='training'):
-
     if task in ['classifier', 'segmentation']:
         parser.add_argument('-lg', '--labels-group', type=str, dest='labels_group', help='For Zarr datasets, the group from where the lables are retrieved', default='labels/0/0')
+        parser.add_argument('-lda', '--labels-data-axes', type=str, dest='labels_data_axes', help='Order of the axes in which the labels are stored. For 5 channels: XYZCT')
 
     parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='0/0')
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
@@ -77,7 +77,7 @@ def add_data_args(parser, task, mode='training'):
     if mode in ['training', 'test']:
         parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
 
-    if task in ['encoder', 'decoder', 'arithmetic_encoder']:
+    if task in ['encoder', 'decoder', 'arithmetic_encoder', 'segmentation']:
         parser.add_argument('-o', '--output', type=str, nargs='+', dest='output_dir', help='Output directory, or list of filenames where to store the compressed image')
         parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added  as suffix to the output filename of a compression/decompression process', default='')
 
@@ -112,6 +112,11 @@ def add_config_args(parser, mode=True):
 
 def add_model_args(parser, task, mode=True):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
+
+    if task in ['segmentation']:
+        parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
+        parser.add_argument('-st', '--segmentation-threshold', type=float, dest='seg_threshold', help='Objects will be assigned to their corresponding class if those have a predicted confidence higher than this threshold value', default=0.5)
+
     if mode not in ['training']: return
 
     if task == 'autoencoder':
@@ -134,7 +139,6 @@ def add_model_args(parser, task, mode=True):
 
         parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
         parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
-        parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
 
     elif task == 'projection':
         model_choices = PROJ_MODELS

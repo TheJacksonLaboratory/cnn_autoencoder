@@ -48,38 +48,44 @@ def setup_network(state, use_gpu=False):
     return comp_model
 
 
-def compress_image(comp_model, input_filename, output_filename, channels_bn, comp_level, 
-        patch_size=512,
-        offset=0, 
-        stitch_batches=False, 
-        transform=None, 
-        source_format='zarr',
-        destination_format='zarr', 
-        workers=0, 
-        batch_size=1,        
-        data_mode='train',
-        data_axes='TCZYX',
-        data_group='0/0'):
+def compress_image(comp_model, input_filename, output_filename, channels_bn,
+                   comp_level,
+                   patch_size=512,
+                   offset=0,
+                   stitch_batches=False,
+                   transform=None,
+                   source_format='zarr',
+                   destination_format='zarr',
+                   workers=0,
+                   batch_size=1,
+                   data_mode='train',
+                   data_axes='TCZYX',
+                   data_group='0/0'):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     zarr_ds = utils.ZarrDataset(root=input_filename,
-            patch_size=patch_size,
-            dataset_size=-1,
-            data_mode=data_mode,
-            offset=offset,
-            transform=transform,
-            source_format=source_format,
-            workers=0,
-            data_axes=data_axes,
-            data_group=data_group)
-    
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=0, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
+                                patch_size=patch_size,
+                                dataset_size=-1,
+                                data_mode=data_mode,
+                                offset=offset,
+                                transform=transform,
+                                source_format=source_format,
+                                workers=0,
+                                data_axes=data_axes,
+                                data_group=data_group)
+
+    data_queue = DataLoader(zarr_ds,
+                            batch_size=batch_size,
+                            num_workers=0,
+                            shuffle=False,
+                            pin_memory=True,
+                            worker_init_fn=utils.zarrdataset_worker_init)
 
     H, W = zarr_ds._imgs_shapes[0]
     comp_H, comp_W = int(np.ceil(H/2**comp_level)), int(np.ceil(W/2**comp_level))
     channels_org = zarr_ds.get_channels()
-    
+
     comp_patch_size = patch_size//2**comp_level
     comp_H = comp_patch_size * int(np.ceil(comp_H / comp_patch_size))
     comp_W = comp_patch_size * int(np.ceil(comp_W / comp_patch_size))
@@ -91,7 +97,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
             group = zarr.open_group(output_filename, mode='rw')
         else:
             group = zarr.group(output_filename)
-    
+
     comp_group = group.create_group('compressed', overwrite=True)
 
     # Add metadata to the compressed zarr file
@@ -111,11 +117,11 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
         original=zarr_ds._data_group,
         version=COMP_VERSION
     )
-    
+
     if stitch_batches:
-        z_comp = comp_group.create_dataset(zarr_ds._data_group, 
+        z_comp = comp_group.create_dataset(zarr_ds._data_group,
                 shape=(1, channels_bn, 1, comp_H, comp_W),
-                chunks=(1, channels_bn, 1, patch_size, patch_size), 
+                chunks=(1, channels_bn, 1, patch_size, patch_size),
                 dtype='u1', compressor=compressor)
     else:
         z_comp = comp_group.create_dataset(zarr_ds._data_group, 
@@ -124,26 +130,26 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
                 dtype='u1', compressor=compressor)
 
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof, torch.no_grad():
-        for i, (x, _) in enumerate(data_queue):
-            with record_function("model_inference"):
+        with record_function("model_inference"):
+            for i, (x, _) in enumerate(data_queue):
                 y_q, _ = comp_model(x)
-            y_q = y_q + 127.5
-            
-            y_q = y_q.round().to(torch.uint8)
-            y_q = y_q.detach().cpu().numpy()
+                y_q = y_q + 127.5
+                
+                y_q = y_q.round().to(torch.uint8)
+                y_q = y_q.detach().cpu().numpy()
 
-            if offset > 0:
-                y_q = y_q[..., 1:-1, 1:-1]
-            
-            if stitch_batches:
-                for k, y_k in enumerate(y_q):
-                    _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
-                    tl_y *= comp_patch_size
-                    tl_x *= comp_patch_size
+                if offset > 0:
+                    y_q = y_q[..., 1:-1, 1:-1]
+                
+                if stitch_batches:
+                    for k, y_k in enumerate(y_q):
+                        _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=patch_size)
+                        tl_y *= comp_patch_size
+                        tl_x *= comp_patch_size
 
-                    z_comp[0, :, 0, tl_y:tl_y+comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
-            else:
-                z_comp[i*batch_size:i*batch_size+x.size(0), :, 0, :, :] = y_q
+                        z_comp[0, :, 0, tl_y:tl_y+comp_patch_size, tl_x:tl_x + comp_patch_size] = y_k
+                else:
+                    z_comp[i*batch_size:i*batch_size+x.size(0), :, 0, :, :] = y_q
 
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
@@ -153,7 +159,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn, com
         z_org = None
     
     if z_org is not None and 'labels' in z_org.keys() and z_org.store.path != group.store.path:
-        zarr.copy(z_org, group, 'labels')
+        zarr.copy(z_org['labels'], group)
     
     if 'memory' in destination_format.lower():
         return group
@@ -175,10 +181,10 @@ def compress(args):
     # Get the compression level from the model checkpoint
     comp_level = state['args']['compression_level']
     offset = (2 ** comp_level) if args.add_offset else 0
-    
+
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
-    
+
     if not args.destination_format.startswith('.'):
         args.destination_format = '.' + args.destination_format
 
@@ -189,7 +195,7 @@ def compress(args):
         input_fn_list = list(map(lambda fn: os.path.join(args.data_dir[0], fn), filter(lambda fn: args.source_format.lower() in fn.lower(), os.listdir(args.data_dir[0]))))
     else:
         input_fn_list = args.data_dir
-    
+
     if 'memory' in args.destination_format.lower() or isinstance(args.data_dir, (zarr.Group, zarr.Array, np.ndarray)):
         output_fn_list = [None for _ in range(len(input_fn_list))]
     elif args.destination_format.lower() not in args.output_dir[0].lower():
@@ -206,14 +212,14 @@ def compress(args):
             input_filename=in_fn,
             output_filename=out_fn,
             channels_bn=state['args']['channels_bn'],
-            comp_level=comp_level, 
+            comp_level=comp_level,
             patch_size=args.patch_size,
-            offset=offset, 
-            stitch_batches=args.stitch_batches, 
-            transform=transform, 
+            offset=offset,
+            stitch_batches=args.stitch_batches,
+            transform=transform,
             source_format=args.source_format,
-            destination_format=args.destination_format, 
-            workers=args.workers, 
+            destination_format=args.destination_format,
+            workers=args.workers,
             batch_size=args.batch_size,
             data_mode=args.data_mode,
             data_axes=args.data_axes,
