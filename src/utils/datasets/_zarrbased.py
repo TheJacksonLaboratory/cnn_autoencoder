@@ -308,6 +308,7 @@ class ZarrDataset(Dataset):
             workers=0,
             data_axes='TCZYX',
             data_group='0/0',
+            compressed_input=False,
             **kwargs):
         
         self._patch_size = patch_size
@@ -315,6 +316,9 @@ class ZarrDataset(Dataset):
         self._transform = transform
         self._offset = offset
         self._data_axes = data_axes
+
+        self._compressed_input = compressed_input
+        self._compression_level = None
 
         self._data_group = data_group
         self._source_format = source_format.lower()
@@ -417,8 +421,10 @@ class ZarrDataset(Dataset):
                 # If the passed object is a zarr group/file, open it and extract the level from the specified group
                 if isinstance(arr_src, str):
                     arr_src = zarr.open(arr_src, mode='r')
-                
+
                 arr = arr_src[group]
+                if self._compressed_input and self._compression_level is None:
+                    self._compression_level = arr_src['compressed'].attrs['compression_metadata']['compression_level']
 
             elif isinstance(arr_src, str) and '.zarr' not in self._source_format:
                 # If the input is a path to an image stored in a format supported by PIL, open it and use it as a numpy array
@@ -499,7 +505,7 @@ class LabeledZarrDataset(ZarrDataset):
     """ A labeled dataset based on the zarr dataset class.
         The densely labeled targets are extracted from group '1'.
     """
-    def __init__(self, root, input_target_transform=None, target_transform=None, compression_level=0, compressed_input=False, labels_group='labels/0/0', labels_data_axes=None, **kwargs):
+    def __init__(self, root, input_target_transform=None, target_transform=None, labels_group='labels/0/0', labels_data_axes=None, **kwargs):
         super(LabeledZarrDataset, self).__init__(root, **kwargs)
         
         # Open the labels from the labels group
@@ -508,9 +514,6 @@ class LabeledZarrDataset(ZarrDataset):
             labels_data_axes = self._data_axes
         self._labels_data_axes = labels_data_axes
         self._lab_list, self._lab_rois_list = self._preload_files(self._filenames, group=self._labels_group, data_axes=self._labels_data_axes)
-
-        self._compression_level = compression_level
-        self._compressed_input = compressed_input
 
         # This is a transform that affects the geometry of the input, and then it has to be applied to the target as well
         self._input_target_transform = input_target_transform

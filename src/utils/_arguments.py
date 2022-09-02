@@ -1,3 +1,4 @@
+from ast import arg
 import numpy as np
 import torch
 
@@ -61,7 +62,7 @@ def add_data_args(parser, task, mode='training'):
             parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
 
-    elif mode == 'training':
+    if mode == 'training':
         parser.add_argument('-aed', '--elastic-def', action='store_true', dest='elastic_deformation', help='Use elastic deformation to augment the original data')
         parser.add_argument('-ar', '--rotation', action='store_true', dest='rotation', help='Augment the original data by rotating the inputs and their respectice targets')
 
@@ -117,28 +118,29 @@ def add_model_args(parser, task, mode=True):
         parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
         parser.add_argument('-st', '--segmentation-threshold', type=float, dest='seg_threshold', help='Objects will be assigned to their corresponding class if those have a predicted confidence higher than this threshold value', default=0.5)
 
-    if mode not in ['training']: return
 
     if task == 'autoencoder':
         model_choices = CAE_MODELS
-
-        parser.add_argument('-eK', '--entK', type=int, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
-        parser.add_argument('-er', '--entr', type=int, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
-        parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
-        parser.add_argument('-ms', '--masks-size', type=int, dest='masks_size', help='Standard size of the patched masks for the masked autoencoder training', default=4)
+        if mode not in ['training']:
+            parser.add_argument('-eK', '--entK', type=int, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
+            parser.add_argument('-er', '--entr', type=int, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
+            parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
+            parser.add_argument('-ms', '--masks-size', type=int, dest='masks_size', help='Standard size of the patched masks for the masked autoencoder training', default=4)
 
     elif task == 'classifier':
         model_choices = CLASS_MODELS
-
-        parser.add_argument('-pt', '--pre-trained', action='store_true', dest='pretrained', help='Use a pretrained model')
-        parser.add_argument('-cns', '--consensus', action='store_true', dest='consensus', help='Use consensus to define the models\'s predicted class')
-        parser.add_argument('-mrg', '--merge-labels', type=str, dest='merge_labels', help='Merge the labels spatialy to define the class of a patch', choices=MERGE_TYPES)
+        if mode not in ['training']:
+            parser.add_argument('-pt', '--pre-trained', action='store_true', dest='pretrained', help='Use a pretrained model')
+            parser.add_argument('-cns', '--consensus', action='store_true', dest='consensus', help='Use consensus to define the models\'s predicted class')
+            parser.add_argument('-mrg', '--merge-labels', type=str, dest='merge_labels', help='Merge the labels spatialy to define the class of a patch', choices=MERGE_TYPES)
 
     elif task == 'segmentation':
         model_choices = SEG_MODELS
-
-        parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
-        parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
+        if mode not in ['training']:
+            parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
+            parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
+        parser.add_argument('-thr', '--prediction-threshold', type=float, dest='prediction_threshold', help=argparse.SUPPRESS, default=0.5)
+        
 
     elif task == 'projection':
         model_choices = PROJ_MODELS
@@ -149,7 +151,8 @@ def add_model_args(parser, task, mode=True):
     else:
         raise ValueError('Task %s not supported' % task)
     
-    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of %s model' % task, choices=model_choices)
+    if mode not in ['training']:
+        parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of %s model' % task, choices=model_choices)
 
 
 def add_criteria_args(parser, task, mode=True):
