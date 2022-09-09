@@ -292,6 +292,7 @@ def main(args):
         args.test_size = -1
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
+    compressed_input = False
     if 'compressed' in args.data_group:
         compressed_input = True
     transform, _, _ = utils.get_zarr_transform(normalize=True, compressed_input=compressed_input)

@@ -49,17 +49,18 @@ def setup_network(state, use_gpu=False):
 
 
 def decompress_image(decomp_model, input_filename, output_filename,
-        patch_size=512,
-        offset=0,
-        stitch_batches=False,
-        destination_format='zarr', 
-        workers=0,
-        batch_size=1,
-        reconstruction_level=-1,
-        compute_pyramids=True,
-        data_mode='train',
-        data_axes='TCZYX',
-        data_group='0/0'):
+                     patch_size=512,
+                     offset=0,
+                     stitch_batches=False,
+                     destination_format='zarr', 
+                     workers=0,
+                     batch_size=1,
+                     reconstruction_level=-1,
+                     compute_pyramids=True,
+                     data_mode='train',
+                     data_axes='TCZYX',
+                     data_group='0/0',
+                     seed=None):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     src_group = zarr.open(input_filename, mode='r')
@@ -86,14 +87,14 @@ def decompress_image(decomp_model, input_filename, output_filename,
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     zarr_ds = utils.ZarrDataset(root=input_filename,
-        patch_size=comp_patch_size,
-        dataset_size=-1,
-        data_mode=data_mode,
-        offset=1 if offset > 0 else 0,
-        source_format='zarr',
-        workers=0,
-        data_axes=data_axes,
-        data_group=data_group)
+                                patch_size=comp_patch_size,
+                                dataset_size=-1,
+                                data_mode=data_mode,
+                                offset=1 if offset > 0 else 0,
+                                source_format='zarr',
+                                workers=0,
+                                data_axes=data_axes,
+                                data_group=data_group)
     
     data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=0, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
 
@@ -115,6 +116,7 @@ def decompress_image(decomp_model, input_filename, output_filename,
         offset=offset,
         stitch_batches=stitch_batches,
         model=str(decomp_model),
+        model_seed=seed,
         original=zarr_ds._data_group,
         version=DECOMP_VERSION
     )
@@ -241,7 +243,8 @@ def decompress(args):
             compute_pyramids=args.compute_pyramids,
             data_mode=args.data_mode,
             data_axes=args.data_axes,
-            data_group=args.data_group)
+            data_group=args.data_group,
+            seed=state['args']['seed'])
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 

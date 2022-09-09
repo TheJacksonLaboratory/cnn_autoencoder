@@ -129,13 +129,13 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         training_state['scheduler'] = scheduler.state_dict()
     else:
         training_state['scheduler'] = None
-    
+
     save_state('last', training_state, args)
-    
+
     if valid_loss_history[-1] < best_valid_loss:
         best_valid_loss = valid_loss_history[-1]
         save_state('best', training_state, args)
-    
+
     return best_valid_loss
 
 
@@ -168,7 +168,7 @@ def load_state(args):
         state['args']['gpu'] = False
     else:
         state = torch.load(save_fn)
-    
+
     logger = logging.getLogger(args.mode + '_log')
     logger.info('Loaded model from %s' % save_fn)
 

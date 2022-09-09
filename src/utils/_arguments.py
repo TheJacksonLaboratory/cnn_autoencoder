@@ -59,7 +59,6 @@ def add_data_args(parser, task, mode='training'):
 
         if mode == 'inference':
             parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
-            parser.add_argument('-nsb', '--no-stitching', action='store_false', dest='stitch_batches', help='Stitch the batches into a single image?', default=True)
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
 
     if mode == 'training':
@@ -80,7 +79,16 @@ def add_data_args(parser, task, mode='training'):
 
     if task in ['encoder', 'decoder', 'arithmetic_encoder', 'segmentation']:
         parser.add_argument('-o', '--output', type=str, nargs='+', dest='output_dir', help='Output directory, or list of filenames where to store the compressed image')
-        parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added  as suffix to the output filename of a compression/decompression process', default='')
+        parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added as suffix to the output filename of a compression/decompression process', default='')
+
+    # TODO: Probably a general label identifier for any task that stores
+    # annotations into a zarr file. The output could be inserted in the same
+    # zarr file this way.
+    if task in ['segmentation']:        
+        parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group inside the labels gorup where to store the segmentation', default='segmentation')
+
+    if task in ['encoder', 'decoder']:
+        parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store/load the compressed representation', default='compressed')
 
     if task in ['decoder']:
         parser.add_argument('-rl', '--rec-level', type=int, dest='reconstruction_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
@@ -100,14 +108,14 @@ def add_config_args(parser, mode=True):
     parser.add_argument('-cs', '--checksteps', type=int, dest='checkpoint_steps', help='Create a checkpoint every this number of steps', default=1e3)
     parser.add_argument('-esp', '--earlypatience', type=int, dest='patience', help='Early stopping patience, i.e. number of consecutive bad evaluations before stop training', default=5)
     parser.add_argument('-esw', '--earlywarmup', type=int, dest='warmup', help='Early stopping warmup steps, i.e. number of steps to perform before starting to count bad evaluations', default=1e4)
-    
+
     parser.add_argument('-rm', '--resume', type=str, dest='resume', help='Resume training from an existing checkpoint')
 
     parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
     parser.add_argument('-nch', '--netch', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)
     parser.add_argument('-bch', '--bnch', type=int, dest='channels_bn', help='Number of channels of the compressed representation', default=16)
     parser.add_argument('-ech', '--expch', type=int, dest='channels_expansion', help='Rate of expansion of the number of channels in the analysis and synthesis tracks', default=1)
-    
+
     parser.add_argument('-cl', '--compl', type=int, dest='compression_level', help='Level of compression', default=3)
 
 
@@ -117,7 +125,6 @@ def add_model_args(parser, task, mode=True):
     if task in ['segmentation']:
         parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
         parser.add_argument('-st', '--segmentation-threshold', type=float, dest='seg_threshold', help='Objects will be assigned to their corresponding class if those have a predicted confidence higher than this threshold value', default=0.5)
-
 
     if task == 'autoencoder':
         model_choices = CAE_MODELS
@@ -140,23 +147,20 @@ def add_model_args(parser, task, mode=True):
             parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
             parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
         parser.add_argument('-thr', '--prediction-threshold', type=float, dest='prediction_threshold', help=argparse.SUPPRESS, default=0.5)
-        
 
     elif task == 'projection':
         model_choices = PROJ_MODELS
 
     elif task == 'fact_ent':
         model_choices = FE_MODELS
-    
-    else:
-        raise ValueError('Task %s not supported' % task)
-    
-    if mode not in ['training']:
+
+    if mode in ['training']:
         parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of %s model' % task, choices=model_choices)
 
 
 def add_criteria_args(parser, task, mode=True):
-    if mode not in ['training']: return
+    if mode not in ['training']:
+        return
 
     if task == 'autoencoder':
         criteria_choices = CAE_CRITERIONS

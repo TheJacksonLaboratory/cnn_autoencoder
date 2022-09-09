@@ -322,7 +322,7 @@ def setup_optim(seg_model, args):
 
     # By now, only the ADAM optimizer is used
     optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    
+
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
@@ -355,7 +355,7 @@ def resume_checkpoint(seg_model, optimizer, scheduler, checkpoint, gpu=True):
         checkpoint_state = torch.load(checkpoint, map_location=torch.device('cpu'))
     else:
         checkpoint_state = torch.load(checkpoint)
-    
+
     seg_model.module.load_state_dict(checkpoint_state['model'])
 
     optimizer.load_state_dict(checkpoint_state['optimizer'])
@@ -384,25 +384,25 @@ def main(args):
     # Log the training setup
     logger.info('Network architecture:')
     logger.info(seg_model)
-    
+
     logger.info('\nCriterion:')
     logger.info(criterion)
-    
+
     logger.info('\nStopping criterion:')
     logger.info(stopping_criteria[0])
-    
+
     if len(stopping_criteria) > 1:
         logger.info('\nAdditinal stopping criterions:')
         logger.info(stopping_criteria[1])
 
     logger.info('\nOptimization parameters:')
     logger.info(optimizer)
-    
+
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
     train_data, valid_data = utils.get_data(args)
-    
+
     train(seg_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args, forward_function)
 
 
@@ -412,5 +412,5 @@ if __name__ == '__main__':
     utils.setup_logger(args)
 
     main(args)
-    
+
     logging.shutdown()
