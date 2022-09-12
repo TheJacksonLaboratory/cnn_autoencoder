@@ -1,14 +1,15 @@
 import logging
 import os
 
+from itertools import product
 import numpy as np
-from skimage.util import view_as_windows, montage
 import torch
 import torch.nn as nn
 
 import zarr
 import dask
 import dask.array as da
+from dask.distributed import LocalCluster, Client
 
 from numcodecs import Blosc
 
@@ -22,13 +23,13 @@ COMP_VERSION = '0.1'
 
 @dask.delayed
 def encode(x, comp_model, transform, offset=0):
-    H, W = x.shape[-2:]
-    x_t = transform(np.moveaxis(x, 0, -1)).view(1, -1, H, W)
+    x_t = transform(x.squeeze()).unsqueeze(0)
+
     y_q, _ = comp_model(x_t)
 
     y_q = y_q + 127.5
     y_q = y_q.round().to(torch.uint8)
-    y_q = y_q.detach().cpu().numpy()
+    y_q = y_q.detach().cpu().unsqueeze(2).numpy()
 
     h, w = y_q.shape[-2:]
     y_q = y_q[..., offset:h-offset, offset:w-offset]
@@ -45,13 +46,15 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                    data_group='0/0',
                    data_axes='TCZYX',
                    seed=None,
-                   comp_label='compressed'):
+                   comp_label='compressed',
+                   workers=1):
+
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
-    z = utils.image_to_zarr(input_filename, patch_size, source_format,
-                            data_group)
+    z_arr = utils.image_to_zarr(input_filename, patch_size, source_format,
+                                data_group)
 
-    in_channels, in_H, in_W = [z.shape[data_axes.index(s)] for s in "CYX"]
+    in_channels, in_H, in_W = [z_arr.shape[data_axes.index(s)] for s in "CYX"]
 
     in_offset = 0
     out_offset = 0
@@ -72,14 +75,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                (0, 0),
                (0, 0),
                (0, 0)]
-    padding = tuple([padding['XYZCT'.index(a)] for a in data_axes])
 
-    chunks = (patch_size,
-              patch_size,
-              1,
-              in_channels,
-              1)
-    chunks = tuple([chunks['XYZCT'.index(a)] for a in data_axes])
+    padding = tuple([padding['XYZCT'.index(a)] for a in data_axes])
 
     np_H = utils.compute_num_patches(in_H, patch_size + 2 * in_offset,
                                      pad_y + 2 * in_offset,
@@ -88,33 +85,44 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                                      pad_x + 2 * in_offset,
                                      patch_size)
 
-    z = da.from_zarr(z, chunks=chunks)
-    z = dask.delayed(utils.unfold_input)(z, in_channels,
-                                         patch_size + in_offset * 2,
-                                         patch_size,
-                                         padding)
-    z = da.from_delayed(z, shape=(np_H*np_W, in_channels,
-                                  patch_size + 2 * in_offset,
-                                  patch_size + 2 * in_offset),
-                        dtype=np.uint8)
+    z = da.from_zarr(z_arr)
+    z = da.pad(z, pad_width=padding, mode='reflect')
 
-    y = da.concatenate([
-         da.from_delayed(encode(z_patch, comp_model, transform, out_offset),
-                         shape=(1, channels_bn, out_patch_size, out_patch_size),
-                         dtype=np.uint8)
-         for z_patch in z])
+    slices = map(lambda ij:
+                 [slice(ij[1]*patch_size,
+                        ij[1]*patch_size + patch_size + 2 * in_offset, 1),
+                  slice(ij[0]*patch_size,
+                        ij[0]*patch_size + patch_size + 2 * in_offset, 1),
+                  slice(0, 1, 1),
+                  slice(0, in_channels, 1),
+                  slice(0, 1, 1)],
+                 product(range(np_H), range(np_W)))
+
+    slices = [tuple([None]
+              + [s['XYZCT'.index(a)] for a in data_axes])
+              for s in slices]
+
+    unused_axis = list(set(data_axes) - set('YXC'))
+    transpose_order = [0]
+    transpose_order += [data_axes.index(a) + 1 for a in unused_axis]
+    transpose_order += [data_axes.index(a) + 1 for a in 'YXC']
+
+    y = da.block([[da.from_delayed(encode(np.transpose(z[slices[i*np_W + j]],
+                                                       transpose_order),
+                                          comp_model,
+                                          transform, out_offset),
+                                   shape=(1, channels_bn, 1,
+                                          out_patch_size,
+                                          out_patch_size),
+                                   meta=np.empty((), dtype=np.float32))
+                   for j in range(np_W)]
+                  for i in range(np_H)])
 
     comp_H = out_patch_size * np_H
     comp_W = out_patch_size * np_W
 
-    y = da.from_delayed(dask.delayed(utils.fold_input)(y, channels_bn,
-                                                       out_patch_size, 
-                                                       np_H,
-                                                       np_W,
-                                                       comp_H,
-                                                       comp_W),
-                        shape=(1, channels_bn, 1, comp_H, comp_W),
-                        dtype=np.uint8)
+    cluster = LocalCluster(n_workers=1, threads_per_worker=workers)
+    client = Client(cluster)
 
     y.to_zarr(output_filename, component='%s/%s' % (comp_label, data_group),
               overwrite=True,
@@ -225,7 +233,8 @@ def compress(args):
             data_axes=args.data_axes,
             data_group=args.data_group,
             seed=state['args']['seed'],
-            comp_label=args.task_label_identifier)
+            comp_label=args.task_label_identifier,
+            workers=args.workers)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 

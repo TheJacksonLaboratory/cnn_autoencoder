@@ -1,5 +1,6 @@
 from ._zarrbased import (LabeledZarrDataset,
                          ZarrDataset,
+                         get_patch,
                          image_to_zarr,
                          compute_num_patches,
                          get_filenames,
