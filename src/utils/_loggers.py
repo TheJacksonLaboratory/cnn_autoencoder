@@ -142,12 +142,12 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
 
 def load_state(args):
     """ Loads an exisiting training state for its deployment, or resume its training.
-    
+
     Parameters
     ----------
     args : Namespace
         The input arguments passed at running time
-        
+
     Returns
     ----------
     state : dict

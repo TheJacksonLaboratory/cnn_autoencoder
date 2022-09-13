@@ -48,18 +48,28 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-lg', '--labels-group', type=str, dest='labels_group', help='For Zarr datasets, the group from where the lables are retrieved', default='labels/0/0')
         parser.add_argument('-lda', '--labels-data-axes', type=str, dest='labels_data_axes', help='Order of the axes in which the labels are stored. For 5 channels: XYZCT')
 
-    parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='0/0')
+
+    if task in ['decoder']:
+        parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='compressed/0/0')
+    else:
+        parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='0/0')
+
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
+
     if task in ['encoder', 'decoder', 'classifier', 'segmentation', 'autoencoder']:
         parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
         parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
         parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
-        parser.add_argument('-md', '--mode-data', type=str, dest='data_mode', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
-        parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
-        if mode == 'inference':
-            parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
+    if mode == 'inference':
+        parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
+        if task in ['decoder', 'segmentation']:
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
+        if task in ['encoder', 'segmentation' 'segmentation']:
+            parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+
+    if mode in ['trainig', 'test']:
+        parser.add_argument('-md', '--mode-data', type=str, dest='data_mode', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
 
     if mode == 'training':
         parser.add_argument('-aed', '--elastic-def', action='store_true', dest='elastic_deformation', help='Use elastic deformation to augment the original data')
@@ -87,11 +97,12 @@ def add_data_args(parser, task, mode='training'):
     if task in ['segmentation']:        
         parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group inside the labels gorup where to store the segmentation', default='segmentation')
 
-    if task in ['encoder', 'decoder']:
-        parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store/load the compressed representation', default='compressed')
+    if task in ['encoder']:
+        parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store the compressed representation', default='compressed')
 
     if task in ['decoder']:
-        parser.add_argument('-rl', '--rec-level', type=int, dest='reconstruction_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
+        parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store the reconstructed image', default='reconstruction')
+        parser.add_argument('-rl', '--rec-level', type=int, dest='rec_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
         parser.add_argument('-pyr', '--pyramids', action='store_true', dest='compute_pyramids', help='Compute a pyramid representation of the image and store it in the same file', default=False)
 
 
@@ -143,7 +154,7 @@ def add_model_args(parser, task, mode=True):
 
     elif task == 'segmentation':
         model_choices = SEG_MODELS
-        if mode not in ['training']:
+        if mode in ['training']:
             parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
             parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
         parser.add_argument('-thr', '--prediction-threshold', type=float, dest='prediction_threshold', help=argparse.SUPPRESS, default=0.5)

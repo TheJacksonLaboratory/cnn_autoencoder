@@ -9,7 +9,6 @@ import torch.nn as nn
 import zarr
 import dask
 import dask.array as da
-from dask.distributed import LocalCluster, Client
 
 from numcodecs import Blosc
 
@@ -18,7 +17,7 @@ import models
 import utils
 
 
-COMP_VERSION = '0.1'
+COMP_VERSION = '0.1.2'
 
 
 @dask.delayed
@@ -27,9 +26,9 @@ def encode(x, comp_model, transform, offset=0):
 
     y_q, _ = comp_model(x_t)
 
-    y_q = y_q + 127.5
+    y_q = y_q.detach().cpu() + 127.5
     y_q = y_q.round().to(torch.uint8)
-    y_q = y_q.detach().cpu().unsqueeze(2).numpy()
+    y_q = y_q.unsqueeze(2).numpy()
 
     h, w = y_q.shape[-2:]
     y_q = y_q[..., offset:h-offset, offset:w-offset]
@@ -46,8 +45,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                    data_group='0/0',
                    data_axes='TCZYX',
                    seed=None,
-                   comp_label='compressed',
-                   workers=1):
+                   comp_label='compressed'):
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
@@ -110,27 +108,32 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
     y = da.block([[da.from_delayed(encode(np.transpose(z[slices[i*np_W + j]],
                                                        transpose_order),
                                           comp_model,
-                                          transform, out_offset),
+                                          transform,
+                                          out_offset),
                                    shape=(1, channels_bn, 1,
                                           out_patch_size,
                                           out_patch_size),
-                                   meta=np.empty((), dtype=np.float32))
+                                   meta=np.empty((), dtype=np.uint8))
                    for j in range(np_W)]
                   for i in range(np_H)])
 
     comp_H = out_patch_size * np_H
     comp_W = out_patch_size * np_W
 
-    cluster = LocalCluster(n_workers=1, threads_per_worker=workers)
-    client = Client(cluster)
+    if len(comp_label):
+        component = '%s/%s' % (comp_label, data_group)
+    else:
+        component = data_group
 
-    y.to_zarr(output_filename, component='%s/%s' % (comp_label, data_group),
-              overwrite=True,
+    y.to_zarr(output_filename, component=component, overwrite=True,
               compressor=compressor)
 
     # Add metadata to the compressed zarr file
     group = zarr.open(output_filename)
-    comp_group = group[comp_label]
+    if len(comp_label):
+        comp_group = group[comp_label]
+    else:
+        comp_group = group
 
     comp_group.attrs['compression_metadata'] = dict(
         height=in_H,
@@ -146,10 +149,11 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
         model=str(comp_model),
         model_seed=seed,
         original=data_group,
+        group=comp_label,
         version=COMP_VERSION
     )
 
-    if 'zarr' in source_format:
+    if 'zarr' in source_format and output_filename != input_filename:
         z_org = zarr.open(output_filename, mode="rw")
         if 'labels' in z_org.keys():
             zarr.copy(z_org['labels'], group)
@@ -186,7 +190,8 @@ def setup_network(state, use_gpu=False):
 
 
 def compress(args):
-    """ Compress any supported file format (zarr, or any supported by PIL) into a compressed representation in zarr format.
+    """Compress any supported file format (zarr, or any supported by PIL) into
+    a compressed representation in zarr format.
     """
     logger = logging.getLogger(args.mode + '_log')
 
@@ -203,9 +208,9 @@ def compress(args):
         args.source_format = '.' + args.source_format
 
     input_fn_list = utils.get_filenames(args.data_dir, args.source_format,
-                                        args.data_mode)
+                                        data_mode='all')
 
-    if args.destination_format.lower() not in args.output_dir[0].lower():
+    if '.zarr' not in args.output_dir[0].lower():
         # If the output path is a directory, append the input filenames to it,
         # so the compressed files have the same name as the original file.
         fn_list = map(lambda fn:
@@ -233,8 +238,7 @@ def compress(args):
             data_axes=args.data_axes,
             data_group=args.data_group,
             seed=state['args']['seed'],
-            comp_label=args.task_label_identifier,
-            workers=args.workers)
+            comp_label=args.task_label_identifier)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 

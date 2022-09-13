@@ -253,14 +253,14 @@ class Synthesizer(nn.Module):
         up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
                                      groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
                     for i in reversed(range(compression_level))]
-        
+
         # Final color reconvertion
         up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect'))
 
         self.synthesis_track = nn.Sequential(*up_track)
 
         self.apply(initialize_weights)
-        
+
     def inflate(self, x, color=True):
         x_brg = []
         # DataParallel only sends 'x' to the GPU memory when the forward method is used and not for other methods
@@ -280,12 +280,33 @@ class Synthesizer(nn.Module):
         x = self.synthesis_track(x)
         return x
 
-    def forward_steps(self, x, reconstruction_level=-2):
+    def forward_steps(self, x, rec_level=-2):
         fx = self.synthesis_track[0](x.to(self.synthesis_track[0].weight.device))
         color_layer = self.synthesis_track[-1]
 
         x_r_ms = []
-        for up_layer in self.synthesis_track[1:(reconstruction_level+1)]:
+        for up_layer in self.synthesis_track[1:(rec_level+1)]:
+            fx = up_layer(fx)
+            x_r = color_layer(fx)
+            x_r_ms.insert(0, x_r)
+
+        return x_r_ms
+
+
+class SynthesizerInflate(Synthesizer):
+    def __init__(self, rec_level=-1, **kwargs):
+        super(SynthesizerInflate, self).__init__(**kwargs)
+        if rec_level < 1:
+            rec_level = len(self.synthesis_track) - 2
+
+        self._rec_level = rec_level
+
+    def forward(self, x):
+        fx = self.synthesis_track[0](x)
+        color_layer = self.synthesis_track[-1]
+
+        x_r_ms = []
+        for up_layer in self.synthesis_track[1:self._rec_level]:
             fx = up_layer(fx)
             x_r = color_layer(fx)
             x_r_ms.insert(0, x_r)

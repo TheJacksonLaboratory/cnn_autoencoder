@@ -151,7 +151,8 @@ def get_zarr_transform(data_mode='testing', normalize=True,
         if compressed_input:
             prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
         else:
-            prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+            prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5),
+                                                        std=(0.5, 0.5, 0.5)))
 
     if add_noise:
         prep_trans_list.append(AddGaussianNoise(0., 0.1))
