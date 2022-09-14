@@ -102,7 +102,7 @@ def add_data_args(parser, task, mode='training'):
 
     if task in ['decoder']:
         parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store the reconstructed image', default='reconstruction')
-        parser.add_argument('-rl', '--rec-level', type=int, dest='rec_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
+        parser.add_argument('-rl', '--rec-level', type=int, dest='reconstruction_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
         parser.add_argument('-pyr', '--pyramids', action='store_true', dest='compute_pyramids', help='Compute a pyramid representation of the image and store it in the same file', default=False)
 
 

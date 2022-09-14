@@ -24,15 +24,6 @@ def forward_undecoded_step(x, seg_model, decoder_model=None):
 
 def forward_decoded_step(x, seg_model, decoder_model=None):
     with torch.no_grad():
-        x_brg = decoder_model.inflate(x, color=False)
-
-    y = seg_model(x / 127.5, x_brg[:0:-1])
-
-    return y
-
-
-def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
-    with torch.no_grad():
         x_brg = decoder_model.module.inflate(x, color=False)
 
     y = seg_model(x / 127.5, x_brg[:0:-1])
@@ -56,7 +47,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
         Current logger used to track thre model performance during training
     forward_fun: function
         Function used to perform the feed-forward step
-    
+
     Returns
     -------
     mean_loss : float
@@ -177,11 +168,11 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
                 stopping_criteria[0].update(iteration=step)
-            
+
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: Interrupting training ****')
                 break
-        
+
     else:
         completed = True
 
@@ -221,8 +212,8 @@ def setup_network(args):
         decoder_model = models.Synthesizer(**checkpoint_state['args'])
         decoder_model.load_state_dict(checkpoint_state['decoder'])
 
+        decoder_model = nn.DataParallel(decoder_model)
         if args.gpu:
-            decoder_model = nn.DataParallel(decoder_model)
             decoder_model.cuda()
 
         decoder_model.eval()
@@ -243,18 +234,12 @@ def setup_network(args):
 
     # Define what funtion use in the feed-forward step
     if args.autoencoder_model is not None:
-        if args.gpu:
-            forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
-        else:
-            forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
+        forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
 
     else:
         if 'Decoder' in args.model_type:
             # If no decoder is loaded, use the inflate function inside the segmentation model
-            if args.gpu:
-                forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, decoder_model=seg_model)
-            else:
-                forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=seg_model)
+            forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=seg_model)
         else:
             forward_function = partial(forward_undecoded_step, seg_model=seg_model, decoder_model=None)
 

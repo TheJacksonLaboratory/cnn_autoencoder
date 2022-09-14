@@ -49,8 +49,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
-    z_arr = utils.image_to_zarr(input_filename, patch_size, source_format,
-                                data_group)
+    z_arr, _ = utils.image_to_zarr(input_filename, patch_size, source_format,
+                                   data_group)
 
     in_channels, in_H, in_W = [z_arr.shape[data_axes.index(s)] for s in "CYX"]
 
