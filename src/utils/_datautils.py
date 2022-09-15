@@ -94,14 +94,14 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
 
     elif task == 'segmentation':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
-        if 'train' in data_mode:
+        if 'train' in data_mode or 'test' in data_mode:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
 
     elif task == 'classification':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels)
-        if 'train' in data_mode or 'testing' in data_mode:
+        if 'train' in data_mode or 'test' in data_mode:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
@@ -134,7 +134,7 @@ def get_data(args):
     # However, when a directory is given, it should be taken directly as the root directory of the dataset
     if isinstance(args_dict['data_dir'], list) and len(args_dict['data_dir']) == 1:
         args_dict['data_dir'] = args_dict['data_dir'][0]
-    
+
     if args_dict['dataset'] == 'MNIST':
         return get_MNIST(**args_dict)
 

@@ -92,7 +92,7 @@ class Analyzer(nn.Module):
 
         # Final convolution in the analysis track
         self.analysis_track = nn.ModuleList(down_track)
-        
+
         self.apply(initialize_weights)
 
     def forward(self, x):
@@ -101,25 +101,25 @@ class Analyzer(nn.Module):
         # Store the output of each layer as bridge connection to the synthesis track
         fx_brg_list = []
         for i, layer in enumerate(self.analysis_track):
-            fx_brg_list.append(fx)
+            fx_brg_list.insert(0, fx)
             fx = layer(fx)
-            
+
         return fx, fx_brg_list
 
 
 class Synthesizer(nn.Module):
     def __init__(self, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, bridge=True, groups=False, batch_norm=False, dropout=0.0, bias=False, **kwargs):
         super(Synthesizer, self).__init__()
-        
+
         input_channels_mult = 2 if bridge else 1
-        
+
         self.embedding = nn.ConvTranspose2d(channels_bn, channels_net * channels_expansion**(compression_level-1), kernel_size=2, stride=2, padding=0, groups=channels_bn if groups else 1, bias=bias)
 
         # Initial deconvolution in the synthesis track
         up_track = [UpsamplingUnit(channels_in=input_channels_mult * channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
-                                     groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+                                   groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
                     for i in reversed(range(compression_level-1))]
-        
+
         self.synthesis_track = nn.ModuleList(up_track)
 
         # Final class prediction
@@ -132,13 +132,11 @@ class Synthesizer(nn.Module):
     def forward(self, x, x_brg):
         fx = self.embedding(x)
 
-        for i, (layer, x_k) in enumerate(zip(self.synthesis_track, reversed(x_brg))):
+        for layer, x_k in zip(self.synthesis_track + [self.predict], x_brg):
             fx = torch.cat((fx, x_k), dim=1)
             fx = layer(fx)
-        
-        fx = torch.cat((fx, x_brg[0]), dim=1)
-        y = self.predict(fx)
-        return y
+
+        return fx
 
 
     def extract_features(self, x, x_brg):
@@ -275,18 +273,18 @@ if __name__ == '__main__':
     parser.add_argument('-cbn', '--channels-bottleneck', type=int, dest='channels_bn', help='Channels in the bottleneck', default=48)
     parser.add_argument('-cn', '--channels-net', type=int, dest='channels_net', help='Channels in the first layer of the network', default=8)
     parser.add_argument('-cl', '--compression', type=int, dest='compression_level', help='Compression level at the deepest layer', default=3)
-    
+
     args = parser.parse_args()
-    
+
     models = {'UNet': UNet, 'UNetNoBridge': UNetNoBridge, 'DecoderUNet':DecoderUNet}
-    
+
     net = models[args.model_type](compression_level=args.compression_level, channels_net=args.channels_net, channels_bn=args.channels_bn, channels_expansion=args.channels_expansion)
-    
+
     if args.model_type in ['UNet', 'UNetNoBridge']:
         x = torch.rand([10, 3, 64, 64])
     elif args.model_type == 'DecoderUNet':
         x = torch.rand([10, args.channels_bn, 64//2**args.compression_level, 64//2**args.compression_level])
-    
+
     y = net(x)
 
     t = torch.randint_like(y, high=2)

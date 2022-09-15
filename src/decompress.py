@@ -82,7 +82,7 @@ def decompress_image(decomp_model, input_filename, output_filename,
                      decomp_label='reconstruction'):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
-    src_group = zarr.open(input_filename, mode='r')
+    src_group = zarr.open(input_filename.split(';')[0], mode='r')
     z_arr = src_group[data_group]
     comp_metadata = src_group[data_group.split('/')[0]]
     comp_metadata = comp_metadata.attrs['compression_metadata']
@@ -262,7 +262,7 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
     else:
         decomp_model = models.Synthesizer(**state['args'])
 
-    decomp_model.load_state_dict(state['decoder'])
+    decomp_model.load_state_dict(state['decoder'], strict=False)
 
     decomp_model = nn.DataParallel(decomp_model)
     if use_gpu:

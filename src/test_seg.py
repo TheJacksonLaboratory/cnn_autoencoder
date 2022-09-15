@@ -9,10 +9,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from functools import partial
-
 import models
 import utils
+import segment
 
 seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
 
@@ -112,10 +111,11 @@ def test(forward_function, data, args):
         n_examples += x.size(0)
 
         e_time = perf_counter()
-        y = forward_function(x)
+        with torch.no_grad():
+            y = forward_function(x)
         e_time = perf_counter() - e_time
 
-        y = y.detach().cpu().numpy().flatten()
+        y = y.cpu().numpy().flatten()
         t = t.numpy().flatten()
 
         eval_time = perf_counter()
@@ -135,16 +135,14 @@ def test(forward_function, data, args):
 
         all_metrics['time'].append(e_time)
 
-        if n_examples % max(1, int(0.1 * args.test_size)) == 0:
+        if n_examples % max(1, int(0.1 * args.test_dataset_size)) == 0:
             avg_metrics = ''
             for m_k in all_metrics.keys():
                 avg_metric = np.nanmean(all_metrics[m_k])
                 avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
-            logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_size, avg_metrics))
+            logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_dataset_size if args.test_dataset_size > 0 else len(data), avg_metrics))
 
         load_time = perf_counter()
-        if n_examples >= args.test_size:
-            break
 
     logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
 
@@ -168,99 +166,6 @@ def test(forward_function, data, args):
     return all_metrics
 
 
-def forward_undecoded_step(x, seg_model=None, dec_model=None):
-    with torch.no_grad():
-        y = seg_model(x)
-        y = torch.sigmoid(y)
-    return y
-
-
-def forward_decoded_step(x, seg_model=None, dec_model=None):
-    # The compressed representation is stored as an unsigned integer between [0, 255].
-    # The transformation used in the dataloader transforms it into the range [-127.5, 127.5].
-    # However, the synthesis track of the segmentation task works better if the compressed representation is in the range [-1, 1].
-    # For this reason the tensor x is divided by 127.5.
-    with torch.no_grad():
-        x_brg = dec_model.module.inflate(x, color=False)
-        y = seg_model(x / 127.5, x_brg[:0:-1])
-        y = torch.sigmoid(y)
-    return y
-
-
-def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
-    with torch.no_grad():
-        x_brg = dec_model.module.inflate(x, color=False)
-        y = seg_model(x / 127.5, x_brg[:0:-1])
-        y = torch.sigmoid(y)
-    return y
-
-
-def setup_network(state, autoencoder_state=None, use_gpu=False):
-    """ Setup a nerual network for object segmentation.
-
-    Parameters
-    ----------
-    state : dict
-        Checkpoint state saved during the network training.
-
-    Returns
-    -------
-    forward_function : function
-        The function to be used as feed-forward step.
-    """
-    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
-    if ('Decoder' in state['args']['model_type'] and autoencoder_state is None) or 'NoBridge' in state['args']['model_type']:
-        state['args']['use_bridge'] = False
-    else:
-        state['args']['use_bridge'] = True
-
-    if autoencoder_state is not None:
-        dec_model = models.Synthesizer(**autoencoder_state['args'])
-        dec_model.load_state_dict(autoencoder_state['decoder'])
-
-        dec_model = nn.DataParallel(dec_model)
-        if use_gpu:
-            dec_model.cuda()
-
-        dec_model.eval()
-        state['args']['use_bridge'] = True
-    else:
-        dec_model = None
-
-    seg_model_class = seg_model_types.get(state['args']['model_type'], None)
-    if seg_model_class is None:
-        raise ValueError('Model type %s not supported' % state['args']['model_type'])
-
-    seg_model = seg_model_class(**state['args'])
-    seg_model.load_state_dict(state['model'])
-
-    if use_gpu:
-        seg_model = nn.DataParallel(seg_model)
-        seg_model.cuda()
-
-    if 'Decoder' in state['args']['model_type']:
-        state['args']['compressed_input'] = True
-
-        if dec_model is None:
-            dec_model = seg_model
-    else:
-        state['args']['compressed_input'] = False
-
-    # Define what funtion use in the feed-forward step
-    if seg_model is not None and dec_model is None:
-        # Segmentation w/o decoder
-        forward_function = partial(forward_undecoded_step, seg_model=seg_model, dec_model=dec_model)
-
-    elif seg_model is not None and dec_model is not None:
-        # Segmentation w/ decoder
-        if use_gpu:
-            forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, dec_model=dec_model)
-        else:
-            forward_function = partial(forward_decoded_step, seg_model=seg_model, dec_model=dec_model)
-
-    return forward_function
-
-
 def main(args):
     """ Set up the training environment
 
@@ -271,54 +176,27 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    state = torch.load(args.trained_model, map_location=None if args.use_gpu else 'cpu')
+    # Open checkpoint from trained model state
+    state = utils.load_state(args)
 
-    # If a decoder model is passed as argument, use the decoded step version of the feed-forward step
-    autoencoder_state = None
-    if args.autoencoder_model is not None:
-        autoencoder_state = torch.load(args.autoencoder_model, map_location=None if args.use_gpu else 'cpu')
-
-    forward_function = setup_network(state, autoencoder_state=autoencoder_state, use_gpu=args.use_gpu)
+    (_,
+     forward_fun,
+     compressed_input) = segment.setup_network(state,
+                                               args.autoencoder_model,
+                                               args.gpu)
+    args.compressed_input = compressed_input
 
     # Log the training setup
     logger.info('Network architecture:')
-    logger.info(forward_function)
+    logger.info(str(forward_fun))
 
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
 
-    if not hasattr(args, "test_size"):
-        args.test_size = -1
+    test_data = utils.get_data(args)
 
-    # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    compressed_input = False
-    if 'compressed' in args.data_group:
-        compressed_input = True
-    transform, _, _ = utils.get_zarr_transform(normalize=True, compressed_input=compressed_input)
-
-    test_data = utils.LabeledZarrDataset(root=args.data_dir,
-                                         dataset_size=args.test_dataset_size,
-                                         data_mode=args.data_mode,
-                                         patch_size=args.patch_size,
-                                         offset=0,
-                                         transform=transform,
-                                         source_format=args.source_format,
-                                         compressed_input=compressed_input,
-                                         data_group=args.data_group,
-                                         label_group=args.labels_group,
-                                         labels_data_axes=args.labels_data_axes,
-                                         workers=args.workers)
-    test_queue = DataLoader(test_data, batch_size=args.batch_size,
-                            num_workers=args.workers,
-                            shuffle=args.shuffle_test,
-                            pin_memory=True,
-                            worker_init_fn=utils.zarrdataset_worker_init)
-
-    if args.test_size < 0:
-        args.test_size = len(test_data)
-
-    all_metrics_stats = test(forward_function, test_queue, args)
+    all_metrics_stats = test(forward_fun, test_data, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
 
     for m_k in list(metric_fun.keys()) + ['time']:

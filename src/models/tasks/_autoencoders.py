@@ -251,7 +251,7 @@ class Synthesizer(nn.Module):
         # Initial convolution in the synthesis track
         up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect')]
         up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
-                                     groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+                                    groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
                      for i in reversed(range(compression_level))]
 
         # Final color reconvertion
@@ -296,21 +296,25 @@ class Synthesizer(nn.Module):
 
 
 class SynthesizerInflate(Synthesizer):
-    def __init__(self, rec_level=-1, **kwargs):
+    def __init__(self, rec_level=-1, color=True, **kwargs):
         super(SynthesizerInflate, self).__init__(**kwargs)
         if rec_level < 1:
             rec_level = len(self.synthesis_track) - 2
+
+        if color:
+            self.color_layer = self.synthesis_track[-1]
+        else:
+            self.color_layer = nn.Identity()
 
         self.rec_level = rec_level
 
     def forward(self, x):
         fx = self.synthesis_track[0](x)
-        color_layer = self.synthesis_track[-1]
-
         x_r_ms = []
+
         for up_layer in self.synthesis_track[1:1 + self.rec_level]:
             fx = up_layer(fx)
-            x_r = color_layer(fx)
+            x_r = self.color_layer(fx)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms

@@ -155,7 +155,7 @@ def load_state(args):
     """
 
     # If optimizer is not none, the state is being open as checkpoint to resume training
-    if args.mode == 'training':
+    if args.mode in ['training']:
         save_fn = os.path.join(args.log_dir, 'last_ver%s_%s.pth' % (args.version, args.seed))
     else:
         save_fn = args.trained_model

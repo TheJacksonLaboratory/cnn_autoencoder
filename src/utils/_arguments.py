@@ -48,7 +48,6 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-lg', '--labels-group', type=str, dest='labels_group', help='For Zarr datasets, the group from where the lables are retrieved', default='labels/0/0')
         parser.add_argument('-lda', '--labels-data-axes', type=str, dest='labels_data_axes', help='Order of the axes in which the labels are stored. For 5 channels: XYZCT')
 
-
     if task in ['decoder']:
         parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='compressed/0/0')
     else:
@@ -57,7 +56,7 @@ def add_data_args(parser, task, mode='training'):
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
 
     if task in ['encoder', 'decoder', 'classifier', 'segmentation', 'autoencoder']:
-        parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=128)
+        parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
         parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
         parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
 
@@ -65,8 +64,8 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
         if task in ['decoder', 'segmentation']:
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
-        if task in ['encoder', 'segmentation' 'segmentation']:
-            parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
+    if task in ['encoder', 'segmentation']:
+        parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
     if mode in ['trainig', 'test']:
         parser.add_argument('-md', '--mode-data', type=str, dest='data_mode', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
