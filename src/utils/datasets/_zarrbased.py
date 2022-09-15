@@ -572,6 +572,9 @@ class ZarrDataset(Dataset):
                 roi = [slice(0, s, 1) for s in arr_shape]
                 rois_list.append((id, tuple(roi)))
 
+        if compression_level is None:
+            compression_level = 0
+
         return z_list, rois_list, compression_level
 
     def _compute_size(self, z_list, rois_list):

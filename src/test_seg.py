@@ -2,55 +2,71 @@ import logging
 import os
 
 from time import perf_counter
-from sklearn.metrics import accuracy_score, roc_auc_score, recall_score, precision_score, f1_score
+from sklearn.metrics import (accuracy_score,
+                             roc_auc_score,
+                             roc_curve,
+                             recall_score,
+                             precision_score,
+                             f1_score)
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 
 import models
 import utils
 import segment
 
-seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
+seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
+                   "UNet": models.UNet,
+                   "DecoderUNet": models.DecoderUNet}
 
 
-def compute_roc(pred, target, pred_threshold=None):
+def compute_roc(pred, target, seg_threshold=None):
     try:
         roc = roc_auc_score(target, pred)
+
     except ValueError:
         roc = -1
+
     return roc
 
 
-def compute_f1(pred, target, pred_threshold=None):
+def compute_f1(pred, target, seg_threshold=None):
     try:
-        f1 = f1_score(target, pred > pred_threshold)
+        if target.sum() < 1.0:
+            f1 = -1
+        else:
+            f1 = f1_score(target, pred > seg_threshold)
     except ValueError:
         f1 = -1
     return f1
 
 
-def compute_acc(pred, target, pred_threshold=None):
+def compute_acc(pred, target, seg_threshold=None):
     try:
-        acc = accuracy_score(target, pred > pred_threshold)
+        acc = accuracy_score(target, pred > seg_threshold)
     except ValueError:
         acc = -1
     return acc
 
 
-def compute_recall(pred, target, pred_threshold=None):
+def compute_recall(pred, target, seg_threshold=None):
     try:
-        recall = recall_score(target, pred > pred_threshold)
+        if target.sum() < 1.0:
+            recall = -1
+        else:
+            recall = recall_score(target, pred > seg_threshold)
     except ValueError:
         recall = -1
     return recall
 
 
-def compute_prec(pred, target, pred_threshold=None):
+def compute_prec(pred, target, seg_threshold=None):
     try:
-        prec = precision_score(target, pred > pred_threshold)
+        if target.sum() < 1.0:
+            prec = -1
+        else:
+            prec = precision_score(target, pred > seg_threshold)
     except ValueError:
         prec = -1
     return prec
@@ -90,7 +106,7 @@ def test(forward_function, data, args):
     Returns
     -------
     metrics_dict : dict
-        Dictionary with the computed metrics         
+        Dictionary with the computed metrics
     """
     logger = logging.getLogger(args.mode + '_log')
 
@@ -102,6 +118,8 @@ def test(forward_function, data, args):
     metrics_eval_times = dict([(m_k, []) for m_k in metric_fun])
 
     n_examples = 0
+    all_predictions = []
+    all_gt_labels = []
 
     load_time = perf_counter()
     for i, (x, t) in enumerate(data):
@@ -118,11 +136,17 @@ def test(forward_function, data, args):
         y = y.cpu().numpy().flatten()
         t = t.numpy().flatten()
 
+        all_predictions.append(y)
+        all_gt_labels.append(t)
+
         eval_time = perf_counter()
         for m_k in metric_fun.keys():
             metrics_eval_time = perf_counter()
-            score = metric_fun[m_k](pred=y, target=t, pred_threshold=args.prediction_threshold)
+            score = metric_fun[m_k](pred=y, target=t,
+                                    seg_threshold=args.seg_threshold)
+
             metrics_eval_time = perf_counter() - metrics_eval_time
+
             metrics_eval_times[m_k].append(metrics_eval_time)
 
             if score >= 0.0:
@@ -140,7 +164,11 @@ def test(forward_function, data, args):
             for m_k in all_metrics.keys():
                 avg_metric = np.nanmean(all_metrics[m_k])
                 avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
-            logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_dataset_size if args.test_dataset_size > 0 else len(data), avg_metrics))
+            logger.debug(
+                '\t[{:05d}/{:05d}][{:05d}/{:05d}] '
+                'Test metrics {}'.format(
+                    i, len(data), n_examples,
+                    args.test_dataset_size if args.test_dataset_size > 0 else len(data), avg_metrics))
 
         load_time = perf_counter()
 
@@ -159,7 +187,21 @@ def test(forward_function, data, args):
         min_metric = np.nanmin(all_metrics[m_k])
         max_metric = np.nanmax(all_metrics[m_k])
 
-        all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric, std=std_metric, med=med_metric, min=min_metric, max=max_metric)
+        all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric,
+                                                 std=std_metric,
+                                                 med=med_metric,
+                                                 min=min_metric,
+                                                 max=max_metric)
+
+    # Compute the ROC curve for all images to get a single curve
+    all_gt_labels = np.concatenate(all_gt_labels)
+    all_predictions = np.concatenate(all_predictions)
+
+    all_metrics['roc_all'] = compute_roc(all_predictions, all_gt_labels)
+    fpr, tpr, thresh = roc_curve(all_gt_labels, all_predictions)
+    all_metrics['fpr'] = fpr
+    all_metrics['tpr'] = tpr
+    all_metrics['thresh'] = thresh
 
     all_metrics.update(all_metrics_stats)
 

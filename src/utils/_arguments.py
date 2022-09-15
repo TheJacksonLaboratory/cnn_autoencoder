@@ -86,20 +86,20 @@ def add_data_args(parser, task, mode='training'):
     if mode in ['training', 'test']:
         parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
 
-    if task in ['encoder', 'decoder', 'arithmetic_encoder', 'segmentation']:
+    if mode in ['inference'] and task in ['encoder', 'decoder', 'arithmetic_encoder', 'segmentation']:
         parser.add_argument('-o', '--output', type=str, nargs='+', dest='output_dir', help='Output directory, or list of filenames where to store the compressed image')
         parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added as suffix to the output filename of a compression/decompression process', default='')
 
     # TODO: Probably a general label identifier for any task that stores
     # annotations into a zarr file. The output could be inserted in the same
     # zarr file this way.
-    if task in ['segmentation']:        
+    if mode in ['inference'] and task in ['segmentation']:        
         parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group inside the labels gorup where to store the segmentation', default='segmentation')
 
-    if task in ['encoder']:
+    if mode in ['inference'] and task in ['encoder']:
         parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store the compressed representation', default='compressed')
 
-    if task in ['decoder']:
+    if mode in ['inference'] and task in ['decoder']:
         parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store the reconstructed image', default='reconstruction')
         parser.add_argument('-rl', '--rec-level', type=int, dest='reconstruction_level', help='Level of reconstruction obtained from the compressed representation (<=compression level)', default=-1)
         parser.add_argument('-pyr', '--pyramids', action='store_true', dest='compute_pyramids', help='Compute a pyramid representation of the image and store it in the same file', default=False)
@@ -156,7 +156,6 @@ def add_model_args(parser, task, mode=True):
         if mode in ['training']:
             parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
             parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
-        parser.add_argument('-thr', '--prediction-threshold', type=float, dest='prediction_threshold', help=argparse.SUPPRESS, default=0.5)
 
     elif task == 'projection':
         model_choices = PROJ_MODELS
