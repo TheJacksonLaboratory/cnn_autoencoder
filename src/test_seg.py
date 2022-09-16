@@ -130,7 +130,7 @@ def test(forward_function, data, args):
 
         e_time = perf_counter()
         with torch.no_grad():
-            y = forward_function(x)
+            y = segment.segment_block(x, forward_function)
         e_time = perf_counter() - e_time
 
         y = y.cpu().numpy().flatten()

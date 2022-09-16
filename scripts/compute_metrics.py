@@ -10,7 +10,7 @@ from PIL import Image
 from skimage.color import deltaE_ciede2000, rgb2lab
 
 
-format_dict = {'JPEG2000': 'jp2', 'JPEG': 'jpeg', 'PNG':'png'}
+format_dict = {'JPEG2000': 'jp2', 'JPEG': 'jpeg', 'PNG': 'png'}
 
 
 def compute_deltaCIELAB(img, rec):
@@ -26,12 +26,14 @@ def compute_rmse(img, rec):
 
 
 def compute_rate(img, comp_size):
+    # Compute the compression rate as bits per pixel (bpp)
     return float(comp_size) / np.prod(img.shape[:-1])
 
 
 def metrics_image(src_fn, comp_fn):
-    """ Compute distortion and compression ratio from the compressed representation and reconstruction from a single image.
-    
+    """Compute distortion and compression ratio from the compressed
+    representation and reconstruction from a single image.
+
     Parameters:
     ----------
     src_fn: str
@@ -42,7 +44,10 @@ def metrics_image(src_fn, comp_fn):
     Returns
     -------
     metrics_dict : Dictionary
-        Dictionary with the computed metrics (dist=Distortion, rate=Compression rate (bpp), psnr=Peak Dignal-to-Noise Ratio (dB)), delta_cielab=Distance between images in the CIELAB color space
+        Dictionary with the computed metrics
+        (dist=Distortion, rate=Compression rate (bpp),
+         psnr=Peak Dignal-to-Noise Ratio (dB)),
+         delta_cielab=Distance between images in the CIELAB color space
     """
     img = Image.open(src_fn, mode='r')
     img_arr = np.array(img)
@@ -57,7 +62,7 @@ def metrics_image(src_fn, comp_fn):
     rate = compute_rate(img_arr, comp_size)
     psnr = compute_psnr(dist)
     delta_cielab = compute_deltaCIELAB(img_arr, comp_arr)
-    
+
     metrics_dict = dict(dist=dist, rate=rate, psnr=psnr, delta_cielab=delta_cielab)
 
     return metrics_dict
@@ -79,7 +84,7 @@ if __name__ == '__main__':
     parser.add_argument('-ld', '--log-dir', type=str, dest='log_dir', help='Path where to store the performance logging', default='.')
     parser.add_argument('-cq', '--comp-quality', type=int, dest='comp_quality', help='Compression quality (from 0 to 100)', default=100)
     parser.add_argument('-li', '--log-id', type=str, dest='log_identifier', help='An identifier added to the log files', default='')
-    
+
     args = parser.parse_args()
 
     in_filenames = ['.'.join(fn.split('.')[:-1]) for fn in os.listdir(args.src_dir) if fn.lower().endswith(format_dict[args.src_format])]

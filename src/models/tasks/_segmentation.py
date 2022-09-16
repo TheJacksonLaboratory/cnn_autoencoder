@@ -138,18 +138,17 @@ class Synthesizer(nn.Module):
 
         return fx
 
-
     def extract_features(self, x, x_brg):
         fx = self.embedding(x)
 
         for i, (layer, x_k) in enumerate(zip(self.synthesis_track, reversed(x_brg))):
             fx = torch.cat((fx, x_k), dim=1)
             fx = layer(fx)
-        
+
         fx = torch.cat((fx, x_brg[0]), dim=1)
         for layer in self.predict[:-1]:
             fx = layer(fx)
-        
+
         y = self.predict[-1](fx)
         return y, fx
 
@@ -197,17 +196,18 @@ class UNet(nn.Module):
         self.bottleneck = BottleNeck(channels_net, channels_bn, compression_level, channels_expansion, groups, batch_norm, dropout, bias)
         self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, True, groups, batch_norm, dropout, bias)
 
-    def forward(self, x):
+    def forward(self, x, fx_brg=None):
         fx, fx_brg = self.analysis(x)
         fx = self.bottleneck(fx)
         y = self.synthesis(fx, fx_brg)
         return y
 
-    def extract_features(self, x):
+    def extract_features(self, x, fx_brg=None):
         fx, fx_brg = self.analysis(x)
         fx = self.bottleneck(fx)
         y, fx = self.synthesis.extract_features(fx, fx_brg)
         return y, fx
+
 
 class UNetNoBridge(nn.Module):
     """ U-Net model for end-to-end segmentation without bridge connections.
@@ -221,15 +221,16 @@ class UNetNoBridge(nn.Module):
         self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, False, groups, batch_norm, dropout, bias)
         self._compression_level = compression_level
 
-    def forward(self, x):
+    def forward(self, x, fx_brg=None):
         b, _, h, w = x.size()
         fx, _ = self.analysis(x)
         fx = self.bottleneck(fx)
-        fx_brg = [torch.empty((b, 0, h // 2**s, w // 2**s), device=x.device) for s in range(self._compression_level)]
+        fx_brg = [torch.empty((b, 0, h // 2**s, w // 2**s), device=x.device)
+                  for s in range(self._compression_level)]
         y = self.synthesis(fx, fx_brg)
         return y
 
-    def extract_features(self, x):
+    def extract_features(self, x, fx_brg=None):
         fx, fx_brg = self.analysis(x)
         fx = self.bottleneck(fx)
         y, fx = self.synthesis.extract_features(fx, fx_brg)
@@ -237,9 +238,8 @@ class UNetNoBridge(nn.Module):
 
 
 class DecoderUNet(nn.Module):
-    """ Synthesis track from the U-Net model.
-    This architecture does not implement the bridge connections.
-    It is intended to work on compressed representations obtained from a compressor encoder.
+    """Also referred as J-Net, operates on compressed representations of the
+    input image.
     """
     def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.5, bias=True, use_bridge=False, **kwargs):
         super(DecoderUNet, self).__init__()        
@@ -247,23 +247,27 @@ class DecoderUNet(nn.Module):
         self._compression_level = compression_level
         self._channels_org = channels_org
 
-    def inflate(self, x, color=False):
-        """ Mimics the inflate function of a trained decoder/synthesizer model
-        """
-        b, _, h, w = x.size()
-        fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device) for s in range(self._compression_level+1)]
-        if color:
-            return torch.zeros([b, self._channels_org, h * 2**self._compression_level, w * 2**self._compression_level]).to(x.device), fx_brg
-
-        return fx_brg
-
-    def forward(self, x, fx_brg):  
+    def forward(self, x, fx_brg=None):
         y = self.synthesis(x, fx_brg)
         return y
 
     def extract_features(self, x, fx_brg):
         y, fx = self.synthesis.extract_features(x, fx_brg)
         return y, fx
+
+
+class EmptyBridge(nn.Module):
+    """Mimics the inflate function of a trained decoder/synthesizer model
+    """
+    def __init__(self, compression_level=3, **kwargs):
+        super(EmptyBridge, self).__init__()
+        self._compression_level = compression_level
+
+    def forward(self, x):
+        b, _, h, w = x.size()
+        fx_brg = [torch.empty((b, 0, h * 2**s, w * 2**s), device=x.device)
+                  for s in reversed(range(1, self._compression_level+1))]
+        return fx_brg
 
 
 if __name__ == '__main__':

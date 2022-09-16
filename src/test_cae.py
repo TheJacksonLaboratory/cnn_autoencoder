@@ -21,19 +21,19 @@ def compute_deltaCIELAB(x=None, x_r=None, y_q=None):
     convert_x_time = perf_counter()
     x_lab = rgb2lab(np.moveaxis(x, 1, -1))
     convert_x_time = perf_counter() - convert_x_time
-    
+
     convert_r_time = perf_counter()
     x_r_lab = rgb2lab(np.moveaxis(x_r, 1, -1))
     convert_r_time = perf_counter() - convert_r_time
-    
+
     delta_cielab_time = perf_counter()
     delta_cielab = deltaE_cie76(x_lab, x_r_lab)
     delta_cielab_time = perf_counter() - delta_cielab_time
-    
+
     mean_delta_cielab_time = perf_counter()
     mean_delta_cielab = np.mean(delta_cielab)
     mean_delta_cielab_time = perf_counter() - mean_delta_cielab_time
-    
+
     return mean_delta_cielab, dict(convert_x=convert_x_time, convert_r=convert_r_time, delta_cielab=delta_cielab_time, mean_delta_cielab=mean_delta_cielab_time, delta_shape_ndim=delta_cielab.ndim, delta_shape_b=delta_cielab.shape[0], delta_shape_x=delta_cielab.shape[1], delta_shape_y=delta_cielab.shape[2])
 
 
@@ -51,7 +51,12 @@ def compute_rmse(x=None, x_r=None, y_q=None):
 
 def compute_rate(x=None, x_r=None, y_q=None):
     # Check compression directly from the information of the zarr file
-    z_y_q = zarr.array(data=y_q, chunks=(1, y_q.shape[1], y_q.shape[2], y_q.shape[3]), dtype='u1', compressor=Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE))
+    z_y_q = zarr.array(data=y_q,
+                       chunks=(1, y_q.shape[1], y_q.shape[2], y_q.shape[3]),
+                       dtype='u1',
+                       compressor=Blosc(cname='zlib',
+                                        clevel=9,
+                                        shuffle=Blosc.BITSHUFFLE))
     return float(z_y_q.nbytes_stored) / np.prod(x.shape), None
 
 
@@ -61,7 +66,10 @@ def compute_rate(x=None, x_r=None, y_q=None):
     psnr=Peak Dignal-to-Noise Ratio (dB)
     delta_cielab=Distance between images in the CIELAB color space
 """
-metric_fun = {'dist': compute_rmse, 'rate':compute_rate, 'psnr': compute_psnr, 'delta_cielab': compute_deltaCIELAB}
+metric_fun = {'dist': compute_rmse,
+              'rate':compute_rate,
+              'psnr': compute_psnr,
+              'delta_cielab': compute_deltaCIELAB}
 
 
 def test(cae_model, data, args):
@@ -76,7 +84,7 @@ def test(cae_model, data, args):
         The test dataset. Because the target is recosntruct the input, the label associated is ignored
     args: Namespace
         The input arguments passed at running time
-    
+
     Returns
     -------
     metrics_dict : dict
@@ -252,13 +260,13 @@ def main(args):
         transform, _, _ = utils.get_zarr_transform(normalize=True)
         test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_dataset_size, data_mode=args.data_mode, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
-    
+
     if args.test_dataset_size < 0:
         args.test_dataset_size = len(test_data)
-    
+
     all_metrics_stats = test(cae_model, test_queue, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
-    
+
     for m_k in list(metric_fun.keys()) + ['time']:
         avg_metrics = '%s=%0.4f (+-%0.4f)' % (m_k, all_metrics_stats[m_k + '_stats']['avg'], all_metrics_stats[m_k + '_stats']['std'])
         logger.debug('==== Test metrics {}'.format(avg_metrics))

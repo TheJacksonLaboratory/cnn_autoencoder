@@ -236,7 +236,8 @@ def decompress_image(decomp_model, input_filename, output_filename,
         for r, y_r in enumerate(y_pyr):
             fn_out = fn_out_base + '_%i' % (reconstruction_level - r) + destination_format
             im = Image.fromarray(y_r.squeeze().transpose(1, 2, 0).compute())
-            im.save(fn_out)
+            im.save(fn_out, quality_opts = {'compress_level': 9,
+                                            'optimize': False})
 
 
 def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):

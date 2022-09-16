@@ -26,31 +26,41 @@ seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
                    "DecoderUNet": models.DecoderUNet}
 
 
-@dask.delayed
-def segment_block(x, forward_fun, transform, seg_threshold=0.5, offset=0):
-    x_t = transform(x.squeeze()).unsqueeze(0)
-    with torch.no_grad():
-        y = forward_fun(x_t)
+def segment_block(x, forward_fun, transform=None, seg_threshold=None,
+                  offset=0):
+    if transform is not None:
+        x_t = transform(x.squeeze()).unsqueeze(0)
+    else:
+        x_t = x.clone()
+
+    y = forward_fun(x_t)
 
     if y.shape[1] > 1:
-        y = torch.argmax(y.cpu(), dim=1).numpy()
+        if seg_threshold is None:
+            y = torch.softmax(y.cpu(), dim=1)
+        else:
+            y = torch.argmax(y.cpu(), dim=1)
+            y = y.numpy().astype(np.int32)
+
     else:
-        y = torch.sigmoid(y.cpu()).numpy()
-        y = y > seg_threshold
+        y = torch.sigmoid(y.cpu())
+        if seg_threshold is not None:
+            y = y > seg_threshold
+            y = y.numpy().astype(np.int32)
 
-    y = y.astype(np.int32)
+    if offset > 0:
+        H, W = y.shape[-2:]
+        y = y[:, :, np.newaxis, offset:H - offset, offset:W - offset]
 
-    H, W = y.shape[-2:]
-    y = y[:, :, np.newaxis, offset:H - offset, offset:W - offset]
     return y
 
 
-def forward_undecoded_step(x, seg_model, dec_model=None):
+def forward_undecoded_step(x, seg_model):
     y = seg_model(x)
     return y
 
 
-def forward_decoded_step(x, seg_model, dec_model=None):
+def forward_decoded_step(x, seg_model, dec_model):
     with torch.no_grad():
         x_brg = dec_model(x)
 
@@ -151,11 +161,12 @@ def segment_image(forward_fun, input_filename, output_filename, classes,
     transpose_order += [data_axes.index(a) + 1 for a in 'YXC']
 
     y = [da.from_delayed(
-            segment_block(np.transpose(z[slices[ij]], transpose_order),
-                          forward_fun,
-                          transform,
-                          seg_threshold=seg_threshold,
-                          offset=out_offset),
+            dask.delayed(segment_block)(np.transpose(z[slices[ij]],
+                                                     transpose_order),
+                                        forward_fun,
+                                        transform,
+                                        seg_threshold=seg_threshold,
+                                        offset=out_offset),
             shape=(1, classes, 1, patch_size, patch_size),
             meta=np.empty((), dtype=np.int32))
          for ij in range(np_W * np_H)]
@@ -224,7 +235,8 @@ def segment_image(forward_fun, input_filename, output_filename, classes,
             im = Image.fromarray(y.squeeze().transpose(1, 2, 0).compute())
         else:
             im = Image.fromarray(y.squeeze().compute())
-        im.save(output_filename)
+        im.save(output_filename, quality_opts={'compress_level': 9,
+                                               'optimize': False})
 
 
 def setup_network(state, autoencoder_model=None, use_gpu=False):
@@ -258,6 +270,11 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
     else:
         state['args']['use_bridge'] = True
 
+    if 'Decoder' in state['args']['model_type']:
+        compressed_input = True
+    else:
+        compressed_input = False
+
     if autoencoder_model is not None:
         # If a decoder model is passed as argument, use the decoded step
         # version of the feed-forward step.
@@ -273,6 +290,11 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
 
         dec_model.eval()
         state['args']['use_bridge'] = True
+
+    elif compressed_input:
+        dec_model = models.EmptyBridge(
+            compression_level=state['args']['compression_level'])
+
     else:
         dec_model = None
 
@@ -288,26 +310,16 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
     seg_model = nn.DataParallel(seg_model)
     if use_gpu:
         seg_model.cuda()
-
-    if 'Decoder' in state['args']['model_type']:
-        compressed_input = True
-
-        if dec_model is None:
-            dec_model = seg_model
-    else:
-        compressed_input = False
+    seg_model.eval()
 
     # Define what funtion use in the feed-forward step
-    if dec_model is None:
-        # Segmentation w/o decoder
-        forward_fun = partial(forward_undecoded_step,
-                              seg_model=seg_model,
+    if compressed_input:
+        # Segmentation w/ decoder
+        forward_fun = partial(forward_decoded_step, seg_model=seg_model,
                               dec_model=dec_model)
     else:
-        # Segmentation w/ decoder
-        forward_fun = partial(forward_decoded_step,
-                              seg_model=seg_model,
-                              dec_model=dec_model)
+        # Segmentation w/o decoder
+        forward_fun = partial(forward_undecoded_step, seg_model=seg_model)
 
     return seg_model, forward_fun, compressed_input
 
