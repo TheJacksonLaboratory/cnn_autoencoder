@@ -55,18 +55,16 @@ def segment_block(x, forward_fun, transform=None, seg_threshold=None,
     return y
 
 
-def forward_undecoded_step(x, seg_model):
-    y = seg_model(x)
-    return y
-
-
-def forward_decoded_step(x, seg_model, dec_model):
-    with torch.no_grad():
-        x_brg = dec_model(x)
+def forward_step_base(x, seg_model, dec_model=None, scale_input=1.0):
+    if dec_model is not None:
+        with torch.no_grad():
+            x_brg = dec_model(x)
+    else:
+        x_brg = None
 
     # The compressed tensor is in the range of [-127.5, 127.5], so it has to be
-    # rescaled to [-1, 1].
-    y = seg_model(x / 127.5, x_brg[::-1])
+    # rescaled to [-1, 1]. This is not necessary for uncompressed input.
+    y = seg_model(x / scale_input, x_brg)
     return y
 
 
@@ -263,19 +261,15 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
     """
     # When the model works on compressed representation, tell the dataloader to
     # obtain the compressed input and normal size target.
-    if ('Decoder' in state['args']['model_type']
-       and autoencoder_model is None
-       or 'NoBridge' in state['args']['model_type']):
-        state['args']['use_bridge'] = False
-    else:
-        state['args']['use_bridge'] = True
-
     if 'Decoder' in state['args']['model_type']:
         compressed_input = True
+        scale_input = 127.5
     else:
         compressed_input = False
+        scale_input = 1.0
 
-    if autoencoder_model is not None:
+    if ('Decoder' in state['args']['model_type']
+       and autoencoder_model is not None):
         # If a decoder model is passed as argument, use the decoded step
         # version of the feed-forward step.
         checkpoint_state = torch.load(autoencoder_model,
@@ -291,11 +285,20 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
         dec_model.eval()
         state['args']['use_bridge'] = True
 
-    elif compressed_input:
+    elif ('Decoder' in state['args']['model_type']
+          and autoencoder_model is None):
+        state['args']['use_bridge'] = False
         dec_model = models.EmptyBridge(
-            compression_level=state['args']['compression_level'])
+            compression_level=state['args']['compression_level'],
+            compressed_input=True)
+
+    elif 'NoBridge' in state['args']['model_type']:
+        state['args']['use_bridge'] = False
+        dec_model = models.EmptyBridge(compression_level=3,
+                                       compressed_input=False)
 
     else:
+        state['args']['use_bridge'] = True
         dec_model = None
 
     seg_model_class = seg_model_types.get(state['args']['model_type'], None)
@@ -310,16 +313,13 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
     seg_model = nn.DataParallel(seg_model)
     if use_gpu:
         seg_model.cuda()
+
     seg_model.eval()
 
     # Define what funtion use in the feed-forward step
-    if compressed_input:
-        # Segmentation w/ decoder
-        forward_fun = partial(forward_decoded_step, seg_model=seg_model,
-                              dec_model=dec_model)
-    else:
-        # Segmentation w/o decoder
-        forward_fun = partial(forward_undecoded_step, seg_model=seg_model)
+    forward_fun = partial(forward_step_base, seg_model=seg_model,
+                          dec_model=dec_model,
+                          scale_input=scale_input)
 
     return seg_model, forward_fun, compressed_input
 

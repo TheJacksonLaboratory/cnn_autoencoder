@@ -325,14 +325,14 @@ class AutoEncoder(nn.Module):
     """
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, K=4, r=3, **kwargs):
         super(AutoEncoder, self).__init__()
-        
+
         # Initial color embedding
         self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
 
         self.analysis = Analyzer(channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-        
+
         self.synthesis = Synthesizer(channels_org=channels_org, channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-        
+
         self.fact_entropy = FactorizedEntropy(channels_bn, K=K, r=r)
 
     def forward(self, x, synthesize_only=False):
