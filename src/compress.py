@@ -154,9 +154,11 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
         version=COMP_VERSION
     )
 
+    # Copy the labels of the original image
+    # TODO: Copy the Metadata from the OME folder if any
     if 'zarr' in source_format and output_filename != input_filename:
         z_org = zarr.open(output_filename, mode="rw")
-        if 'labels' in z_org.keys():
+        if 'labels' in z_org.keys() and 'labels' not in group.keys():
             zarr.copy(z_org['labels'], group)
 
 
