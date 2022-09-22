@@ -65,7 +65,7 @@ class RateDistortionMultiscale(nn.Module):
             with torch.no_grad():
                 x_org = F.conv2d(x_org, self._pyramid_downsample_kernel.repeat(x.size(1), 1, 1, 1), padding=2, groups=x.size(1))
                 x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear', align_corners=False)
-        
+
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
         return dist, rate
@@ -80,7 +80,7 @@ class PenaltyA(nn.Module):
         with torch.no_grad():
             x_mean = torch.mean(x, dim=1)
             x_var = torch.var(x_mean, dim=(1, 2)).unsqueeze(dim=1) + 1e-10
-        
+
         A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
         A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
 

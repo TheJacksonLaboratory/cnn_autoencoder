@@ -116,13 +116,6 @@ def decompress_image(decomp_model, input_filename, output_filename,
     np_W_prior += (np_W_prior * in_patch_size - in_W) < 0
     pad_x = np_W_prior * in_patch_size - in_W
 
-    padding = [(in_offset, pad_x + in_offset), (in_offset, pad_y + in_offset),
-               (0, 0),
-               (0, 0),
-               (0, 0)]
-
-    padding = tuple([padding['XYZCT'.index(a)] for a in data_axes])
-
     np_H = utils.compute_num_patches(in_H, in_patch_size + 2 * in_offset,
                                      pad_y + 2 * in_offset,
                                      in_patch_size)
@@ -131,7 +124,22 @@ def decompress_image(decomp_model, input_filename, output_filename,
                                      in_patch_size)
 
     z = da.from_zarr(z_arr)
+
+    padding = [(in_offset, in_offset), (in_offset, in_offset), (0, 0), (0, 0),
+               (0, 0)]
+    padding = tuple([padding['XYZCT'.index(a)] for a in data_axes])
+
+    padding_match = [(0, pad_x), (0, pad_y), (0, 0), (0, 0), (0, 0)]
+    padding_match = tuple([padding_match['XYZCT'.index(a)] for a in data_axes])
+
+    # The first padding adds enough information from the same image to prevent
+    # edge artidacts.
     z = da.pad(z, pad_width=padding, mode='reflect')
+
+    # The second padding is added to match the size of the patches that are
+    # processed by the model. Commonly, padding larger than the orginal image
+    # are not allowed by the `reflect` paddin mode.
+    z = da.pad(z, pad_width=padding_match, mode='constant')
 
     slices = map(lambda ij:
                  [slice(ij[1]*in_patch_size,

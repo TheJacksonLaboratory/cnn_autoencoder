@@ -145,7 +145,7 @@ class FactorizedEntropyLaplace(nn.Module):
     def __init__(self, **kwargs):
         super(FactorizedEntropyLaplace, self).__init__()
         self._gaussian_approx = None
-        
+    
     def reset(self, x):
         self._gaussian_approx = torch.distributions.Laplace(torch.zeros_like(x), torch.var(x.detach(), dim=(0, 2,3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
 
@@ -178,7 +178,7 @@ class DownsamplingUnit(nn.Module):
     def forward(self, x):
         fx = self.model(x)
         return fx
-    
+
 
 class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=True):
@@ -232,7 +232,7 @@ class Analyzer(nn.Module):
         down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5, inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
-        
+
         self.quantizer = Quantizer()
 
         self.apply(initialize_weights)
