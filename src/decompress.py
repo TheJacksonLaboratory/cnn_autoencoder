@@ -92,7 +92,7 @@ def decompress_image(decomp_model, input_filename, output_filename,
     in_channels = comp_metadata['channels']
     H = comp_metadata['height']
     W = comp_metadata['width']
-    comp_label = comp_metadata['group']
+    comp_label = comp_metadata.get('group', data_group.split('/')[0])
 
     if reconstruction_level < 0:
         reconstruction_level = comp_level
@@ -233,7 +233,7 @@ def decompress_image(decomp_model, input_filename, output_filename,
         )
 
         if 'zarr' in destination_format and output_filename != input_filename:
-            z_org = zarr.open(output_filename, mode="rw")
+            z_org = zarr.open(output_filename, mode='rw')
             if 'labels' in z_org.keys():
                 zarr.copy(z_org['labels'], group)
     else:
@@ -300,7 +300,7 @@ def decompress(args):
     if not args.destination_format.startswith('.'):
         args.destination_format = '.' + args.destination_format
 
-    input_fn_list = utils.get_filenames(args.data_dir, source_format='zarr',
+    input_fn_list = utils.get_filenames(args.data_dir, source_format='.zarr',
                                         data_mode='all')
 
     if args.destination_format.lower() not in args.output_dir[0].lower():

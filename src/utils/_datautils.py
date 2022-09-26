@@ -89,7 +89,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
     """
 
     if task == 'autoencoder':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input)
+        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
         histo_dataset = ZarrDataset
 
     elif task == 'segmentation':

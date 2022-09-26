@@ -21,18 +21,20 @@ def image_to_zarr(arr_src, patch_size, source_format, data_group,
             arr_src = zarr.open(arr_src, mode='r')
 
         arr = arr_src[data_group]
+        comp_group = data_group.split('/')[0]
 
         if (compressed_input
-           and 'compressed' in arr_src.keys()
-           and 'compression_metadata' in arr_src['compressed'].attrs.keys()):
+           and comp_group in arr_src.keys()
+           and 'compression_metadata' in arr_src[comp_group].attrs.keys()):
             comp_metadata = arr_src['compressed'].attrs['compression_metadata']
             compressed_channels = comp_metadata['compressed_channels']
             org_H = comp_metadata['height']
             org_W = comp_metadata['width']
+            compression_level = comp_metadata['compression_level']
             arr_shape = (1, compressed_channels, 1, org_H, org_W)
-
         else:
             arr_shape = arr.shape
+            compression_level = 0
 
     elif (isinstance(arr_src, str) and '.zarr' not in source_format):
         # If the input is a path to an image stored in a format
@@ -41,12 +43,14 @@ def image_to_zarr(arr_src, patch_size, source_format, data_group,
         arr = zarr.array(arr, chunks=(1, arr.shape[1], 1, patch_size,
                          patch_size))
         arr_shape = arr.shape
+        compression_level = 0
     else:
         # Otherwise, use directly the zarr array
         arr = arr_src
         arr_shape = arr.shape
+        compression_level = 0
 
-    return arr, arr_shape
+    return arr, arr_shape, compression_level
 
 
 def compute_num_patches(size, patch_size, padding, stride):
@@ -351,17 +355,19 @@ def zarrdataset_worker_init(worker_id):
 
     if (len(filenames_rois) > 1
        and len(filenames_rois) >= worker_info.num_workers):
-        nf_worker = int(math.ceil(len(filenames_rois) 
+        nf_worker = int(math.ceil(len(filenames_rois)
                                   / worker_info.num_workers))
         curr_worker_filenames = \
-            dataset_obj._filenames[worker_id*nf_worker:(worker_id + 1)*nf_worker]
+            dataset_obj._filenames[
+                worker_id*nf_worker:(worker_id + 1)*nf_worker]
         curr_worker_rois = None
     elif (len(filenames_rois) == 1
-         and len(filenames_rois[0][1]) >= worker_info.num_workers):
-        nf_worker = int(math.ceil(len(filenames_rois[0][1]) 
+          and len(filenames_rois[0][1]) >= worker_info.num_workers):
+        nf_worker = int(math.ceil(len(filenames_rois[0][1])
                                   / worker_info.num_workers))
         curr_worker_filenames = [filenames_rois[0][0]]
-        curr_worker_rois = [filenames_rois[0][1][worker_id*nf_worker:(worker_id+1)*nf_worker]]
+        curr_worker_rois = [
+            filenames_rois[0][1][worker_id*nf_worker:(worker_id+1)*nf_worker]]
     else:
         raise ValueError('Missmatching number of workers and input files/ROIs')
 
@@ -374,22 +380,25 @@ def zarrdataset_worker_init(worker_id):
             data_axes=dataset_obj._data_axes,
             compressed_input=dataset_obj._compressed_input,
             rois=curr_worker_rois)
-    if hasattr(dataset_obj, '_lab_list'):
-        dataset_obj._lab_list, dataset_obj._lab_rois_list, _ = \
-            dataset_obj._preload_files(curr_worker_filenames,
-                                       data_group=dataset_obj._labels_group,
-                                       data_axes=dataset_obj._labels_data_axes,
-                                       compressed_input=False,
-                                       rois=curr_worker_rois)
 
-    (_,
+    if hasattr(dataset_obj, '_lab_list'):
+        (dataset_obj._lab_list,
+         dataset_obj._lab_rois_list,
+         _) = \
+            dataset_obj._preload_files(
+                curr_worker_filenames,
+                data_group=dataset_obj._labels_group,
+                data_axes=dataset_obj._labels_data_axes,
+                compressed_input=False,
+                rois=curr_worker_rois)
+
+    (dataset_obj._dataset_size,
      dataset_obj._max_H,
      dataset_obj._max_W,
      dataset_obj._org_channels,
      dataset_obj._imgs_sizes,
      dataset_obj.imgs_shapes) = \
         dataset_obj._compute_size(dataset_obj.z_list, dataset_obj._rois_list)
-    dataset_obj._dataset_size //= worker_info.num_workers
 
 
 class ZarrDataset(Dataset):
@@ -408,7 +417,6 @@ class ZarrDataset(Dataset):
                  stride=None,
                  transform=None,
                  source_format='zarr',
-                 workers=0,
                  data_axes='TCZYX',
                  data_group='0/0',
                  compressed_input=False,
@@ -449,31 +457,20 @@ class ZarrDataset(Dataset):
 
         self._filenames = self._split_dataset(root)
 
-        if workers == 0:
-            self.z_list, self._rois_list, self._compression_level = \
-                self._preload_files(self._filenames,
-                                    data_group=self._data_group,
-                                    data_axes=self._data_axes,
-                                    compressed_input=self._compressed_input)
+        (self.z_list,
+         self._rois_list,
+         self._compression_level) = \
+             self._preload_files(self._filenames,
+                                 data_group=self._data_group,
+                                 data_axes=self._data_axes,
+                                 compressed_input=self._compressed_input)
 
-            (dataset_size,
-             self._max_H,
-             self._max_W,
-             self._org_channels,
-             self._imgs_sizes,
-             self.imgs_shapes) = self._compute_size(self.z_list,
-                                                    self._rois_list)
-        else:
-            self.z_list = None
-            self._rois_list = None
-            self._max_H = None
-            self._max_W = None
-            self._org_channels = None
-            self._imgs_sizes = None
-            self.imgs_shapes = None
-
-        if self._dataset_size < 0:
-            self._dataset_size = dataset_size
+        (self._dataset_size,
+         self._max_H,
+         self._max_W,
+         self._org_channels,
+         self._imgs_sizes,
+         self.imgs_shapes) = self._compute_size(self.z_list, self._rois_list)
 
     def _get_filenames(self, source):
         if (isinstance(source, str)
@@ -528,23 +525,10 @@ class ZarrDataset(Dataset):
 
         z_list = []
         rois_list = []
-        compression_level = None
+        compression_level = 0
 
         for id, (arr_src, rois) in enumerate(filenames_rois):
-            if (isinstance(arr_src, zarr.Group)
-               or (isinstance(arr_src, str) and '.zarr' in self._source_format)
-               and (compressed_input and compression_level is None)):
-                if isinstance(arr_src, str):
-                    zarr_src = zarr.open(arr_src, mode='r')
-                else:
-                    zarr_src = arr_src
-
-                if 'compressed' in zarr_src.keys():
-                    comp_metadata = zarr_src['compressed']
-                    comp_metadata = comp_metadata.attrs['compression_metadata']
-                    compression_level = comp_metadata['compression_level']
-
-            arr, arr_shape = \
+            arr, arr_shape, compression_level = \
                 image_to_zarr(arr_src, self._patch_size, self._source_format,
                               data_group, compressed_input)
             z_list.append(arr)
@@ -571,9 +555,6 @@ class ZarrDataset(Dataset):
             else:
                 roi = [slice(0, s, 1) for s in arr_shape]
                 rois_list.append((id, tuple(roi)))
-
-        if compression_level is None:
-            compression_level = 0
 
         return z_list, rois_list, compression_level
 

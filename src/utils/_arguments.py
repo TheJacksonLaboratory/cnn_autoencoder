@@ -27,7 +27,7 @@ def override_config_file(parser):
     # Set the random number generator seed for reproducibility
     if args.seed < 0:
         args.seed = np.random.randint(1, 100000)
-    
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed + 1)
 
@@ -63,7 +63,7 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
         if task in ['decoder', 'segmentation']:
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
-    if task in ['encoder', 'segmentation']:
+    if task in ['autoencoder', 'encoder', 'segmentation']:
         parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
     if mode in ['trainig', 'test']:
@@ -137,7 +137,7 @@ def add_model_args(parser, task, mode=True):
 
     if task == 'autoencoder':
         model_choices = CAE_MODELS
-        if mode not in ['training']:
+        if mode in ['training']:
             parser.add_argument('-eK', '--entK', type=int, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
             parser.add_argument('-er', '--entr', type=int, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
             parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
@@ -145,7 +145,7 @@ def add_model_args(parser, task, mode=True):
 
     elif task == 'classifier':
         model_choices = CLASS_MODELS
-        if mode not in ['training']:
+        if mode in ['training']:
             parser.add_argument('-pt', '--pre-trained', action='store_true', dest='pretrained', help='Use a pretrained model')
             parser.add_argument('-cns', '--consensus', action='store_true', dest='consensus', help='Use consensus to define the models\'s predicted class')
             parser.add_argument('-mrg', '--merge-labels', type=str, dest='merge_labels', help='Merge the labels spatialy to define the class of a patch', choices=MERGE_TYPES)

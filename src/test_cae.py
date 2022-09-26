@@ -3,6 +3,9 @@ import os
 
 from time import perf_counter
 from skimage.color import deltaE_cie76, rgb2lab
+from skimage.metrics import (mean_squared_error,
+                             peak_signal_noise_ratio,
+                             structural_similarity)
 
 import numpy as np
 import zarr
@@ -37,15 +40,18 @@ def compute_deltaCIELAB(x=None, x_r=None, y_q=None):
     return mean_delta_cielab, dict(convert_x=convert_x_time, convert_r=convert_r_time, delta_cielab=delta_cielab_time, mean_delta_cielab=mean_delta_cielab_time, delta_shape_ndim=delta_cielab.ndim, delta_shape_b=delta_cielab.shape[0], delta_shape_x=delta_cielab.shape[1], delta_shape_y=delta_cielab.shape[2])
 
 
+def compute_ssim(x=None, x_r=None, y_q=None):
+    ssim = structural_similarity(x, x_r)
+    return ssim, None
+
+
 def compute_psnr(x=None, x_r=None, y_q=None):
-    rmse, _ = compute_rmse(x=x, x_r=x_r)
-    if rmse < 0.0:
-        return -1.0, None
-    return 20 * np.log10(1.0 / rmse), None
+    psnr = peak_signal_noise_ratio(x, x_r)
+    return psnr, None
 
 
 def compute_rmse(x=None, x_r=None, y_q=None):
-    rmse = np.sqrt(np.mean((x_r/255.0 - x/255.0)**2))
+    rmse = mean_squared_error(x / 255.0, x_r / 255.0)
     return rmse, None
 
 
@@ -100,19 +106,23 @@ def test(cae_model, data, args):
     load_times = []
     eval_times = []
     metrics_eval_times = dict([(m_k, []) for m_k in metric_fun])
-    
+
     all_extra_info = {}
-    
+
     n_examples = 0
+
+    _ = next(iter(data))
 
     with torch.no_grad():
         load_time = perf_counter()
-        for i, (x, _) in enumerate(data):            
+        for i, (x, _) in enumerate(data):
+            if args.test_dataset_size < 0:
+                args.test_dataset_size = len(data.dataset)
             load_time = perf_counter() - load_time           
             load_times.append(load_time)
 
             n_examples += x.size(0)
-            
+
             e_time = perf_counter()
             x_r, y, _ = cae_model(x)
             y_q = y + 127.5
@@ -132,21 +142,21 @@ def test(cae_model, data, args):
                 score, extra_info = metric_fun[m_k](x=x, x_r=x_r, y_q=y_q)
                 metrics_eval_time = perf_counter() - metrics_eval_time
                 metrics_eval_times[m_k].append(metrics_eval_time)
-                
+
                 if extra_info is not None:
                     for e_k in extra_info.keys():
                         if all_extra_info.get(e_k, None) is None:
                             all_extra_info[e_k] = []
-                        
+
                         all_extra_info[e_k].append(extra_info[e_k])
-                
+
                 if score >= 0.0:
                     all_metrics[m_k].append(score)
                 else:
                     all_metrics[m_k].append(np.nan)
             eval_time = perf_counter() - eval_time
             eval_times.append(eval_time)
-            
+
             all_metrics['time'].append(e_time)
 
             if n_examples % max(1, int(0.1 * args.test_dataset_size)) == 0:
@@ -155,21 +165,21 @@ def test(cae_model, data, args):
                     avg_metric = np.nanmean(all_metrics[m_k])
                     avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
                 logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_dataset_size, avg_metrics))
-            
+
             load_time = perf_counter()
-    
+
     logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
-    
+
     for m_k in metrics_eval_times.keys():
         avg_eval_time = np.mean(metrics_eval_times[m_k])
         std_eval_time = np.std(metrics_eval_times[m_k])
         logger.debug('\tEvaluation of {} avg. time: {:0.5f} (+- {:0.5f})'.format(m_k, avg_eval_time, std_eval_time))    
-    
+
     for e_k in all_extra_info.keys():
         avg_ext_time = np.mean(all_extra_info[e_k])
         std_ext_time = np.std(all_extra_info[e_k])
         logger.debug('\tExtra info of {} avg. time: {:0.5f} (+- {:0.5f})'.format(e_k, avg_ext_time, std_ext_time))
-        
+
     all_metrics_stats = {}
     for m_k in all_metrics.keys():
         avg_metric = np.nanmean(all_metrics[m_k])
@@ -181,7 +191,7 @@ def test(cae_model, data, args):
         all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric, std=std_metric, med=med_metric, min=min_metric, max=max_metric)
 
     all_metrics.update(all_metrics_stats)
-    
+
     return all_metrics
 
 
@@ -193,7 +203,7 @@ def setup_network(args):
     args : Namespace
         The input arguments passed at running time. All the parameters are passed directly to the model constructor.
         This way, the constructor can take the parameters needed that have been passed by the user.
-    
+
     Returns
     -------
     cae_model : nn.Module
@@ -236,13 +246,10 @@ def main(args):
     # Log the training setup
     logger.info('Network architecture:')
     logger.info(cae_model)
-    
+
     # Generate a dataset from a single image to divide in patches and iterate using a dataloader
     if not args.source_format.startswith('.'):
         args.source_format = '.' + args.source_format
-
-    if not hasattr(args, "test_dataset_size"):
-        args.test_dataset_size = -1
 
     if args.dataset.lower() == 'imagenet.s3':
         if utils.ImageS3 is not None:
@@ -260,9 +267,6 @@ def main(args):
         transform, _, _ = utils.get_zarr_transform(normalize=True)
         test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_dataset_size, data_mode=args.data_mode, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
         test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
-
-    if args.test_dataset_size < 0:
-        args.test_dataset_size = len(test_data)
 
     all_metrics_stats = test(cae_model, test_queue, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))

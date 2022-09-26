@@ -89,7 +89,7 @@ class RandomRotationInputTarget(object):
         # rotate the input patch with bicubic interpolation, reflect the edges
         # to preserve the content in the image.
         patch = torch.from_numpy(rotate(patch.transpose(1, 2, 0), angle,
-                                        order=3,
+                                        order=4,
                                         reshape=False,
                                         mode='reflect').transpose(2, 0, 1)
                                  ).float()
