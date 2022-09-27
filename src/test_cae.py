@@ -10,23 +10,23 @@ from skimage.metrics import (mean_squared_error,
 import numpy as np
 import zarr
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 
 import models
 import utils
-from numcodecs import Blosc
+import compress
+import decompress
 
-model_options = {"AutoEncoder": models.AutoEncoder, "MaskedAutoEncoder": models.MaskedAutoEncoder}
+model_options = {"AutoEncoder": models.AutoEncoder,
+                 "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
 
-def compute_deltaCIELAB(x=None, x_r=None, y_q=None):
+def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
     convert_x_time = perf_counter()
-    x_lab = rgb2lab(np.moveaxis(x, 1, -1))
+    x_lab = rgb2lab(x)
     convert_x_time = perf_counter() - convert_x_time
 
     convert_r_time = perf_counter()
-    x_r_lab = rgb2lab(np.moveaxis(x_r, 1, -1))
+    x_r_lab = rgb2lab(x_r)
     convert_r_time = perf_counter() - convert_r_time
 
     delta_cielab_time = perf_counter()
@@ -37,201 +37,139 @@ def compute_deltaCIELAB(x=None, x_r=None, y_q=None):
     mean_delta_cielab = np.mean(delta_cielab)
     mean_delta_cielab_time = perf_counter() - mean_delta_cielab_time
 
-    return mean_delta_cielab, dict(convert_x=convert_x_time, convert_r=convert_r_time, delta_cielab=delta_cielab_time, mean_delta_cielab=mean_delta_cielab_time, delta_shape_ndim=delta_cielab.ndim, delta_shape_b=delta_cielab.shape[0], delta_shape_x=delta_cielab.shape[1], delta_shape_y=delta_cielab.shape[2])
+    return mean_delta_cielab, dict(convert_x=convert_x_time,
+                                   convert_r=convert_r_time,
+                                   delta_cielab=delta_cielab_time,
+                                   mean_delta_cielab=mean_delta_cielab_time,
+                                   delta_shape_ndim=delta_cielab.ndim,
+                                   delta_shape_x=delta_cielab.shape[0],
+                                   delta_shape_y=delta_cielab.shape[1])
 
 
-def compute_ssim(x=None, x_r=None, y_q=None):
-    ssim = structural_similarity(x, x_r)
+def compute_ssim(x=None, x_r=None, **kwargs):
+    ssim = structural_similarity(x, x_r, channel_axis=2)
     return ssim, None
 
 
-def compute_psnr(x=None, x_r=None, y_q=None):
+def compute_psnr(x=None, x_r=None, **kwargs):
     psnr = peak_signal_noise_ratio(x, x_r)
     return psnr, None
 
 
-def compute_rmse(x=None, x_r=None, y_q=None):
-    rmse = mean_squared_error(x / 255.0, x_r / 255.0)
+def compute_rmse(x=None, x_r=None, **kwargs):
+    rmse = np.sqrt(mean_squared_error(x / 255.0, x_r / 255.0))
     return rmse, None
 
 
-def compute_rate(x=None, x_r=None, y_q=None):
+def compute_rate(x=None, x_r=None, y_q_ptr=None, **kwargs):
     # Check compression directly from the information of the zarr file
-    z_y_q = zarr.array(data=y_q,
-                       chunks=(1, y_q.shape[1], y_q.shape[2], y_q.shape[3]),
-                       dtype='u1',
-                       compressor=Blosc(cname='zlib',
-                                        clevel=9,
-                                        shuffle=Blosc.BITSHUFFLE))
-    return float(z_y_q.nbytes_stored) / np.prod(x.shape), None
+    return 8 * float(y_q_ptr.nbytes_stored) / np.prod(x.shape[:-1]), None
 
 
 """Available metrics (can add more later):
-    dist=Distortion
-    rate=Compression rate (bpp)
+    dist=Distortion (RMSE)
+    rate=Compression rate (bits-per-pixel bpp)
+    ssim=Structural similarity
     psnr=Peak Dignal-to-Noise Ratio (dB)
-    delta_cielab=Distance between images in the CIELAB color space
+    delta_cielab=Distance between images in the CIELAB color space (RMSE in
+    CIELAB space)
 """
 metric_fun = {'dist': compute_rmse,
-              'rate':compute_rate,
+              'rate': compute_rate,
+              'ssim': compute_ssim,
               'psnr': compute_psnr,
               'delta_cielab': compute_deltaCIELAB}
 
 
-def test(cae_model, data, args):
-    """ Test step.
-    Evaluates the performance of the network in its current state using the full set of test elements.
+def test_image(comp_model, decomp_model, input_filename,
+               channels_bn,
+               compression_level,
+               patch_size=512,
+               add_offset=False,
+               transform_comp=None,
+               transform_decomp=None,
+               source_format='zarr',
+               data_group='0/0',
+               data_axes='TCZYX',
+               seed=None,
+               temp_output_filename="./temp.zarr"):
 
-    Parameters
-    ----------
-    cae_model : torch.nn.Module
-        The network model in the current state
-    data : torch.utils.data.DataLoader or list[tuple]
-        The test dataset. Because the target is recosntruct the input, the label associated is ignored
-    args: Namespace
-        The input arguments passed at running time
+    e_time = perf_counter()
+    compress.compress_image(comp_model, input_filename, temp_output_filename,
+                            channels_bn,
+                            compression_level,
+                            patch_size=patch_size,
+                            add_offset=add_offset,
+                            transform=transform_comp,
+                            source_format=source_format,
+                            data_group=data_group,
+                            data_axes=data_axes,
+                            seed=seed,
+                            comp_label='compressed')
+    decompress.decompress_image(decomp_model, temp_output_filename,
+                                temp_output_filename,
+                                patch_size=patch_size,
+                                add_offset=add_offset,
+                                transform=transform_decomp,
+                                compute_pyramids=False,
+                                reconstruction_level=-1,
+                                destination_format='zarr',
+                                data_group='compressed',
+                                data_axes='TCZYX',
+                                seed=seed,
+                                decomp_label='decompressed')
+    e_time = perf_counter() - e_time
 
-    Returns
-    -------
-    metrics_dict : dict
-        Dictionary with the computed metrics         
-    """
-    logger = logging.getLogger(args.mode + '_log')
+    arr, arr_shape, _ = utils.image_to_zarr(input_filename.split(';')[0],
+                                            patch_size,
+                                            source_format,
+                                            data_group)
 
-    cae_model.eval()
+    H, W, in_channels = [arr_shape[data_axes.index(a)] for a in 'YXC']
+    slices = [slice(0, W, 1), slice(0, H, 1), slice(0, 1, 1),
+              slice(0, in_channels, 1),
+              slice(0, 1, 1)]
+    slices = tuple([slices['XYZCT'.index(a)] for a in data_axes])
 
-    all_metrics = dict([(m_k, []) for m_k in metric_fun])
-    all_metrics['time'] = []
+    unused_axis = list(set(data_axes) - set('YXC'))
+    transpose_order = [data_axes.index(a) for a in unused_axis]
+    transpose_order += [data_axes.index(a) for a in 'YXC']
 
-    load_times = []
-    eval_times = []
-    metrics_eval_times = dict([(m_k, []) for m_k in metric_fun])
+    x = arr[slices]
+    y_q = zarr.open(temp_output_filename, mode="r")['compressed']
+    x_r = zarr.open(temp_output_filename, mode="r")['decompressed/0']
 
+    x = np.transpose(x, transpose_order).squeeze()
+    x_r = np.transpose(x_r, (3, 4, 1, 0, 2)).squeeze()
+
+    all_metrics = {}
     all_extra_info = {}
 
-    n_examples = 0
+    eval_time = perf_counter()
+    for m_k in metric_fun.keys():
+        metrics_eval_time = perf_counter()
+        score, extra_info = metric_fun[m_k](x=x, x_r=x_r, y_q_ptr=y_q)
+        metrics_eval_time = perf_counter() - metrics_eval_time
+        all_metrics[m_k + '_time'] = metrics_eval_time
 
-    _ = next(iter(data))
+        if extra_info is not None:
+            for e_k in extra_info.keys():
+                all_extra_info[e_k] = extra_info[e_k]
 
-    with torch.no_grad():
-        load_time = perf_counter()
-        for i, (x, _) in enumerate(data):
-            if args.test_dataset_size < 0:
-                args.test_dataset_size = len(data.dataset)
-            load_time = perf_counter() - load_time           
-            load_times.append(load_time)
+        if score >= 0.0:
+            all_metrics[m_k] = score
+        else:
+            all_metrics[m_k] = np.nan
 
-            n_examples += x.size(0)
-
-            e_time = perf_counter()
-            x_r, y, _ = cae_model(x)
-            y_q = y + 127.5
-            y_q = y_q.round()
-            x_r = 127.5 * x_r.clip(-1.0, 1.0) + 127.5
-            e_time = perf_counter() - e_time
-
-            x = 127.5 * x + 127.5
-
-            x_r = x_r.detach().cpu().to(torch.uint8).numpy()
-            x = x.detach().cpu().to(torch.uint8).numpy()            
-            y_q = y_q.detach().cpu().to(torch.uint8).numpy()
-
-            eval_time = perf_counter()
-            for m_k in metric_fun.keys():
-                metrics_eval_time = perf_counter()
-                score, extra_info = metric_fun[m_k](x=x, x_r=x_r, y_q=y_q)
-                metrics_eval_time = perf_counter() - metrics_eval_time
-                metrics_eval_times[m_k].append(metrics_eval_time)
-
-                if extra_info is not None:
-                    for e_k in extra_info.keys():
-                        if all_extra_info.get(e_k, None) is None:
-                            all_extra_info[e_k] = []
-
-                        all_extra_info[e_k].append(extra_info[e_k])
-
-                if score >= 0.0:
-                    all_metrics[m_k].append(score)
-                else:
-                    all_metrics[m_k].append(np.nan)
-            eval_time = perf_counter() - eval_time
-            eval_times.append(eval_time)
-
-            all_metrics['time'].append(e_time)
-
-            if n_examples % max(1, int(0.1 * args.test_dataset_size)) == 0:
-                avg_metrics = ''
-                for m_k in all_metrics.keys():
-                    avg_metric = np.nanmean(all_metrics[m_k])
-                    avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
-                logger.debug('\t[{:05d}/{:05d}][{:05d}/{:05d}] Test metrics {}'.format(i, len(data), n_examples, args.test_dataset_size, avg_metrics))
-
-            load_time = perf_counter()
-
-    logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
-
-    for m_k in metrics_eval_times.keys():
-        avg_eval_time = np.mean(metrics_eval_times[m_k])
-        std_eval_time = np.std(metrics_eval_times[m_k])
-        logger.debug('\tEvaluation of {} avg. time: {:0.5f} (+- {:0.5f})'.format(m_k, avg_eval_time, std_eval_time))    
-
-    for e_k in all_extra_info.keys():
-        avg_ext_time = np.mean(all_extra_info[e_k])
-        std_ext_time = np.std(all_extra_info[e_k])
-        logger.debug('\tExtra info of {} avg. time: {:0.5f} (+- {:0.5f})'.format(e_k, avg_ext_time, std_ext_time))
-
-    all_metrics_stats = {}
-    for m_k in all_metrics.keys():
-        avg_metric = np.nanmean(all_metrics[m_k])
-        std_metric = np.nanstd(all_metrics[m_k])
-        med_metric = np.nanmedian(all_metrics[m_k])
-        min_metric = np.nanmin(all_metrics[m_k])
-        max_metric = np.nanmax(all_metrics[m_k])
-
-        all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric, std=std_metric, med=med_metric, min=min_metric, max=max_metric)
-
-    all_metrics.update(all_metrics_stats)
+    eval_time = perf_counter() - eval_time
+    all_metrics['execution_time'] = e_time
+    all_metrics['evaluation_time'] = eval_time
+    all_metrics.update(all_extra_info)
 
     return all_metrics
 
 
-def setup_network(args):
-    """ Setup a nerual network for image compression/decompression.
-
-    Parameters
-    ----------
-    args : Namespace
-        The input arguments passed at running time. All the parameters are passed directly to the model constructor.
-        This way, the constructor can take the parameters needed that have been passed by the user.
-
-    Returns
-    -------
-    cae_model : nn.Module
-        The convolutional neural network autoencoder model.
-    """
-
-    # The autoencoder model contains all the modules
-    if not args.gpu:
-        checkpoint_state = torch.load(args.trained_model, map_location=torch.device('cpu'))
-    else:
-        checkpoint_state = torch.load(args.trained_model)
-
-    cae_model = model_options[checkpoint_state['args']['model_type']](**checkpoint_state['args'])
-
-    # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    cae_model = nn.DataParallel(cae_model)
-    if args.gpu:
-        cae_model.cuda()
-
-    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
-    cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
-    cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
-    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
-
-    return cae_model
-
-
-def main(args):
+def test_cae(args):
     """ Set up the training environment
 
     Parameters
@@ -241,38 +179,82 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    cae_model = setup_network(args)
+    state = utils.load_state(args)
+    comp_model = compress.setup_network(state, args.use_gpu)
+    decomp_model = decompress.setup_network(state, rec_level=-1,
+                                            compute_pyramids=False,
+                                            use_gpu=args.use_gpu)
 
     # Log the training setup
     logger.info('Network architecture:')
-    logger.info(cae_model)
+    logger.info(comp_model)
+    logger.info(decomp_model)
 
-    # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    if not args.source_format.startswith('.'):
-        args.source_format = '.' + args.source_format
+    transform_comp, _, _ = utils.get_zarr_transform(normalize=True)
+    transform_decomp, _, _ = utils.get_zarr_transform(normalize=True,
+                                                      compressed_input=True)
 
-    if args.dataset.lower() == 'imagenet.s3':
-        if utils.ImageS3 is not None:
-            transform = utils.get_imagenet_transform(args.data_mode, normalize=True, patch_size=args.patch_size)
-            test_data = utils.ImageS3(root=args.data_dir, transform=transform)
-            test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
-        else:
-            raise ValueError('Boto3 is not installed, cannot use ImageNet from a S3 bucket')
-    elif args.dataset.lower() == 'imagenet':
-        transform = utils.get_imagenet_transform(args.data_mode, normalize=True, patch_size=args.patch_size)
-        test_data = utils.ImageFolder(root=args.data_dir, transform=transform)
-        test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True)
-    else:
-        # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-        transform, _, _ = utils.get_zarr_transform(normalize=True)
-        test_data = utils.ZarrDataset(root=args.data_dir, dataset_size=args.test_dataset_size, data_mode=args.data_mode, patch_size=args.patch_size, offset=0, transform=transform, source_format=args.source_format, workers=args.workers)
-        test_queue = DataLoader(test_data, batch_size=args.batch_size, num_workers=args.workers, shuffle=args.shuffle_test, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
+    # Get the compression level from the model checkpoint
+    compression_level = state['args']['compression_level']
 
-    all_metrics_stats = test(cae_model, test_queue, args)
-    torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
+    input_fn_list = utils.get_filenames(args.data_dir, args.source_format,
+                                        data_mode='all')
 
-    for m_k in list(metric_fun.keys()) + ['time']:
-        avg_metrics = '%s=%0.4f (+-%0.4f)' % (m_k, all_metrics_stats[m_k + '_stats']['avg'], all_metrics_stats[m_k + '_stats']['std'])
+    all_metrics_stats = dict([(m_k, []) for m_k in metric_fun])
+    all_metrics_stats['execution_time'] = []
+    all_metrics_stats['evaluation_time'] = []
+
+    for i, in_fn in enumerate(input_fn_list):
+        all_metrics = test_image(comp_model=comp_model,
+                                 decomp_model=decomp_model,
+                                 input_filename=in_fn,
+                                 channels_bn=state['args']['channels_bn'],
+                                 compression_level=compression_level,
+                                 patch_size=args.patch_size,
+                                 add_offset=args.add_offset,
+                                 transform_comp=transform_comp,
+                                 transform_decomp=transform_decomp,
+                                 source_format=args.source_format,
+                                 data_axes=args.data_axes,
+                                 data_group=args.data_group,
+                                 seed=state['args']['seed'],
+                                 temp_output_filename=args.output_dir)
+
+        avg_metrics = ''
+        for m_k in all_metrics_stats.keys():
+            all_metrics_stats[m_k].append(all_metrics[m_k])
+            avg_metric = np.nanmean(all_metrics[m_k])
+            avg_metrics += '%s=%0.5f ' % (m_k, avg_metric)
+
+        logger.debug(
+            '\t[{:05d}/{:05d}] Test metrics {}'.format(
+                i,
+                len(input_fn_list),
+                avg_metrics))
+
+    for m_k in list(all_metrics_stats.keys()):
+        avg_metric = np.nanmean(all_metrics[m_k])
+        std_metric = np.nanstd(all_metrics[m_k])
+        med_metric = np.nanmedian(all_metrics[m_k])
+        min_metric = np.nanmin(all_metrics[m_k])
+        max_metric = np.nanmax(all_metrics[m_k])
+
+        all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric,
+                                                 std=std_metric,
+                                                 med=med_metric,
+                                                 min=min_metric,
+                                                 max=max_metric)
+
+    torch.save(all_metrics_stats,
+               os.path.join(args.log_dir,
+                            'metrics_stats_%s%s.pth' % (args.seed,
+                                                        args.log_identifier)))
+
+    for m_k in all_metrics_stats.keys():
+        avg_metrics = \
+            '%s=%0.4f (+-%0.4f)' % (m_k,
+                                    all_metrics_stats[m_k + '_stats']['avg'],
+                                    all_metrics_stats[m_k + '_stats']['std'])
         logger.debug('==== Test metrics {}'.format(avg_metrics))
 
 
@@ -281,6 +263,6 @@ if __name__ == '__main__':
 
     utils.setup_logger(args)
 
-    main(args)
-    
+    test_cae(args)
+
     logging.shutdown()

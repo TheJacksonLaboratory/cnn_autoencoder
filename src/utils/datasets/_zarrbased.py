@@ -75,6 +75,7 @@ def compute_num_patches(size, patch_size, padding, stride):
         axis with the given parameters.
     """
     n_patches = (size + padding - patch_size + stride) // stride
+    n_patches = max(n_patches, 1)
     return n_patches
 
 
@@ -460,10 +461,10 @@ class ZarrDataset(Dataset):
         (self.z_list,
          self._rois_list,
          self._compression_level) = \
-             self._preload_files(self._filenames,
-                                 data_group=self._data_group,
-                                 data_axes=self._data_axes,
-                                 compressed_input=self._compressed_input)
+            self._preload_files(self._filenames,
+                                data_group=self._data_group,
+                                data_axes=self._data_axes,
+                                compressed_input=self._compressed_input)
 
         (self._dataset_size,
          self._max_H,

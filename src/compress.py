@@ -136,7 +136,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
         component = data_group
 
     y.to_zarr(output_filename, component=component, overwrite=True,
-                  compressor=compressor)
+              compressor=compressor)
 
     # Add metadata to the compressed zarr file
     group = zarr.open(output_filename)

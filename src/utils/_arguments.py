@@ -59,7 +59,7 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
         parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
 
-    if mode == 'inference':
+    if mode in ['inference', 'test']:
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
         if task in ['decoder', 'segmentation']:
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
@@ -85,8 +85,11 @@ def add_data_args(parser, task, mode='training'):
     if mode in ['training', 'test']:
         parser.add_argument('-ds', '--dataset', type=str, dest='dataset', help='Dataset used for training the model', default=DATASETS[0], choices=DATASETS)
 
-    if mode in ['inference'] and task in ['encoder', 'decoder', 'arithmetic_encoder', 'segmentation']:
-        parser.add_argument('-o', '--output', type=str, nargs='+', dest='output_dir', help='Output directory, or list of filenames where to store the compressed image')
+    if mode in ['inference', 'test']:
+        if task in ['encoder', 'decoder', 'arithmetic_encoder', 'segmentation']:
+            parser.add_argument('-o', '--output', type=str, nargs='+', dest='output_dir', help='Output directory, or list of filenames where to store the compressed image')
+        elif task in ['autoencoder']:
+            parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Directory where to store temporaly the testing files')
         parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added as suffix to the output filename of a compression/decompression process', default='')
 
     # TODO: Probably a general label identifier for any task that stores

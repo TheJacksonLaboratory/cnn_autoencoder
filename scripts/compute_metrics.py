@@ -8,7 +8,9 @@ from time import perf_counter
 
 from PIL import Image
 from skimage.color import deltaE_ciede2000, rgb2lab
-
+from skimage.metrics import (mean_squared_error,
+                             peak_signal_noise_ratio,
+                             structural_similarity)
 
 format_dict = {'JPEG2000': 'jp2', 'JPEG': 'jpeg', 'PNG': 'png'}
 
@@ -17,17 +19,24 @@ def compute_deltaCIELAB(img, rec):
     return np.mean(deltaE_ciede2000(rgb2lab(img), rgb2lab(rec)))
 
 
-def compute_psnr(rmse):
-    return 20 * np.log10(1.0 / rmse)
+def compute_ssim(x=None, x_r=None, **kwargs):
+    ssim = structural_similarity(x, x_r, channel_axis=2)
+    return ssim, None
 
 
-def compute_rmse(img, rec):
-    return np.sqrt(np.mean((rec/255 - img/255)**2))
+def compute_psnr(x=None, x_r=None, **kwargs):
+    psnr = peak_signal_noise_ratio(x, x_r)
+    return psnr, None
+
+
+def compute_rmse(x=None, x_r=None, **kwargs):
+    rmse = np.sqrt(mean_squared_error(x / 255.0, x_r / 255.0))
+    return rmse, None
 
 
 def compute_rate(img, comp_size):
     # Compute the compression rate as bits per pixel (bpp)
-    return float(comp_size) / np.prod(img.shape[:-1])
+    return 8 * float(comp_size) / np.prod(img.shape[:-1])
 
 
 def metrics_image(src_fn, comp_fn):
