@@ -31,6 +31,8 @@ def override_config_file(parser):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed + 1)
 
+    args.use_gpu = args.use_gpu if torch.cuda.is_available() else False
+
     return args
 
 

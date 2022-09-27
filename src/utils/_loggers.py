@@ -5,25 +5,25 @@ import torch
 from inspect import signature
 
 
-from ._info import VER
+from ._info import VER, SEG_VER
 
 
 def setup_logger(args):
     """ Sets up a logger for the diferent purposes.
     When training a model on a HPC cluster, it is better to save the logs into a file, rather than printing to a console.
-    
+
     Parameters
     ----------
     args : Namespace
         The input arguments passed at running time. Only the code version and random seed are used from this.
     """
-    args.version = VER
+    args.version = SEG_VER if args.task in ["segmentation"] else VER
 
     if torch.cuda.is_available() and args.use_gpu:
         args.gpu = True
     else:
         args.gpu = False
-    
+
     # Create the logger
     logger = logging.getLogger(args.mode + '_log')
     logger.setLevel(logging.INFO)

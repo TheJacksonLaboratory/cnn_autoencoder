@@ -1,4 +1,5 @@
 VER = '0.5.5'
+SEG_VER = '0.5.6'
 
 DATASETS = ['MNIST', 'ImageNet', 'ImageNet.S3', 'Zarr', 'Histology']
 

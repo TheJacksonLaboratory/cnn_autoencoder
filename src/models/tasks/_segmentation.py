@@ -107,10 +107,41 @@ class Analyzer(nn.Module):
 
 
 class Synthesizer(nn.Module):
-    def __init__(self, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, bridge=True, groups=False, batch_norm=False, dropout=0.0, bias=False, **kwargs):
+    def __init__(self, classes=1, channels_net=8, channels_bn=48,
+                 compression_level=3,
+                 channels_expansion=1,
+                 groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 autoencoder_channels_net=None,
+                 use_bridge=True,
+                 trainable_bridge=False,
+                 bias=False, **kwargs):
         super(Synthesizer, self).__init__()
 
-        input_channels_mult = 2 if bridge else 1
+        bridge_kernel_size = 3
+
+        if use_bridge:
+            input_channels_mult = 2
+        else:
+            input_channels_mult = 1
+
+        if use_bridge and trainable_bridge:
+            bridge_ops = [
+                BridgeBlock(
+                    autoencoder_channels_net * channels_expansion**(i+1),
+                    channels_net * channels_expansion**(i+1),
+                    groups,
+                    batch_norm,
+                    dropout,
+                    bias,
+                    bridge_kernel_size)
+                          for i in reversed(range(compression_level))]
+        else:
+            bridge_ops = [nn.Identity()
+                          for i in reversed(range(compression_level))]
+
+        self.bridge_ops = nn.ModuleList(bridge_ops)
 
         self.embedding = nn.ConvTranspose2d(channels_bn, channels_net * channels_expansion**(compression_level-1), kernel_size=2, stride=2, padding=0, groups=channels_bn if groups else 1, bias=bias)
 
@@ -131,9 +162,12 @@ class Synthesizer(nn.Module):
     def forward(self, x, x_brg):
         fx = self.embedding(x)
 
-        for layer, x_k in zip(self.synthesis_track + [self.predict],
-                              reversed(x_brg)):
-            fx = torch.cat((fx, x_k), dim=1)
+        for layer, bridge_layer, x_k in zip(self.synthesis_track
+                                            + [self.predict],
+                                            self.bridge_ops,
+                                            reversed(x_brg)):
+            fx_k = bridge_layer(x_k)
+            fx = torch.cat((fx, fx_k), dim=1)
             fx = layer(fx)
 
         return fx
@@ -151,6 +185,56 @@ class Synthesizer(nn.Module):
 
         y = self.predict[-1](fx)
         return y, fx
+
+
+class BridgeBlock(nn.Module):
+    def __init__(self, autoencoder_channels_net=8, channels_out=48,
+                 groups=False,
+                 batch_norm=False,
+                 dropout=0.5,
+                 bias=False,
+                 bridge_kernel_size=1,
+                 **kwargs):
+        super(BridgeBlock, self).__init__()
+
+        bridge = [nn.Conv2d(autoencoder_channels_net, channels_out,
+                            bridge_kernel_size,
+                            1,
+                            1,
+                            1,
+                            autoencoder_channels_net if groups else 1,
+                            bias=bias,
+                            padding_mode='reflect')]
+
+        if batch_norm:
+            bridge.append(nn.BatchNorm2d(channels_out, affine=True))
+
+        bridge.append(nn.LeakyReLU(inplace=False))
+
+        if dropout > 0.0:
+            bridge.append(nn.Dropout2d(dropout))
+
+        bridge.append(
+            nn.Conv2d(channels_out, channels_out, 3, 1, 1, 1, 
+                      channels_out if groups else 1,
+                      bias=bias,
+                      padding_mode='reflect'))
+
+        if batch_norm:
+            bridge.append(nn.BatchNorm2d(channels_out, affine=True))
+
+        bridge.append(nn.LeakyReLU(inplace=False))
+
+        if dropout > 0.0:
+            bridge.append(nn.Dropout2d(dropout))
+
+        self.bridge = nn.Sequential(*bridge)
+
+        self.apply(initialize_weights)
+
+    def forward(self, x):
+        fx = self.bridge(x)
+        return fx
 
 
 class BottleNeck(nn.Module):
@@ -194,7 +278,16 @@ class UNet(nn.Module):
 
         self.analysis = Analyzer(channels_org, channels_net, compression_level, channels_expansion, groups, batch_norm, dropout, bias)
         self.bottleneck = BottleNeck(channels_net, channels_bn, compression_level, channels_expansion, groups, batch_norm, dropout, bias)
-        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, True, groups, batch_norm, dropout, bias)
+        self.synthesis = Synthesizer(classes, channels_net, channels_bn,
+                                     compression_level,
+                                     channels_expansion,
+                                     groups,
+                                     batch_norm,
+                                     dropout,
+                                     autoencoder_channels_net=None,
+                                     use_bridge=True,
+                                     trainable_bridge=False,
+                                     bias=bias)
 
     def forward(self, x, fx_brg=None):
         fx, fx_brg = self.analysis(x)
@@ -218,7 +311,16 @@ class UNetNoBridge(nn.Module):
 
         self.analysis = Analyzer(channels_org, channels_net, compression_level, channels_expansion, groups, batch_norm, dropout, bias)
         self.bottleneck = BottleNeck(channels_net, channels_bn, compression_level, channels_expansion, groups, batch_norm, dropout, bias)
-        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, False, groups, batch_norm, dropout, bias)
+        self.synthesis = Synthesizer(classes, channels_net, channels_bn,
+                                     compression_level,
+                                     channels_expansion,
+                                     groups,
+                                     batch_norm,
+                                     dropout,
+                                     autoencoder_channels_net=None,
+                                     use_bridge=False,
+                                     trainable_bridge=False,
+                                     bias=bias)
         self._compression_level = compression_level
 
     def forward(self, x, fx_brg=None):
@@ -238,9 +340,18 @@ class DecoderUNet(nn.Module):
     """Also referred as J-Net, operates on compressed representations of the
     input image.
     """
-    def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.5, bias=True, use_bridge=False, **kwargs):
+    def __init__(self, channels_org=3, classes=1, channels_net=8, channels_bn=48, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.5, bias=True, autoencoder_channels_net=None, use_bridge=False, trainable_bridge=False, **kwargs):
         super(DecoderUNet, self).__init__()        
-        self.synthesis = Synthesizer(classes, channels_net, channels_bn, compression_level, channels_expansion, use_bridge, groups, batch_norm, dropout, bias)
+        self.synthesis = Synthesizer(classes, channels_net, channels_bn,
+                                     compression_level,
+                                     channels_expansion,
+                                     groups,
+                                     batch_norm,
+                                     dropout,
+                                     autoencoder_channels_net,
+                                     use_bridge,
+                                     trainable_bridge,
+                                     bias=bias)
         self._compression_level = compression_level
         self._channels_org = channels_org
 
@@ -298,12 +409,11 @@ if __name__ == '__main__':
     y = net(x)
 
     t = torch.randint_like(y, high=2)
-    
+
     print('Network output size: {}'.format(y.size()))
-    
+
     criterion = nn.BCEWithLogitsLoss(reduction='none')
 
     loss = criterion(y, t)
-    
+
     print('Loss: shape {}, value {}'.format(loss.size(), torch.mean(loss)))
-    

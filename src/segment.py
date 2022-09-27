@@ -245,7 +245,8 @@ def segment_image(forward_fun, input_filename, output_filename, classes,
                                                'optimize': False})
 
 
-def setup_network(state, autoencoder_model=None, use_gpu=False):
+def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
+                  use_gpu=False):
     """Setup a neural network for object segmentation.
 
     Parameters
@@ -269,14 +270,14 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
     """
     # When the model works on compressed representation, tell the dataloader to
     # obtain the compressed input and normal size target.
-    if 'Decoder' in state['args']['model_type']:
+    if 'Decoder' in state_args['model_type']:
         compressed_input = True
         scale_input = 127.5
     else:
         compressed_input = False
         scale_input = 1.0
 
-    if ('Decoder' in state['args']['model_type']
+    if ('Decoder' in state_args['model_type']
        and autoencoder_model is not None):
         # If a decoder model is passed as argument, use the decoded step
         # version of the feed-forward step.
@@ -287,36 +288,39 @@ def setup_network(state, autoencoder_model=None, use_gpu=False):
         dec_model.load_state_dict(checkpoint_state['decoder'], strict=False)
 
         dec_model = nn.DataParallel(dec_model)
-        if state['args']['gpu']:
+        if use_gpu:
             dec_model.cuda()
 
         dec_model.eval()
-        state['args']['use_bridge'] = True
+        state_args['use_bridge'] = True
+        state_args['autoencoder_channels_net'] = \
+            checkpoint_state['args']['channels_net']
 
-    elif ('Decoder' in state['args']['model_type']
+    elif ('Decoder' in state_args['model_type']
           and autoencoder_model is None):
-        state['args']['use_bridge'] = False
+        state_args['use_bridge'] = False
         dec_model = models.EmptyBridge(
-            compression_level=state['args']['compression_level'],
+            compression_level=state_args['compression_level'],
             compressed_input=True)
 
-    elif 'NoBridge' in state['args']['model_type']:
-        state['args']['use_bridge'] = False
+    elif 'NoBridge' in state_args['model_type']:
+        state_args['use_bridge'] = False
         dec_model = models.EmptyBridge(compression_level=3,
                                        compressed_input=False)
 
     else:
-        state['args']['use_bridge'] = True
+        state_args['use_bridge'] = True
         dec_model = None
 
-    seg_model_class = seg_model_types.get(state['args']['model_type'], None)
+    seg_model_class = seg_model_types.get(state_args['model_type'], None)
 
     if seg_model_class is None:
         raise ValueError('Model type %s'
-                         ' not supported' % state['args']['model_type'])
+                         ' not supported' % state_args['model_type'])
 
-    seg_model = seg_model_class(**state['args'])
-    seg_model.load_state_dict(state['model'])
+    seg_model = seg_model_class(**state_args)
+    if pretrained_model is not None:
+        seg_model.load_state_dict(pretrained_model)
 
     seg_model = nn.DataParallel(seg_model)
     if use_gpu:
@@ -344,9 +348,13 @@ def segment(args):
     # Find the size of the compressed patches in the checkpoint file
     classes = state['args']['classes']
 
-    _, forward_fun, compressed_input = setup_network(state,
-                                                     args.autoencoder_model,
-                                                     args.gpu)
+    (_,
+     forward_fun,
+     compressed_input) = setup_network(
+        state['args'],
+        pretrained_model=state['model'],
+        autoencoder_model=args.autoencoder_model,
+        use_gpu=args.gpu)
 
     (transform,
      _,

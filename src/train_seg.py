@@ -281,7 +281,14 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    seg_model, forward_fun, compressed_input = segment.setup_network(args)
+    (seg_model,
+     forward_fun,
+     args.compressed_input) = segment.setup_network(
+        args.__dict__,
+        pretrained_model=None,
+        autoencoder_model=args.autoencoder_model,
+        use_gpu=args.gpu)
+
     criterion, stopping_criteria = setup_criteria(args)
     optimizer, scheduler = setup_optim(seg_model, args)
 
