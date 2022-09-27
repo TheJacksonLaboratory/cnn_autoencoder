@@ -23,8 +23,8 @@ DECOMP_VERSION = '0.1.2'
 @dask.delayed
 def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False):
     y_q_t = transform(y_q.squeeze()).unsqueeze(0)
-
-    x_rec = decomp_model(y_q_t)
+    with torch.set_grad_enabled(decomp_model.training):
+        x_rec = decomp_model(y_q_t)
     if not isinstance(x_rec, list):
         x_rec = [x_rec]
 
@@ -171,15 +171,15 @@ def decompress_image(decomp_model, input_filename, output_filename,
         rec_patch_size = max_patch_size
 
     y = [da.from_delayed(
-            decode_pyr(
-                np.transpose(z[slices[ij]], transpose_order),
-                decomp_model,
-                transform,
-                max_offset,
-                compute_pyramids),
-            shape=(1, in_channels, 1, max_patch_size, rec_patch_size),
-            meta=np.empty((), dtype=np.uint8))
-         for ij in range(np_W * np_H)]
+        decode_pyr(
+            np.transpose(z[slices[ij]], transpose_order),
+            decomp_model,
+            transform,
+            max_offset,
+            compute_pyramids),
+        shape=(1, in_channels, 1, max_patch_size, rec_patch_size),
+        meta=np.empty((), dtype=np.uint8))
+        for ij in range(np_W * np_H)]
 
     y_pyr = []
     prev_h = 0
@@ -319,20 +319,21 @@ def decompress(args):
 
     # Compress each file by separate. This allows to process large images.
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        decompress_image(
-            decomp_model=decomp_model,
-            input_filename=in_fn,
-            output_filename=out_fn,
-            patch_size=args.patch_size,
-            add_offset=args.add_offset,
-            transform=transform,
-            compute_pyramids=args.compute_pyramids,
-            reconstruction_level=args.reconstruction_level,
-            destination_format=args.destination_format,
-            data_axes=args.data_axes,
-            data_group=args.data_group,
-            seed=state['args']['seed'],
-            decomp_label=args.task_label_identifier)
+        with torch.no_grad():
+            decompress_image(
+                decomp_model=decomp_model,
+                input_filename=in_fn,
+                output_filename=out_fn,
+                patch_size=args.patch_size,
+                add_offset=args.add_offset,
+                transform=transform,
+                compute_pyramids=args.compute_pyramids,
+                reconstruction_level=args.reconstruction_level,
+                destination_format=args.destination_format,
+                data_axes=args.data_axes,
+                data_group=args.data_group,
+                seed=state['args']['seed'],
+                decomp_label=args.task_label_identifier)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 

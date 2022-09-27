@@ -24,7 +24,8 @@ COMP_VERSION = '0.1.2'
 def encode(x, comp_model, transform, offset=0):
     x_t = transform(x.squeeze()).unsqueeze(0)
 
-    y_q, _ = comp_model(x_t)
+    with torch.set_grad_enabled(comp_model.training):
+        y_q, _ = comp_model(x_t)
 
     y_q = y_q.detach().cpu() + 127.5
     y_q = y_q.round().to(torch.uint8)
@@ -49,9 +50,9 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
-    z_arr, _ = utils.image_to_zarr(input_filename.split(';')[0], patch_size,
-                                   source_format,
-                                   data_group)
+    z_arr, _, _ = utils.image_to_zarr(input_filename.split(';')[0], patch_size,
+                                      source_format,
+                                      data_group)
 
     in_channels, in_H, in_W = [z_arr.shape[data_axes.index(s)] for s in "CYX"]
 
@@ -135,7 +136,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
         component = data_group
 
     y.to_zarr(output_filename, component=component, overwrite=True,
-              compressor=compressor)
+                  compressor=compressor)
 
     # Add metadata to the compressed zarr file
     group = zarr.open(output_filename)
