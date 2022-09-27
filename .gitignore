@@ -124,3 +124,4 @@ dmypy.json
 # Configuration files
 *.json
 configs/*.json
+dask-worker-space/

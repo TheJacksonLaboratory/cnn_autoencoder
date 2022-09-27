@@ -8,36 +8,18 @@ import torch.optim as optim
 
 import models
 import utils
+import segment
 
 from functools import reduce
 from inspect import signature
 
-scheduler_options = {"ReduceOnPlateau": partial(optim.lr_scheduler.ReduceLROnPlateau, mode='min', patience=2)}
-seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
-
-
-# Variation of the forward step can be implemented here and used with 'partial' to be used inside training and validation steps.
-def forward_undecoded_step(x, seg_model, decoder_model=None):
-    y = seg_model(x)
-    return y
-
-
-def forward_decoded_step(x, seg_model, decoder_model=None):
-    with torch.no_grad():
-        x_brg = decoder_model.inflate(x, color=False)
-        
-    y = seg_model(x / 127.5, x_brg[:0:-1])
-
-    return y
-
-
-def forward_parallel_decoded_step(x, seg_model, decoder_model=None):
-    with torch.no_grad():
-        x_brg = decoder_model.module.inflate(x, color=False)
-        
-    y = seg_model(x / 127.5, x_brg[:0:-1])
-
-    return y
+scheduler_options = {
+    "ReduceOnPlateau": partial(optim.lr_scheduler.ReduceLROnPlateau,
+                               mode='min',
+                               patience=2)}
+seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
+                   "UNet": models.UNet,
+                   "DecoderUNet": models.DecoderUNet}
 
 
 def valid(seg_model, data, criterion, logger, forward_fun=None):
@@ -56,7 +38,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
         Current logger used to track thre model performance during training
     forward_fun: function
         Function used to perform the feed-forward step
-    
+
     Returns
     -------
     mean_loss : float
@@ -69,7 +51,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
     with torch.no_grad():
         for i, (x, t) in enumerate(data):
             y = forward_fun(x)
-            
+
             loss = criterion(y, t)
             # In case that distributed computation of the criterion ouptuts a vector instead of a scalar
             loss = torch.mean(loss)
@@ -134,11 +116,8 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
             optimizer.zero_grad()
 
             y = forward_fun(x)
-            
             loss = criterion(y, t)
-            
             loss = torch.mean(loss)
-
             loss.backward()
 
             optimizer.step()
@@ -160,7 +139,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
 
                 # Evaluate the model with the validation set
                 valid_loss = valid(seg_model, valid_data, criterion, logger, forward_fun=forward_fun)
-                
+
                 seg_model.train()
 
                 stopping_info = ';'.join(map(lambda sc: sc.__repr__(), stopping_criteria))
@@ -180,88 +159,16 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 stopping_criteria[0].update(iteration=step, metric=valid_loss)
             else:
                 stopping_criteria[0].update(iteration=step)
-            
+
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: Interrupting training ****')
                 break
-        
+
     else:
         completed = True
 
     # Return True if the training finished sucessfully
     return completed
-
-
-def setup_network(args):
-    """ Setup a nerual network for object segmentation.
-
-    Parameters
-    ----------
-    args : Namespace
-        The input arguments passed at running time. All the parameters are passed directly to the model constructor.
-        This way, the constructor can take the parameters needed that have been passed by the user.
-    
-    Returns
-    -------
-    seg_model : nn.Module
-        The segmentation mode implemented by a convolutional neural network
-    
-    forward_function : function
-        The function to be used as feed-forward step
-    """
-    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
-    if 'Decoder' in args.model_type:
-        args.compressed_input = True
-
-    # If a decoder model is passed as argument, use the decoded step version of the feed-forward step
-    if args.autoencoder_model is not None:
-        if not args.gpu:
-            checkpoint_state = torch.load(args.autoencoder_model, map_location=torch.device('cpu'))
-        
-        else:
-            checkpoint_state = torch.load(args.autoencoder_model)
-       
-        decoder_model = models.Synthesizer(**checkpoint_state['args'])
-        decoder_model.load_state_dict(checkpoint_state['decoder'])
-
-        if args.gpu:
-            decoder_model = nn.DataParallel(decoder_model)
-            decoder_model.cuda()
-
-        decoder_model.eval()
-        args.use_bridge = True
-    else:
-        args.use_bridge = False
-    
-    seg_model_class = seg_model_types.get(args.model_type, None)
-    if seg_model_class is None:
-        raise ValueError('Model type %s not supported' % args.model_type)
-    
-    seg_model = seg_model_class(**args.__dict__)
-
-    # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    seg_model = nn.DataParallel(seg_model)
-    if args.gpu:
-        seg_model.cuda()
-
-    # Define what funtion use in the feed-forward step
-    if args.autoencoder_model is not None:
-        if args.gpu:
-            forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
-        else:
-            forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=decoder_model)
-
-    else:
-        if 'Decoder' in args.model_type:
-            # If no decoder is loaded, use the inflate function inside the segmentation model
-            if args.gpu:
-                forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, decoder_model=seg_model)
-            else:
-                forward_function = partial(forward_decoded_step, seg_model=seg_model, decoder_model=seg_model)
-        else:
-            forward_function = partial(forward_undecoded_step, seg_model=seg_model, decoder_model=None)
-
-    return seg_model, forward_function
 
 
 def setup_criteria(args):
@@ -271,12 +178,12 @@ def setup_criteria(args):
     ----------
     args : Namespace
         The input arguments passed at running time. All the parameters are passed directly to the criteria constructors.
-            
+
     Returns
     -------
     criterion : nn.Module
         The loss function that is used as target to optimize the parameters of the nerual network.
-    
+
     stopping_criteria : list[StoppingCriterion]
         A list of stopping criteria. The first element is always set to stop the training after a fixed number of iterations.
         Depending on the criterion used, additional stopping criteria is set.        
@@ -298,7 +205,7 @@ def setup_criteria(args):
     criterion = nn.DataParallel(criterion)
     if args.gpu:
         criterion.cuda()
-        
+
     return criterion, stopping_criteria
 
 
@@ -311,7 +218,7 @@ def setup_optim(seg_model, args):
         The convolutional autoencoder model to be optimized
     scheduler_type : str
         The type of learning rate scheduler used during the neural network training
-            
+
     Returns
     -------
     optimizer : torch.optim.Optimizer
@@ -322,7 +229,7 @@ def setup_optim(seg_model, args):
 
     # By now, only the ADAM optimizer is used
     optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    
+
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
@@ -355,7 +262,7 @@ def resume_checkpoint(seg_model, optimizer, scheduler, checkpoint, gpu=True):
         checkpoint_state = torch.load(checkpoint, map_location=torch.device('cpu'))
     else:
         checkpoint_state = torch.load(checkpoint)
-    
+
     seg_model.module.load_state_dict(checkpoint_state['model'])
 
     optimizer.load_state_dict(checkpoint_state['optimizer'])
@@ -374,7 +281,14 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    seg_model, forward_function = setup_network(args)
+    (seg_model,
+     forward_fun,
+     args.compressed_input) = segment.setup_network(
+        args.__dict__,
+        pretrained_model=None,
+        autoencoder_model=args.autoencoder_model,
+        use_gpu=args.gpu)
+
     criterion, stopping_criteria = setup_criteria(args)
     optimizer, scheduler = setup_optim(seg_model, args)
 
@@ -384,26 +298,26 @@ def main(args):
     # Log the training setup
     logger.info('Network architecture:')
     logger.info(seg_model)
-    
+
     logger.info('\nCriterion:')
     logger.info(criterion)
-    
+
     logger.info('\nStopping criterion:')
     logger.info(stopping_criteria[0])
-    
+
     if len(stopping_criteria) > 1:
         logger.info('\nAdditinal stopping criterions:')
         logger.info(stopping_criteria[1])
 
     logger.info('\nOptimization parameters:')
     logger.info(optimizer)
-    
+
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
     train_data, valid_data = utils.get_data(args)
-    
-    train(seg_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args, forward_function)
+
+    train(seg_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args, forward_fun)
 
 
 if __name__ == '__main__':
@@ -412,5 +326,5 @@ if __name__ == '__main__':
     utils.setup_logger(args)
 
     main(args)
-    
+
     logging.shutdown()

@@ -1,13 +1,16 @@
 import logging
 import os
 from functools import partial
+from itertools import product
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 
 import zarr
+import dask
+import dask.array as da
+
 from PIL import Image
 from numcodecs import Blosc
 
@@ -15,245 +18,402 @@ import models
 
 import utils
 
-seg_model_types = {"UNetNoBridge": models.UNetNoBridge, "UNet": models.UNet, "DecoderUNet": models.DecoderUNet}
+SEG_VERSION = '0.1.1'
 
-def forward_undecoded_step(x, seg_model=None, dec_model=None):
-    y = seg_model(x)
+
+seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
+                   "UNet": models.UNet,
+                   "DecoderUNet": models.DecoderUNet}
+
+
+def segment_block(x, forward_fun, transform=None, seg_threshold=None,
+                  offset=0):
+    if transform is not None:
+        x_t = transform(x.squeeze()).unsqueeze(0)
+    else:
+        x_t = x.clone()
+
+    y = forward_fun(x_t)
+
+    if y.shape[1] > 1:
+        if seg_threshold is None:
+            y = torch.softmax(y.cpu(), dim=1)
+        else:
+            y = torch.argmax(y.cpu(), dim=1)
+            y = y.numpy().astype(np.int32)
+
+    else:
+        y = torch.sigmoid(y.cpu())
+        if seg_threshold is not None:
+            y = y > seg_threshold
+            y = y.numpy().astype(np.int32)
+
+    if offset > 0:
+        H, W = y.shape[-2:]
+        y = y[:, :, np.newaxis, offset:H - offset, offset:W - offset]
+
     return y
 
 
-def forward_decoded_step(x, seg_model=None, dec_model=None):
-    # The compressed representation is stored as an unsigned integer between [0, 255].
-    # The transformation used in the dataloader transforms it into the range [-127.5, 127.5].
-    # However, the synthesis track of the segmentation task works better if the compressed representation is in the range [-1, 1].
-    # For this reason the tensor x is divided by 127.5.
-    with torch.no_grad():
-        x_brg = dec_model.inflate(x, color=False)
-    y = seg_model(x / 127.5, x_brg[:0:-1])
+def forward_step_base(x, seg_model, dec_model=None, scale_input=1.0):
+    if dec_model is not None:
+        with torch.no_grad():
+            x_brg = dec_model(x)
+    else:
+        x_brg = None
+
+    # The compressed tensor is in the range of [-127.5, 127.5], so it has to be
+    # rescaled to [-1, 1]. This is not necessary for uncompressed input.
+    y = seg_model(x / scale_input, x_brg)
     return y
 
 
-def forward_parallel_decoded_step(x, seg_model=None, dec_model=None):
-    with torch.no_grad():
-        x_brg = dec_model.module.inflate(x, color=False)
-    y = seg_model(x / 127.5, x_brg[:0:-1])
-    return y
+def segment_image(forward_fun, input_filename, output_filename, classes,
+                  seg_threshold=0.5,
+                  compressed_input=False,
+                  patch_size=512,
+                  add_offset=False,
+                  transform=None,
+                  destination_format='zarr',
+                  data_group='0/0',
+                  data_axes='TCZYX',
+                  seed=None,
+                  seg_label='segmentation'):
+    compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
+
+    src_group = zarr.open(input_filename.split(';')[0], mode='r')
+    z_arr = src_group[data_group]
+
+    in_channels, in_H, in_W = [z_arr.shape[data_axes.index(s)] for s in "CYX"]
+    # Extract the compression level, original channels, and original shape from
+    # the compression metadata
+    if compressed_input:
+        comp_metadata = src_group[data_group.split('/')[0]]
+        comp_metadata = comp_metadata.attrs['compression_metadata']
+        comp_level = comp_metadata['compression_level']
+        H = comp_metadata['height']
+        W = comp_metadata['width']
+        comp_label = comp_metadata.get('group', 'compressed')
+    else:
+        comp_level = 0
+        H = in_H
+        W = in_W
+        comp_label = None
+
+    in_patch_size = patch_size // 2 ** comp_level
+    if add_offset:
+        if compressed_input:
+            in_offset = 1
+            out_offset = 2 ** comp_level
+        else:
+            out_offset = 8
+            in_offset = 8
+    else:
+        in_offset = 0
+        out_offset = 0
+
+    np_H_prior = utils.compute_num_patches(in_H, in_patch_size, 0,
+                                           in_patch_size)
+    np_H_prior += (np_H_prior * in_patch_size - in_H) < 0
+    pad_y = np_H_prior * in_patch_size - in_H
+
+    np_W_prior = utils.compute_num_patches(in_W, in_patch_size, 0,
+                                           in_patch_size)
+    np_W_prior += (np_W_prior * in_patch_size - in_W) < 0
+    pad_x = np_W_prior * in_patch_size - in_W
+
+    np_H = utils.compute_num_patches(in_H, in_patch_size + 2 * in_offset,
+                                     pad_y + 2 * in_offset,
+                                     in_patch_size)
+    np_W = utils.compute_num_patches(in_W, in_patch_size + 2 * in_offset,
+                                     pad_x + 2 * in_offset,
+                                     in_patch_size)
+
+    z = da.from_zarr(z_arr)
+
+    padding = [(in_offset, in_offset), (in_offset, in_offset), (0, 0), (0, 0),
+               (0, 0)]
+    padding = tuple([padding['XYZCT'.index(a)] for a in data_axes])
+
+    padding_match = [(0, pad_x), (0, pad_y), (0, 0), (0, 0), (0, 0)]
+    padding_match = tuple([padding_match['XYZCT'.index(a)] for a in data_axes])
+
+    # The first padding adds enough information from the same image to prevent
+    # edge artidacts.
+    z = da.pad(z, pad_width=padding, mode='reflect')
+
+    # The second padding is added to match the size of the patches that are
+    # processed by the model. Commonly, padding larger than the orginal image
+    # are not allowed by the `reflect` paddin mode.
+    z = da.pad(z, pad_width=padding_match, mode='constant')
+
+    slices = map(lambda ij:
+                 [slice(ij[1]*in_patch_size,
+                        ij[1]*in_patch_size + in_patch_size + 2 * in_offset, 1),
+                  slice(ij[0]*in_patch_size,
+                        ij[0]*in_patch_size + in_patch_size + 2 * in_offset, 1),
+                  slice(0, 1, 1),
+                  slice(0, in_channels, 1),
+                  slice(0, 1, 1)],
+                 product(range(np_H), range(np_W)))
+
+    slices = [tuple([None]
+              + [s['XYZCT'.index(a)] for a in data_axes])
+              for s in slices]
+
+    unused_axis = list(set(data_axes) - set('YXC'))
+    transpose_order = [0]
+    transpose_order += [data_axes.index(a) + 1 for a in unused_axis]
+    transpose_order += [data_axes.index(a) + 1 for a in 'YXC']
+
+    y = [da.from_delayed(
+            dask.delayed(segment_block)(np.transpose(z[slices[ij]],
+                                                     transpose_order),
+                                        forward_fun,
+                                        transform,
+                                        seg_threshold=seg_threshold,
+                                        offset=out_offset),
+            shape=(1, classes, 1, patch_size, patch_size),
+            meta=np.empty((), dtype=np.int32))
+         for ij in range(np_W * np_H)]
+
+    y = da.block([[y[i*np_W + j] for j in range(np_W)] for i in range(np_H)])
+    y = y[..., :H, :W]
+
+    if comp_label is not None:
+        data_group = '/'.join(data_group.split(comp_label)[1].split('/')[1:])
+    if len(seg_label):
+        component = 'labels/%s/%s' % (seg_label, data_group)
+    else:
+        component = 'labels/%s' % data_group
+
+    if 'zarr' in destination_format:
+        y.to_zarr(output_filename, component=component, overwrite=True,
+                  compressor=compressor)
+
+        group = zarr.open(output_filename, mode="rw")
+        if len(seg_label):
+            seg_group = group['labels/%s' % seg_label]
+        else:
+            seg_group = group
+
+        # Integrate metadata to the predicted labels generated from
+        # the segmentation.
+        seg_group.attrs['image-label'] = {
+            "version": "0.5-dev",
+            "colors": [
+                {"label-value": 0, "rgba": [0, 0, 0, 0]},
+                {"label-value": 1, "rgba": [255, 255, 255, 127]}
+                ],
+            "properties": [
+                {"label-value": 0, "class": "background"},
+                {"label-value": 1, "class": "Glomerulus"}
+            ],
+            "source": data_group
+        }
+
+        seg_group.attrs['multiscales'] = {
+            "version": "0.5-dev",
+            "name": "glomeruli_segmentation",
+            "datasets": [
+                {"path": "0/0"}
+            ]
+        }
+
+        seg_group.attrs['segmentation_metadata'] = dict(
+            height=H,
+            width=W,
+            classes=classes,
+            axes='TCZYX',
+            offset=add_offset,
+            model=str(forward_fun),
+            model_seed=seed,
+            original=input_filename,
+            segmentation_threshold=seg_threshold,
+            version=SEG_VERSION
+        )
+
+    else:
+        # Note that the image should have a number of classes that can be
+        # interpreted as a GRAYSCALE image, RGB image or RBGA image.
+        y = (y / y.max() * 255).astype(np.uint8)
+        if classes > 1:
+            im = Image.fromarray(y.squeeze().transpose(1, 2, 0).compute())
+        else:
+            im = Image.fromarray(y.squeeze().compute())
+        im.save(output_filename, quality_opts={'compress_level': 9,
+                                               'optimize': False})
 
 
-def setup_network(state, use_gpu=False):
-    """ Setup a nerual network for object segmentation.
+def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
+                  use_gpu=False):
+    """Setup a neural network for object segmentation.
 
     Parameters
     ----------
     state : Dictionary
         A checkpoint state saved during the network training
-    
+    autoencoder_model : path or None
+        Path to the checkpoint of the autoencoder model used for training the
+        segmentation model.
+    use_gpu : bool
+        Whether GPU is available and the user is willing to use it.
+
     Returns
     -------
-    forward_function : function
+    segment_fun : function
         The function to be used as feed-forward step
-    
-    output_channels : int
-        The number of classes predicted by this model
-    """
-    # When the model works on compressed representation, tell the dataloader to obtain the compressed input and normal size target
-    if ('Decoder' in state['args']['model_type'] and state['args']['autoencoder_model'] is None) or 'NoBridge' in state['args']['model_type']:
-        state['args']['use_bridge'] = False
-    else:
-        state['args']['use_bridge'] = True
-        
-    if state['args']['autoencoder_model'] is not None:
-        # If a decoder model is passed as argument, use the decoded step version of the feed-forward step
-        if not state['args']['gpu']:
-            checkpoint_state = torch.load(state['args']['autoencoder_model'], map_location=torch.device('cpu'))
-        else:
-            checkpoint_state = torch.load(state['args']['autoencoder_model'])
-    
-        dec_model = models.Synthesizer(**checkpoint_state['args'])
-        dec_model.load_state_dict(checkpoint_state['decoder'])
 
-        if state['args']['gpu']:
-            dec_model = nn.DataParallel(dec_model)        
+    compressed_input : bool
+        Whether the input requires to be compressed or not according to the
+        segmentation model.
+    """
+    # When the model works on compressed representation, tell the dataloader to
+    # obtain the compressed input and normal size target.
+    if 'Decoder' in state_args['model_type']:
+        compressed_input = True
+        scale_input = 127.5
+    else:
+        compressed_input = False
+        scale_input = 1.0
+
+    if ('Decoder' in state_args['model_type']
+       and autoencoder_model is not None):
+        # If a decoder model is passed as argument, use the decoded step
+        # version of the feed-forward step.
+        checkpoint_state = torch.load(autoencoder_model,
+                                      map_location=None if use_gpu else 'cpu')
+        dec_model = models.SynthesizerInflate(rec_level=-1, color=False,
+                                              **checkpoint_state['args'])
+        dec_model.load_state_dict(checkpoint_state['decoder'], strict=False)
+
+        dec_model = nn.DataParallel(dec_model)
+        if use_gpu:
             dec_model.cuda()
 
         dec_model.eval()
-        state['args']['use_bridge'] = True
-    else:
-        dec_model = None
-        
-    seg_model_class = seg_model_types.get(state['args']['model_type'], None)
-    if seg_model_class is None:
-        raise ValueError('Model type %s not supported' % state['args']['model_type'])
+        state_args['use_bridge'] = True
+        state_args['autoencoder_channels_net'] = \
+            checkpoint_state['args']['channels_net']
 
-    seg_model = seg_model_class(**state['args'])
-    seg_model.load_state_dict(state['model'])
-    
+    elif ('Decoder' in state_args['model_type']
+          and autoencoder_model is None):
+        state_args['use_bridge'] = False
+        dec_model = models.EmptyBridge(
+            compression_level=state_args['compression_level'],
+            compressed_input=True)
+
+    elif 'NoBridge' in state_args['model_type']:
+        state_args['use_bridge'] = False
+        dec_model = models.EmptyBridge(compression_level=3,
+                                       compressed_input=False)
+
+    else:
+        state_args['use_bridge'] = True
+        dec_model = None
+
+    seg_model_class = seg_model_types.get(state_args['model_type'], None)
+
+    if seg_model_class is None:
+        raise ValueError('Model type %s'
+                         ' not supported' % state_args['model_type'])
+
+    seg_model = seg_model_class(**state_args)
+    if pretrained_model is not None:
+        seg_model.load_state_dict(pretrained_model)
+
+    seg_model = nn.DataParallel(seg_model)
     if use_gpu:
-        seg_model = nn.DataParallel(seg_model)
         seg_model.cuda()
 
-    output_channels = state['args']['classes']
-    
-    if 'Decoder' in state['args']['model_type']:
-        state['args']['compressed_input'] = True
-
-        if dec_model is None:
-            dec_model = seg_model
-    else:
-        state['args']['compressed_input'] = False
+    seg_model.eval()
 
     # Define what funtion use in the feed-forward step
-    if seg_model is not None and dec_model is None:
-        # Segmentation w/o decoder
-        forward_function = partial(forward_undecoded_step, seg_model=seg_model, dec_model=dec_model)
-    
-    elif seg_model is not None and dec_model is not None:
-        # Segmentation w/ decoder
-        if use_gpu:
-            forward_function = partial(forward_parallel_decoded_step, seg_model=seg_model, dec_model=dec_model)
-        else:
-            forward_function = partial(forward_decoded_step, seg_model=seg_model, dec_model=dec_model)
+    forward_fun = partial(forward_step_base, seg_model=seg_model,
+                          dec_model=dec_model,
+                          scale_input=scale_input)
 
-    return forward_function, output_channels
-
-
-def segment_image(forward_function, filename, output_dir, classes, input_comp_level, input_patch_size, output_patch_size, input_offset, output_offset, transform, source_format, destination_format, workers, is_labeled=False, batch_size=1, stitch_batches=False):
-    compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
-
-    # Generate a dataset from a single image to divide in patches and iterate using a dataloader
-    zarr_ds = utils.ZarrDataset(root=filename, patch_size=input_patch_size, offset=input_offset, transform=transform, source_format=source_format)
-    data_queue = DataLoader(zarr_ds, batch_size=batch_size, num_workers=workers, shuffle=False, pin_memory=True, worker_init_fn=utils.zarrdataset_worker_init)
-
-    H_comp, W_comp = zarr_ds.get_shape()
-    H = H_comp * 2**input_comp_level
-    W = W_comp * 2**input_comp_level
-
-    if 'zarr' in destination_format.lower():
-        # Output dir is actually the absolute path to the file where to store the compressed representation
-        if 'memory' in destination_format:
-            group = zarr.group()
-        else:
-            group = zarr.group(output_dir, overwrite=True)
-
-        comp_group = group.create_group('0', overwrite=True)
-    
-        z_seg = comp_group.create_dataset('0', shape=(1 if stitch_batches else len(zarr_ds), classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype=np.float32, compressor=compressor)
-
-    else:
-        z_seg = zarr.zeros(shape=(1 if stitch_batches else len(zarr_ds), classes, H, W), chunks=(1, classes, output_patch_size, output_patch_size), dtype='u1', compressor=compressor)
-
-    with torch.no_grad():
-        for i, (x, _) in enumerate(data_queue):
-            y = forward_function(x)
-
-            y = torch.sigmoid(y.detach())
-            y = y.cpu().numpy()
-
-            if output_offset > 0:
-                y = y[..., output_offset:-output_offset, output_offset:-output_offset]
-            
-            if 'zarr' not in destination_format:
-                y = (y * 255).astype(np.uint8)
-            
-            if stitch_batches:
-                for k, y_k in enumerate(y):
-                    _, tl_y, tl_x = utils.compute_grid(i*batch_size + k, imgs_shapes=[(H, W)], imgs_sizes=[0, len(zarr_ds)], patch_size=output_patch_size)
-                    tl_y *= output_patch_size
-                    tl_x *= output_patch_size
-                    z_seg[0, ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y_k
-            else:
-                z_seg[i*batch_size:i*batch_size+x.size(0), ..., tl_y:tl_y + output_patch_size, tl_x:tl_x + output_patch_size] = y
-
-    # If the output format is not zarr, and it is supported by PIL, an image is generated from the segmented image.
-    # It should be used with care since this can generate a large image file.
-    if 'zarr' not in destination_format:
-        im = Image.fromarray(z_seg[0, 0])
-        im.save(output_dir, destination_format)
-    elif is_labeled:
-        label_group = group.create_group('1', overwrite=True)
-        z_org = zarr.open(filename, 'r')
-        zarr.copy(z_org['1/0'], label_group)
-
-    if 'memory' in destination_format.lower():
-        return group
-    
-    return True
+    return seg_model, forward_fun, compressed_input
 
 
 def segment(args):
-    """ Compress any supported file format (zarr, or any supported by PIL) into a compressed representation in zarr format.
-    """    
+    """Compress any supported file format (zarr, or any supported by PIL)
+    into a compressed representation in zarr format.
+    """
     logger = logging.getLogger(args.mode + '_log')
 
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
     # Find the size of the compressed patches in the checkpoint file
-    compression_level = state['args']['compression_level']
-                
-    output_offset = (2 ** compression_level) if args.add_offset else 0
-    input_offset = (2 ** compression_level) if args.add_offset else 0
+    classes = state['args']['classes']
 
-    for k in args.__dict__.keys():
-        state['args'][k] = args.__dict__[k]
+    (_,
+     forward_fun,
+     compressed_input) = setup_network(
+        state['args'],
+        pretrained_model=state['model'],
+        autoencoder_model=args.autoencoder_model,
+        use_gpu=args.gpu)
 
-    forward_function, output_channels = setup_network(state, args.gpu)
+    (transform,
+     _,
+     _) = utils.get_zarr_transform(normalize=True,
+                                   compressed_input=compressed_input)
 
-    if state['args']['compressed_input']:
-        input_comp_level = compression_level
-        input_offset = 1
+    if not args.destination_format.startswith('.'):
+        args.destination_format = '.' + args.destination_format
+
+    input_fn_list = utils.get_filenames(args.data_dir, args.source_format,
+                                        data_mode="all")
+
+    if args.destination_format.lower() not in args.output_dir[0].lower():
+        # If the output path is a directory, append the input filenames to it,
+        # so the compressed files have the same name as the original file.
+        fn_list = map(lambda fn:
+                      fn.split('.zarr')[0].replace('\\', '/').split('/')[-1],
+                      input_fn_list)
+        output_fn_list = [os.path.join(args.output_dir[0],
+                                       '%s%s%s' % (fn, args.comp_identifier,
+                                                   args.destination_format))
+                          for fn in fn_list]
+
     else:
-        input_comp_level = 0
-    
-    input_patch_size = args.patch_size // 2 ** input_comp_level
-    
-    # Conver the single zarr file into a dataset to be iterated
-    transform, _ = utils.get_zarr_transform(normalize=True, compressed_input=state['args']['compressed_input'])
-    
-    if not args.source_format.startswith('.'):
-        args.source_format = '.' + args.source_format
-        
-    if args.input[0].lower().endswith('txt'):        
-        with open(args.input[0], 'r') as f:
-            input_fn_list = [l.strip('\n\r') for l in f.readlines()]
-    elif not args.input[0].lower().endswith(args.source_format.lower()):
-        # If a directory has been passed, get all image files inside to compress
-        input_fn_list = list(map(lambda fn: os.path.join(args.input[0], fn), filter(lambda fn: args.source_format.lower() in fn.lower(), os.listdir(args.input[0]))))
+        output_fn_list = args.output_dir
 
-    else:
-        input_fn_list = args.input
-        
-    output_fn_list = list(map(lambda fn: os.path.join(args.output_dir, fn + '_seg.%s' % args.destination_format), map(lambda fn: os.path.splitext(os.path.basename(fn))[0], input_fn_list)))
-
-    # Segment each file by separate    
+    # Segment each file separately
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        seg_group = segment_image(
-            forward_function=forward_function, 
-            filename=in_fn,
-            output_dir=out_fn,
-            classes=output_channels,
-            input_comp_level=input_comp_level,
-            input_patch_size=input_patch_size,
-            output_patch_size=args.patch_size,
-            input_offset=input_offset,
-            output_offset=output_offset,
-            transform=transform,
-            source_format=args.source_format,
-            destination_format=args.destination_format,
-            workers=args.workers,
-            is_labeled=args.is_labeled,
-            batch_size=args.batch_size,
-            stitch_batches=args.stitch_batches)
+        segment_image(forward_fun=forward_fun, input_filename=in_fn,
+                      output_filename=out_fn,
+                      classes=classes,
+                      seg_threshold=args.seg_threshold,
+                      patch_size=args.patch_size,
+                      compressed_input=compressed_input,
+                      add_offset=args.add_offset,
+                      transform=transform,
+                      destination_format=args.destination_format,
+                      data_group=args.data_group,
+                      data_axes=args.data_axes,
+                      seed=state['args']['seed'],
+                      seg_label=args.task_label_identifier)
 
-        yield seg_group
+        if 'zarr' in args.destination_format:
+            logger.info(
+                'Image `%s` segmented succesfully. '
+                'Output saved at `%s/%s/0`' % (in_fn, out_fn,
+                                               args.task_label_identifier))
+        else:
+            logger.info(
+                'Image `%s` segmented succesfully. '
+                'Output saved at `%s`' % (in_fn, out_fn))
 
 
 if __name__ == '__main__':
     args = utils.get_args(task='segmentation', mode='inference')
-    
+
     utils.setup_logger(args)
-    
-    for _ in segment(args):
-        logging.info('Image segmented successfully')
-    
+
+    segment(args)
+    logging.info('Image segmented successfully')
+
     logging.shutdown()

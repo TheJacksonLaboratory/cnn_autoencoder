@@ -145,7 +145,7 @@ class FactorizedEntropyLaplace(nn.Module):
     def __init__(self, **kwargs):
         super(FactorizedEntropyLaplace, self).__init__()
         self._gaussian_approx = None
-        
+    
     def reset(self, x):
         self._gaussian_approx = torch.distributions.Laplace(torch.zeros_like(x), torch.var(x.detach(), dim=(0, 2,3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
 
@@ -178,7 +178,7 @@ class DownsamplingUnit(nn.Module):
     def forward(self, x):
         fx = self.model(x)
         return fx
-    
+
 
 class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=True):
@@ -232,7 +232,7 @@ class Analyzer(nn.Module):
         down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5, inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
-        
+
         self.quantizer = Quantizer()
 
         self.apply(initialize_weights)
@@ -251,16 +251,18 @@ class Synthesizer(nn.Module):
         # Initial convolution in the synthesis track
         up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect')]
         up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
-                                     groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-                    for i in reversed(range(compression_level))]
-        
+                                    groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+                     for i in reversed(range(compression_level))]
+
         # Final color reconvertion
         up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect'))
 
         self.synthesis_track = nn.Sequential(*up_track)
 
+        self.rec_level = compression_level
+
         self.apply(initialize_weights)
-        
+
     def inflate(self, x, color=True):
         x_brg = []
         # DataParallel only sends 'x' to the GPU memory when the forward method is used and not for other methods
@@ -268,26 +270,51 @@ class Synthesizer(nn.Module):
         for layer in self.synthesis_track[:-1]:
             fx = layer(fx)
             x_brg.append(fx)
-        
+
         if not color:
             return x_brg
-        
+
         fx = self.synthesis_track[-1](fx)
-        
+
         return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)
         return x
 
-    def forward_steps(self, x, reconstruction_level=-2):
+    def forward_steps(self, x, rec_level=-2):
         fx = self.synthesis_track[0](x.to(self.synthesis_track[0].weight.device))
         color_layer = self.synthesis_track[-1]
 
         x_r_ms = []
-        for up_layer in self.synthesis_track[1:(reconstruction_level+1)]:
+        for up_layer in self.synthesis_track[1:(rec_level+1)]:
             fx = up_layer(fx)
             x_r = color_layer(fx)
+            x_r_ms.insert(0, x_r)
+
+        return x_r_ms
+
+
+class SynthesizerInflate(Synthesizer):
+    def __init__(self, rec_level=-1, color=True, **kwargs):
+        super(SynthesizerInflate, self).__init__(**kwargs)
+        if rec_level < 1:
+            rec_level = len(self.synthesis_track) - 2
+
+        if color:
+            self.color_layer = self.synthesis_track[-1]
+        else:
+            self.color_layer = nn.Identity()
+
+        self.rec_level = rec_level
+
+    def forward(self, x):
+        fx = self.synthesis_track[0](x)
+        x_r_ms = []
+
+        for up_layer in self.synthesis_track[1:1 + self.rec_level]:
+            fx = up_layer(fx)
+            x_r = self.color_layer(fx)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms
@@ -298,14 +325,14 @@ class AutoEncoder(nn.Module):
     """
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, K=4, r=3, **kwargs):
         super(AutoEncoder, self).__init__()
-        
+
         # Initial color embedding
         self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
 
         self.analysis = Analyzer(channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-        
+
         self.synthesis = Synthesizer(channels_org=channels_org, channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-        
+
         self.fact_entropy = FactorizedEntropy(channels_bn, K=K, r=r)
 
     def forward(self, x, synthesize_only=False):

@@ -13,7 +13,10 @@ from functools import reduce
 from inspect import signature
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"InceptionV3": models.InceptionV3Age, "MobileNet": models.MobileNetAge, "ResNet": models.ResNetAge, "ViT": models.ViTAge}
+model_options = {"InceptionV3": models.InceptionV3Age,
+                 "MobileNet": models.MobileNetAge,
+                 "ResNet": models.ResNetAge,
+                 "ViT": models.ViTAge}
 
 
 def valid(age_model, data, criterion, args):

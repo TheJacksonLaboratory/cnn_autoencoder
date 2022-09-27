@@ -5,25 +5,25 @@ import torch
 from inspect import signature
 
 
-from ._info import VER
+from ._info import VER, SEG_VER
 
 
 def setup_logger(args):
     """ Sets up a logger for the diferent purposes.
     When training a model on a HPC cluster, it is better to save the logs into a file, rather than printing to a console.
-    
+
     Parameters
     ----------
     args : Namespace
         The input arguments passed at running time. Only the code version and random seed are used from this.
     """
-    args.version = VER
+    args.version = SEG_VER if args.task in ["segmentation"] else VER
 
     if torch.cuda.is_available() and args.use_gpu:
         args.gpu = True
     else:
         args.gpu = False
-    
+
     # Create the logger
     logger = logging.getLogger(args.mode + '_log')
     logger.setLevel(logging.INFO)
@@ -31,7 +31,7 @@ def setup_logger(args):
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
     # By now, only if the model is training or testing, the logs are stored into a file
-    if args.mode in ['training', 'testing']:
+    if args.mode in ['training', 'test']:
         logger_fn = os.path.join(args.log_dir, '%s_ver%s_%s%s.log' % (args.mode, args.version, args.seed, args.log_identifier))
         fh = logging.FileHandler(logger_fn, mode='w')
         fh.setFormatter(formatter)
@@ -129,25 +129,25 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         training_state['scheduler'] = scheduler.state_dict()
     else:
         training_state['scheduler'] = None
-    
+
     save_state('last', training_state, args)
-    
+
     if valid_loss_history[-1] < best_valid_loss:
         best_valid_loss = valid_loss_history[-1]
         save_state('best', training_state, args)
-    
+
     return best_valid_loss
 
 
 
 def load_state(args):
     """ Loads an exisiting training state for its deployment, or resume its training.
-    
+
     Parameters
     ----------
     args : Namespace
         The input arguments passed at running time
-        
+
     Returns
     ----------
     state : dict
@@ -155,7 +155,7 @@ def load_state(args):
     """
 
     # If optimizer is not none, the state is being open as checkpoint to resume training
-    if args.mode == 'training':
+    if args.mode in ['training']:
         save_fn = os.path.join(args.log_dir, 'last_ver%s_%s.pth' % (args.version, args.seed))
     else:
         save_fn = args.trained_model
@@ -168,7 +168,7 @@ def load_state(args):
         state['args']['gpu'] = False
     else:
         state = torch.load(save_fn)
-    
+
     logger = logging.getLogger(args.mode + '_log')
     logger.info('Loaded model from %s' % save_fn)
 
