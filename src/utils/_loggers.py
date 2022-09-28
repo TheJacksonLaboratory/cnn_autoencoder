@@ -61,9 +61,9 @@ def save_state(name, model_state, args):
         The input arguments passed at running time. Only the code version and random seed are used from this.
     """
     if isinstance(args, dict):
-        save_fn = os.path.join(args['log_dir'], name + '_ver%s_%s.pth' % (args['version'], args['seed']))
+        save_fn = os.path.join(args['log_dir'], name + '_ver%s_%s%s.pth' % (args['version'], args['seed'], args['log_identifier']))
     else:
-        save_fn = os.path.join(args.log_dir, name + '_ver%s_%s.pth' % (args.version, args.seed))
+        save_fn = os.path.join(args.log_dir, name + '_ver%s_%s%s.pth' % (args.version, args.seed, args.log_identifier))
 
     torch.save(model_state, save_fn)
     logger = logging.getLogger('training_log')
