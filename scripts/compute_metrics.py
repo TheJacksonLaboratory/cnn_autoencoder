@@ -108,7 +108,7 @@ if __name__ == '__main__':
     q = tqdm(total=len(in_filenames))
     for in_fn in in_filenames:
         src_fn = os.path.join(args.src_dir, '%s.%s' % (in_fn, format_dict[args.src_format]))
-        comp_fn = os.path.join(args.dst_dir, '%s_%03d.%s' % (in_fn, args.comp_quality, format_dict[args.dst_format]))
+        comp_fn = os.path.join(args.dst_dir, 'temp.%s' % format_dict[args.dst_format])
 
         e_time = perf_counter()
         convert(src_fn, comp_fn, args.dst_format, **quality_opts)
@@ -136,8 +136,17 @@ if __name__ == '__main__':
         min_metric = np.nanmin(all_metrics[m_k])
         max_metric = np.nanmax(all_metrics[m_k])
 
-        all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric, std=std_metric, med=med_metric, min=min_metric, max=max_metric)
+        all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric,
+                                                 std=std_metric,
+                                                 med=med_metric,
+                                                 min=min_metric,
+                                                 max=max_metric)
 
     all_metrics.update(all_metrics_stats)
 
-    torch.save(all_metrics, os.path.join(args.log_dir, 'metrics_stats_%s_%03d%s.pth' % (args.dst_format, args.comp_quality, args.log_identifier)))
+    torch.save(
+        all_metrics,
+        os.path.join(args.log_dir,
+                    'metrics_stats_%s_%03d%s.pth' % (args.dst_format,
+                                                     args.comp_quality,
+                                                     args.log_identifier)))

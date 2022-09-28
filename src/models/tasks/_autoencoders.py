@@ -99,7 +99,7 @@ class FactorizedEntropyLayer(nn.Module):
         # Reparametrerize the matrix H, and vector a to generate nonegative Jacobian matrices
         H_k = F.softplus(self._H)
         a_k = torch.tanh(self._a)
-            
+
         # Using the 2d convolution instead of simple element-wise product allows to operate over all channels at the same time
         fx = F.conv2d(x, weight=H_k, bias=self._b, groups=self._channels)
         fx = fx + a_k * torch.tanh(fx)
@@ -119,7 +119,7 @@ class FactorizedEntropy(nn.Module):
         self._K = K
         if isinstance(r, int):
             r = [r] * (K - 1) + [1]
-        
+
         d = [1] + r[:-1]
 
         # The non-parametric density model is initialized with random normal distributed weights
@@ -129,7 +129,7 @@ class FactorizedEntropy(nn.Module):
 
     def reset(self, x):
         pass
-    
+
     def forward(self, x):
         fx = self._layers(x)
 

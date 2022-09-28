@@ -83,6 +83,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
                      elastic_deformation=False,
                      map_labels=False,
                      merge_labels=None,
+                     mode='training',
                      **kwargs):
     """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
@@ -94,14 +95,14 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
 
     elif task == 'segmentation':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation)
-        if 'train' in data_mode or 'test' in data_mode:
+        if mode in ['training', 'test']:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
 
     elif task == 'classification':
         prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels)
-        if 'train' in data_mode or 'test' in data_mode:
+        if mode in ['training', 'test']:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset

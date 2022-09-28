@@ -39,7 +39,7 @@ def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
 
     return mean_delta_cielab, dict(convert_x=convert_x_time,
                                    convert_r=convert_r_time,
-                                   delta_cielab=delta_cielab_time,
+                                   delta_cielab_time=delta_cielab_time,
                                    mean_delta_cielab=mean_delta_cielab_time,
                                    delta_shape_ndim=delta_cielab.ndim,
                                    delta_shape_x=delta_cielab.shape[0],
@@ -228,34 +228,29 @@ def test_cae(args):
 
         logger.debug(
             '\t[{:05d}/{:05d}] Test metrics {}'.format(
-                i,
+                i+1,
                 len(input_fn_list),
                 avg_metrics))
 
     for m_k in list(all_metrics_stats.keys()):
-        avg_metric = np.nanmean(all_metrics[m_k])
-        std_metric = np.nanstd(all_metrics[m_k])
-        med_metric = np.nanmedian(all_metrics[m_k])
-        min_metric = np.nanmin(all_metrics[m_k])
-        max_metric = np.nanmax(all_metrics[m_k])
+        avg_metric = np.nanmean(all_metrics_stats[m_k])
+        std_metric = np.nanstd(all_metrics_stats[m_k])
+        med_metric = np.nanmedian(all_metrics_stats[m_k])
+        min_metric = np.nanmin(all_metrics_stats[m_k])
+        max_metric = np.nanmax(all_metrics_stats[m_k])
 
         all_metrics_stats[m_k + '_stats'] = dict(avg=avg_metric,
                                                  std=std_metric,
                                                  med=med_metric,
                                                  min=min_metric,
                                                  max=max_metric)
+        avg_metrics = '%s=%0.4f (+-%0.4f)' % (m_k, avg_metric, std_metric)
+        logger.debug('==== Test metrics {}'.format(avg_metrics))
 
     torch.save(all_metrics_stats,
                os.path.join(args.log_dir,
                             'metrics_stats_%s%s.pth' % (args.seed,
                                                         args.log_identifier)))
-
-    for m_k in all_metrics_stats.keys():
-        avg_metrics = \
-            '%s=%0.4f (+-%0.4f)' % (m_k,
-                                    all_metrics_stats[m_k + '_stats']['avg'],
-                                    all_metrics_stats[m_k + '_stats']['std'])
-        logger.debug('==== Test metrics {}'.format(avg_metrics))
 
 
 if __name__ == '__main__':
