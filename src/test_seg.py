@@ -167,7 +167,7 @@ def test(forward_function, data, args):
             logger.debug(
                 '\t[{:05d}/{:05d}][{:05d}/{:05d}] '
                 'Test metrics {}'.format(
-                    i, len(data), n_examples,
+                    i+1, len(data), n_examples,
                     args.test_dataset_size if args.test_dataset_size > 0 else len(data), avg_metrics))
 
         load_time = perf_counter()
@@ -223,9 +223,10 @@ def main(args):
 
     (_,
      forward_fun,
-     compressed_input) = segment.setup_network(state,
-                                               args.autoencoder_model,
-                                               args.gpu)
+     compressed_input) = segment.setup_network(state['args'],
+                                               pretrained_model=state['model'],
+                                               autoencoder_model=args.autoencoder_model,
+                                               use_gpu=args.use_gpu)
     args.compressed_input = compressed_input
 
     # Log the training setup
