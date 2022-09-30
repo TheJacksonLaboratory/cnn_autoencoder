@@ -97,6 +97,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
     """
     logger = logging.getLogger(args.mode + '_log')
 
+    seg_model.train()
     completed = False
     keep_training = True
 

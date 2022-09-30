@@ -268,6 +268,9 @@ def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
         Whether the input requires to be compressed or not according to the
         segmentation model.
     """
+    if isinstance(autoencoder_model, str) and autoencoder_model.upper() == "NONE":
+        autoencoder_model = None
+
     # When the model works on compressed representation, tell the dataloader to
     # obtain the compressed input and normal size target.
     if 'Decoder' in state_args['model_type']:
