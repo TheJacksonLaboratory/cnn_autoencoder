@@ -272,28 +272,28 @@ def test(forward_function, data, args):
     all_metrics['avg_prec_score_all'] = compute_avg_prec(all_predictions, all_gt_labels)
 
     fpr, tpr, thresh = roc_curve(all_gt_labels, all_predictions)
-    all_metrics['fpr'] = fpr
-    all_metrics['tpr'] = tpr
-    all_metrics['roc_thresh'] = thresh
+    all_metrics['fpr_all'] = fpr
+    all_metrics['tpr_all'] = tpr
+    all_metrics['roc_thresh_all'] = thresh
 
     prec, rec, thresh = precision_recall_curve(all_gt_labels, all_predictions)
     all_metrics['prec_all'] = prec
     all_metrics['rec_all'] = rec
-    all_metrics['prec_rec_thresh'] = thresh
+    all_metrics['prec_rec_thresh_all'] = thresh
 
     # Compute ROC and precision-recall curves from the connected-level analysis
-    all_metrics['roc_cc'] = compute_roc(all_cc_predictions, all_cc_gt_labels)
-    all_metrics['avg_prec_score_cc'] = compute_avg_prec(all_cc_predictions, all_cc_gt_labels)
+    all_metrics['roc_all_cc'] = compute_roc(all_cc_predictions, all_cc_gt_labels)
+    all_metrics['avg_prec_score_all_cc'] = compute_avg_prec(all_cc_predictions, all_cc_gt_labels)
 
     fpr, tpr, thresh = roc_curve(all_cc_gt_labels, all_cc_predictions)
-    all_metrics['fpr_cc'] = fpr
-    all_metrics['tpr_cc'] = tpr
-    all_metrics['prec_rec_thresh_cc'] = thresh
+    all_metrics['fpr_all_cc'] = fpr
+    all_metrics['tpr_all_cc'] = tpr
+    all_metrics['roc_thresh_all_cc'] = thresh
 
     prec, rec, thresh = precision_recall_curve(all_cc_gt_labels, all_cc_predictions)
-    all_metrics['prec_cc'] = prec
-    all_metrics['rec_cc'] = rec
-    all_metrics['prec_rec_thresh_cc'] = thresh
+    all_metrics['prec_all_cc'] = prec
+    all_metrics['rec_all_cc'] = rec
+    all_metrics['prec_rec_thresh_all_cc'] = thresh
 
     all_metrics.update(all_metrics_stats)
 
