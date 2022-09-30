@@ -10,6 +10,7 @@ from sklearn.metrics import (accuracy_score,
                              recall_score,
                              precision_score,
                              average_precision_score,
+                             precision_recall_curve,
                              f1_score)
 
 import numpy as np
@@ -129,6 +130,9 @@ def compute_metrics_per_object(y, t, seg_threshold):
 
     all_cc_metrics = {}
 
+    all_cc_labels = []
+    all_cc_predictions = []
+
     for cc in t_ccs_props:
         if cc.area < 16:
             continue
@@ -147,12 +151,15 @@ def compute_metrics_per_object(y, t, seg_threshold):
 
             all_cc_metrics[k].append(cc_metrics[k])
 
+        all_cc_labels.append(t_cc.flatten())
+        all_cc_predictions.append(cc_pred.flatten())
+
     if len(t_ccs_props) < 1:
         for m_k in metric_fun.keys():
             all_cc_metrics[m_k] = [np.nan]
         all_cc_metrics['evaluation_time'] = [np.nan]
 
-    return all_cc_metrics
+    return all_cc_metrics, all_cc_labels, all_cc_predictions
 
 
 def test(forward_function, data, args):
@@ -181,11 +188,12 @@ def test(forward_function, data, args):
     all_metrics = {'execution_time': [], 'seg_threshold': []}
 
     load_times = []
-    eval_times = []
 
     n_examples = 0
     all_predictions = []
     all_gt_labels = []
+    all_cc_predictions = []
+    all_cc_gt_labels = []
 
     load_time = perf_counter()
     for i, (x, t) in enumerate(data):
@@ -208,12 +216,16 @@ def test(forward_function, data, args):
         all_metrics['execution_time'].append(e_time)
         all_metrics['seg_threshold'].append(seg_threshold)
 
-        img_metrics = compute_metrics(y, t, seg_threshold=seg_threshold)
-        cc_metrics = compute_metrics_per_object(y, t,
-                                                seg_threshold=seg_threshold)
+        img_metrics = compute_metrics(y, t, seg_threshold)
+        (cc_metrics,
+         cc_labels,
+         cc_preds) = compute_metrics_per_object(y, t, seg_threshold)
 
         all_predictions.append(y.flatten())
         all_gt_labels.append(t.flatten())
+
+        all_cc_gt_labels += cc_labels
+        all_cc_predictions += cc_preds
 
         for k in img_metrics.keys():
             if k not in all_metrics.keys():
@@ -253,12 +265,35 @@ def test(forward_function, data, args):
     # Compute the ROC curve for all images to get a single curve
     all_gt_labels = np.concatenate(all_gt_labels)
     all_predictions = np.concatenate(all_predictions)
+    all_cc_gt_labels = np.concatenate(all_cc_gt_labels)
+    all_cc_predictions = np.concatenate(all_cc_predictions)
 
     all_metrics['roc_all'] = compute_roc(all_predictions, all_gt_labels)
+    all_metrics['avg_prec_score_all'] = compute_avg_prec(all_predictions, all_gt_labels)
+
     fpr, tpr, thresh = roc_curve(all_gt_labels, all_predictions)
     all_metrics['fpr'] = fpr
     all_metrics['tpr'] = tpr
-    all_metrics['thresh'] = thresh
+    all_metrics['roc_thresh'] = thresh
+
+    prec, rec, thresh = precision_recall_curve(all_gt_labels, all_predictions)
+    all_metrics['prec_all'] = prec
+    all_metrics['rec_all'] = rec
+    all_metrics['prec_rec_thresh'] = thresh
+
+    # Compute ROC and precision-recall curves from the connected-level analysis
+    all_metrics['roc_cc'] = compute_roc(all_cc_predictions, all_cc_gt_labels)
+    all_metrics['avg_prec_score_cc'] = compute_avg_prec(all_cc_predictions, all_cc_gt_labels)
+
+    fpr, tpr, thresh = roc_curve(all_cc_gt_labels, all_cc_predictions)
+    all_metrics['fpr_cc'] = fpr
+    all_metrics['tpr_cc'] = tpr
+    all_metrics['prec_rec_thresh_cc'] = thresh
+
+    prec, rec, thresh = precision_recall_curve(all_cc_gt_labels, all_cc_predictions)
+    all_metrics['prec_cc'] = prec
+    all_metrics['rec_cc'] = rec
+    all_metrics['prec_rec_thresh_cc'] = thresh
 
     all_metrics.update(all_metrics_stats)
 
