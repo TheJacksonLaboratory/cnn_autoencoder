@@ -2,11 +2,14 @@ import logging
 import os
 
 from time import perf_counter
+from skimage.filters.thresholding import threshold_otsu
+from skimage.measure import label, regionprops
 from sklearn.metrics import (accuracy_score,
                              roc_auc_score,
                              roc_curve,
                              recall_score,
                              precision_score,
+                             average_precision_score,
                              f1_score)
 
 import numpy as np
@@ -65,12 +68,24 @@ def compute_prec(pred, target, seg_threshold=None):
     try:
         if target.sum() < 1.0:
             prec = -1
+        elif sum(pred > seg_threshold) < 1.0:
+            prec = 0
         else:
             prec = precision_score(target, pred > seg_threshold)
     except ValueError:
         prec = -1
     return prec
 
+
+def compute_avg_prec(pred, target, seg_threshold=None):
+    try:
+        if target.sum() < 1.0:
+            avg_prec_score = -1
+        else:
+            avg_prec_score = average_precision_score(target, pred)
+    except ValueError:
+        avg_prec_score = -1
+    return avg_prec_score
 
 """
 Available metrics (can add more later):
@@ -79,12 +94,60 @@ Available metrics (can add more later):
     acc=Prediction accuracy
     recall=Sensitivity of the model
     prec=Precision of the model
+    avg_prec_score=Average precision score
 """
 metric_fun = {'roc': compute_roc,
               'f1': compute_f1,
               'acc': compute_acc,
               'recall': compute_recall,
-              'prec': compute_prec}
+              'prec': compute_prec,
+              'avg_prec_score': compute_avg_prec}
+
+
+def compute_metrics(y, t, seg_threshold):
+    y_flat = y.flatten()
+    t_flat = t.flatten()
+    all_metrics = {}
+    eval_time = perf_counter()
+    for m_k in metric_fun.keys():
+        score = metric_fun[m_k](pred=y_flat, target=t_flat,
+                                seg_threshold=seg_threshold)
+
+        if score >= 0.0:
+            all_metrics[m_k] = score
+        else:
+            all_metrics[m_k] = np.nan
+
+    eval_time = perf_counter() - eval_time
+    all_metrics['evaluation_time'] = eval_time
+    return all_metrics
+
+
+def compute_metrics_per_object(y, t, seg_threshold):
+    t_ccs = label(t)
+    t_ccs_props = regionprops(t_ccs)
+
+    all_cc_metrics = {}
+
+    for cc in t_ccs_props:
+        if cc.area < 16:
+            continue
+
+        cc_slice = (slice(cc.bbox[0], cc.bbox[2], 1),
+                    slice(cc.bbox[1], cc.bbox[3], 1))
+        cc_pred = y[cc_slice]
+        t_cc = t[cc_slice]
+
+        cc_metrics = compute_metrics(cc_pred, t_cc,
+                                     seg_threshold=seg_threshold)
+
+        for k in cc_metrics.keys():
+            if k not in all_cc_metrics:
+                all_cc_metrics[k] = []
+
+            all_cc_metrics[k].append(cc_metrics[k])
+
+    return all_cc_metrics
 
 
 def test(forward_function, data, args):
@@ -106,16 +169,14 @@ def test(forward_function, data, args):
     Returns
     -------
     metrics_dict : dict
-        Dictionary with the computed metrics
+        Dictionary with the computed metrics.
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    all_metrics = dict([(m_k, []) for m_k in metric_fun])
-    all_metrics['time'] = []
+    all_metrics = {'execution_time': []}
 
     load_times = []
     eval_times = []
-    metrics_eval_times = dict([(m_k, []) for m_k in metric_fun])
 
     n_examples = 0
     all_predictions = []
@@ -133,31 +194,28 @@ def test(forward_function, data, args):
             y = segment.segment_block(x, forward_function)
         e_time = perf_counter() - e_time
 
-        y = y.cpu().numpy().flatten()
-        t = t.numpy().flatten()
+        y = y.cpu().numpy().squeeze()
+        t = t.cpu().numpy().squeeze()
 
-        all_predictions.append(y)
-        all_gt_labels.append(t)
+        # Compute a threshold according to the prediction values
+        seg_threshold = threshold_otsu(image=y)
 
-        eval_time = perf_counter()
-        for m_k in metric_fun.keys():
-            metrics_eval_time = perf_counter()
-            score = metric_fun[m_k](pred=y, target=t,
-                                    seg_threshold=args.seg_threshold)
+        all_metrics['execution_time'].append(e_time)
 
-            metrics_eval_time = perf_counter() - metrics_eval_time
+        img_metrics = compute_metrics(y, t, seg_threshold=seg_threshold)
+        cc_metrics = compute_metrics_per_object(y, t,
+                                                seg_threshold=seg_threshold)
 
-            metrics_eval_times[m_k].append(metrics_eval_time)
+        all_predictions.append(y.flatten())
+        all_gt_labels.append(t.flatten())
 
-            if score >= 0.0:
-                all_metrics[m_k].append(score)
-            else:
-                all_metrics[m_k].append(np.nan)
+        for k in img_metrics.keys():
+            if k not in all_metrics.keys():
+                all_metrics[k] = []
+                all_metrics[k + '_cc'] = []
 
-        eval_time = perf_counter() - eval_time
-        eval_times.append(eval_time)
-
-        all_metrics['time'].append(e_time)
+            all_metrics[k].append(img_metrics[k])
+            all_metrics[k + '_cc'] += cc_metrics[k]
 
         if n_examples % max(1, int(0.1 * args.test_dataset_size)) == 0:
             avg_metrics = ''
@@ -171,13 +229,6 @@ def test(forward_function, data, args):
                     args.test_dataset_size if args.test_dataset_size > 0 else len(data), avg_metrics))
 
         load_time = perf_counter()
-
-    logger.debug('Loading avg. time: {:0.5f} (+-{:0.5f}), evaluation avg. time: {:0.5f}(+-{:0.5f})'.format(np.mean(load_times), np.std(load_times), np.mean(eval_times), np.std(eval_times)))
-
-    for m_k in metrics_eval_times.keys():
-        avg_eval_time = np.mean(metrics_eval_times[m_k])
-        std_eval_time = np.std(metrics_eval_times[m_k])
-        logger.debug('\tEvaluation of {} avg. time: {:0.5f} (+- {:0.5f})'.format(m_k, avg_eval_time, std_eval_time))    
 
     all_metrics_stats = {}
     for m_k in all_metrics.keys():
@@ -242,8 +293,22 @@ def main(args):
     all_metrics_stats = test(forward_fun, test_data, args)
     torch.save(all_metrics_stats, os.path.join(args.log_dir, 'metrics_stats_%s%s.pth' % (args.seed, args.log_identifier)))
 
-    for m_k in list(metric_fun.keys()) + ['time']:
-        avg_metrics = '%s=%0.4f (+-%0.4f)' % (m_k, all_metrics_stats[m_k + '_stats']['avg'], all_metrics_stats[m_k + '_stats']['std'])
+    avg_metrics = '%s=%0.4f (+-%0.4f)' % (
+        'execution_time_stats',
+        all_metrics_stats['execution_time_stats']['avg'],
+        all_metrics_stats['execution_time_stats']['std'])
+    logger.debug('==== Test metrics {}'.format(avg_metrics))
+
+    for m_k in metric_fun.keys():
+        avg_metrics = '%s (image level)=%0.4f (+-%0.4f)' % (
+            m_k,
+            all_metrics_stats[m_k + '_stats']['avg'],
+            all_metrics_stats[m_k + '_stats']['std'])
+        logger.debug('==== Test metrics {}'.format(avg_metrics))
+        avg_metrics = '%s (component level)=%0.4f (+-%0.4f)' % (
+            m_k,
+            all_metrics_stats[m_k + '_cc_stats']['avg'],
+            all_metrics_stats[m_k + '_cc_stats']['std'])
         logger.debug('==== Test metrics {}'.format(avg_metrics))
 
 
