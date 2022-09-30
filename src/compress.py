@@ -2,6 +2,7 @@ import logging
 import os
 
 from itertools import product
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -127,8 +128,10 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                    for j in range(np_W)]
                   for i in range(np_H)])
 
-    comp_H = out_patch_size * np_H
-    comp_W = out_patch_size * np_W
+    comp_H = math.ceil(in_H / 2**compression_level)
+    comp_W = math.ceil(in_W / 2**compression_level)
+
+    y = y[..., :comp_H + 2 * out_offset, :comp_W + 2 * out_offset]
 
     if len(comp_label):
         component = '%s/%s' % (comp_label, data_group)
