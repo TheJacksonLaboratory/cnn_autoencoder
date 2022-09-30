@@ -147,6 +147,11 @@ def compute_metrics_per_object(y, t, seg_threshold):
 
             all_cc_metrics[k].append(cc_metrics[k])
 
+    if len(t_ccs_props) < 1:
+        for m_k in metric_fun.keys():
+            all_cc_metrics[m_k] = [np.nan]
+        all_cc_metrics['evaluation_time'] = [np.nan]
+
     return all_cc_metrics
 
 
@@ -173,7 +178,7 @@ def test(forward_function, data, args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    all_metrics = {'execution_time': []}
+    all_metrics = {'execution_time': [], 'seg_threshold': []}
 
     load_times = []
     eval_times = []
@@ -201,6 +206,7 @@ def test(forward_function, data, args):
         seg_threshold = threshold_otsu(image=y)
 
         all_metrics['execution_time'].append(e_time)
+        all_metrics['seg_threshold'].append(seg_threshold)
 
         img_metrics = compute_metrics(y, t, seg_threshold=seg_threshold)
         cc_metrics = compute_metrics_per_object(y, t,

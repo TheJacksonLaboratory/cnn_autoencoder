@@ -108,11 +108,11 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             optimizer.zero_grad()
 
             x_r, y, p_y = cae_model.module.forward_steps(x)
-            
+
             synthesizer = DataParallel(cae_model.module.synthesis)
             if args.gpu:
                 synthesizer.cuda()
-            
+
             loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
             if extra_info is not None:
                 extra_info = torch.mean(extra_info)
