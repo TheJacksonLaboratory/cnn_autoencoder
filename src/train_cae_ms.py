@@ -50,7 +50,7 @@ def valid(cae_model, data, criterion, args):
             sum_loss += loss.item()
 
             if i % max(1, int(0.1 * len(data))) == 0:                
-                dist, rate = criterion.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+                dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
                 logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     i, len(data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
@@ -73,7 +73,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         The validation data.
     criterion : function or torch.nn.Module
         The loss criterion to evaluate the network's performance
-    stopping_criteria : StoppingCriterion
+    stopping_criteria : dict
         Stopping criteria tracker for different problem statements
     optimizer : torch.optim.Optimizer
         The parameter's optimizer method
@@ -104,53 +104,66 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         for i, (x, _) in enumerate(train_data):
             step += 1
 
-            # Start of training step
-            optimizer.zero_grad()
+            if 'penalty' in stopping_criteria.keys():
+                stopping_criteria['penalty'].reset()
 
-            x_r, y, p_y = cae_model.module.forward_steps(x)
+            while True:
+                # Start of training step
+                optimizer.zero_grad()
 
-            synthesizer = DataParallel(cae_model.module.synthesis)
-            if args.gpu:
-                synthesizer.cuda()
+                x_r, y, p_y = cae_model.module.forward_steps(x)
 
-            loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
-            if extra_info is not None:
-                extra_info = torch.mean(extra_info)
-            loss = torch.mean(loss)
-            loss.backward()
-            
-            # Clip the gradients to prevent from exploding gradients problems
-            nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
-            optimizer.step()
-            sum_loss += loss.item()
+                synthesizer = DataParallel(cae_model.module.synthesis)
+                if args.gpu:
+                    synthesizer.cuda()
 
-            if scheduler is not None and 'metrics' not in dict(signature(scheduler.step).parameters).keys():
+                loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
+                if extra_info is not None:
+                    extra_info = torch.mean(extra_info)
+                loss = torch.mean(loss)
+                loss.backward()
+
+                # Clip the gradients to prevent from exploding gradients problems
+                nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
+                optimizer.step()
+                step_loss = loss.item()
+
+                # When training with penalty on the energy of the compression
+                # representation, update the respective stopping criterion
+                if 'penalty' in stopping_criteria.keys():
+                    stopping_criteria['penalty'].update(iteration=step,
+                                                        metric=extra_info.item())
+
+                    if not stopping_criteria['penalty'].check():
+                        break
+                else:
+                    break
+
+            sum_loss += step_loss
+
+            if (scheduler is not None
+                  and 'metrics' not in signature(scheduler.step).parameters):
                 scheduler.step()
             # End of training step
 
-            # When training with penalty on the energy of the compression representation, 
-            # update the respective stopping criterion
-            if len(stopping_criteria) > 1:
-                stopping_criteria[1].update(iteration=step, metric=extra_info.item())
-
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                dist, rate = criterion.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+                dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
                 logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
             # Checkpoint step
-            keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
+            keep_training = stopping_criteria['early_stopping'].check()
 
-            if not keep_training or (step >= args.warmup and (step-args.warmup) % args.checkpoint_steps == 0):
+            if not keep_training or (step >= args.early_warmup and (step-args.early_warmup) % args.checkpoint_steps == 0):
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
                 valid_loss = valid(cae_model, valid_data, criterion, args)
-                
+
                 cae_model.train()
 
-                stopping_info = ';'.join(map(lambda sc: sc.__repr__(), stopping_criteria))
+                stopping_info = ';'.join(map(lambda k_sc: k_sc[0] + ": " + k_sc[1].__repr__(), stopping_criteria.items()))
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
@@ -164,14 +177,16 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 # Save the current training state in a checkpoint file
                 best_valid_loss = utils.checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
-                stopping_criteria[0].update(iteration=step, metric=valid_loss)
+                stopping_criteria['early_stopping'].update(iteration=step,
+                                                           metric=valid_loss)
             else:
-                stopping_criteria[0].update(iteration=step)
-            
+                stopping_criteria['early_stopping'].update(iteration=step)
+
             if not keep_training:
-                logging.info('\n**** Stopping criteria met: Interrupting training ****')
+                logging.info('\n**** Stopping criteria met: '
+                             'Interrupting training ****')
                 break
-        
+
     else:
         completed = True
 
@@ -224,16 +239,28 @@ def setup_criteria(args):
     """
 
     # Early stopping criterion:
-    stopping_criteria = [models.EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
+    stopping_criteria = {
+        'early_stopping': models.EarlyStoppingPatience(
+            max_iterations=args.steps,
+            **args.__dict__)
+    }
 
     # Loss function
     if args.criterion == 'RD_MS_PA':
         criterion = models.RateDistortionMSPenaltyA(**args.__dict__)
-        stopping_criteria.append(models.EarlyStoppingTarget(comparison='le', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='le',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
 
     elif args.criterion == 'RD_MS_PB':
         criterion = models.RateDistortionMSPenaltyB(**args.__dict__)
-        stopping_criteria.append(models.EarlyStoppingTarget(comparison='ge', max_iterations=args.steps, target=args.energy_limit, **args.__dict__))
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='ge',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
 
     elif args.criterion == 'RD_MS':
         criterion = models.RateDistortionMultiscale(**args.__dict__)
@@ -241,9 +268,9 @@ def setup_criteria(args):
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
 
-    # criterion = nn.DataParallel(criterion)
-    # if args.gpu:
-    #     criterion = criterion.cuda()
+    criterion = nn.DataParallel(criterion)
+    if args.gpu:
+        criterion = criterion.cuda()
 
     return criterion, stopping_criteria
 
@@ -333,25 +360,23 @@ def main(args):
     # Log the training setup
     logger.info('Network architecture:')
     logger.info(cae_model)
-    
+
     logger.info('\nCriterion:')
     logger.info(criterion)
-    
+
     logger.info('\nStopping criterion:')
-    logger.info(stopping_criteria[0])
-    
-    if len(stopping_criteria) > 1:
-        logger.info('\nAdditinal stopping criterions:')
-        logger.info(stopping_criteria[1])
+    for k, crit in stopping_criteria.items():
+        logger.info('\n' + k)
+        logger.info(crit)
 
     logger.info('\nOptimization parameters:')
     logger.info(optimizer)
-    
+
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
 
     train_data, valid_data = utils.get_data(args)
-    
+
     train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
 
 

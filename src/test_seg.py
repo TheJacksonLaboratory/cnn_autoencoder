@@ -133,14 +133,13 @@ def compute_metrics_per_object(y, t, seg_threshold):
     all_cc_labels = []
     all_cc_predictions = []
 
-    for cc in t_ccs_props:
-        if cc.area < 16:
-            continue
-
+    for cc_i, cc in enumerate(t_ccs_props):
         cc_slice = (slice(cc.bbox[0], cc.bbox[2], 1),
                     slice(cc.bbox[1], cc.bbox[3], 1))
         cc_pred = y[cc_slice]
-        t_cc = t[cc_slice]
+        t_cc = np.copy(t[cc_slice])
+        t_cc[t_cc != cc_i] = 0
+        t_cc = t_cc > 0
 
         cc_metrics = compute_metrics(cc_pred, t_cc,
                                      seg_threshold=seg_threshold)
