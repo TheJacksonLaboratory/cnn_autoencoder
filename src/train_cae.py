@@ -138,7 +138,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             # Checkpoint step
             keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
 
-            if not keep_training or (step >= args.warmup and (step-args.warmup) % args.checkpoint_steps == 0):
+            if not keep_training or (step >= args.early_warmup and (step-args.early_warmup) % args.checkpoint_steps == 0):
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set

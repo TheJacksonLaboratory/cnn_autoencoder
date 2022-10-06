@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 class RateDistortion(nn.Module):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
-        super(RateDistortion, self).__init__()     
+        super(RateDistortion, self).__init__() 
         if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
             self._distorsion_lambda = distorsion_lambda[0]
         else:
@@ -59,11 +59,11 @@ class RateDistortionMultiscale(nn.Module):
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
         dist = []
-        x_org = x.clone()
+        x_org = x.clone().to(x_r[0].device)
         for x_r_s in x_r:
-            dist.append(F.mse_loss(x_r_s, x_org.to(x_r_s.device)))
+            dist.append(F.mse_loss(x_r_s, x_org))
             with torch.no_grad():
-                x_org = F.conv2d(x_org, self._pyramid_downsample_kernel.repeat(x.size(1), 1, 1, 1), padding=2, groups=x.size(1))
+                x_org = F.conv2d(x_org, self._pyramid_downsample_kernel.repeat(x.size(1), 1, 1, 1).to(x_r_s.device), padding=2, groups=x.size(1))
                 x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear', align_corners=False)
 
         # Rate of compression:
@@ -111,9 +111,12 @@ class PenaltyB(nn.Module):
             # Select the maximum energy channel
             max_energy_channel = A.argmax(dim=1)
         
-        fake_codes = torch.cat([torch.zeros(1, K, 2, 2).index_fill_(1, torch.tensor([k]), 1) for k in range(K)], dim=0)
+        fake_codes = torch.cat(
+            [torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1)
+             for k in range(K)
+            ], dim=0)
+        
         fake_rec = net(fake_codes, synthesize_only=True)
-
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / torch.sum(B)
 
@@ -125,7 +128,7 @@ class PenaltyB(nn.Module):
 
 class RateDistortionPenaltyA(RateDistortion, PenaltyA):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionPenaltyA, self).__init__(distorsion_lambda)
+        super(RateDistortionPenaltyA, self).__init__(distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -138,7 +141,7 @@ class RateDistortionPenaltyA(RateDistortion, PenaltyA):
 
 class RateDistortionMSPenaltyA(RateDistortionMultiscale, PenaltyA):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionMSPenaltyA, self).__init__(distorsion_lambda)
+        super(RateDistortionMSPenaltyA, self).__init__(distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -151,7 +154,7 @@ class RateDistortionMSPenaltyA(RateDistortionMultiscale, PenaltyA):
 
 class RateDistortionPenaltyB(RateDistortion, PenaltyB):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionPenaltyB, self).__init__(distorsion_lambda)
+        super(RateDistortionPenaltyB, self).__init__(distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -163,7 +166,7 @@ class RateDistortionPenaltyB(RateDistortion, PenaltyB):
 
 class RateDistortionMSPenaltyB(RateDistortionMultiscale, PenaltyB):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionMSPenaltyB, self).__init__(distorsion_lambda)
+        super(RateDistortionMSPenaltyB, self).__init__(distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -178,7 +181,7 @@ class CrossEnropy2D(nn.Module):
         super(CrossEnropy2D, self).__init__()
 
         self._my_ce = nn.CrossEntropyLoss(reduction='none')
-    
+
     def forward(self, y, t):
         return self._my_ce(y, t.squeeze().long())
 
@@ -188,14 +191,15 @@ class StoppingCriterion(object):
         self._max_iterations = max_iterations
         self._curr_iteration = 0
 
-    def update(self, iteration, **kwargs):        
-        if iteration is None:
-            return
-        self._curr_iteration = iteration
+    def update(self, **kwargs):
+        self._curr_iteration += 1
 
     def check(self):
         return self._curr_iteration <= self._max_iterations
-    
+
+    def reset(self):
+        self._curr_iteration = 0
+
     def __repr__(self):
         decision = self.check()
         repr = 'StoppingCriterion(max-iterations: %d, current-iterations: %d, decision: %s)' % (self._max_iterations, self._curr_iteration, 'Continue' if decision else 'Stop')
@@ -203,20 +207,21 @@ class StoppingCriterion(object):
 
 
 class EarlyStoppingPatience(StoppingCriterion):
-    def __init__(self, patience=5, warmup=0, target='min', initial=None, **kwargs):
+    def __init__(self, early_patience=5, early_warmup=0, target='min', initial=None, **kwargs):
         super(EarlyStoppingPatience, self).__init__(**kwargs)
 
         self._bad_epochs = 0
-        self._patience = patience
-        self._warmup = warmup
+        self._patience = early_patience
+        self._warmup = early_warmup
 
         self._target = target
+        self._initial = initial
 
-        if self._target=='min':
-            self._best_metric = float('inf') if initial is None else initial
+        if self._target == 'min':
+            self._best_metric = float('inf') if self._initial is None else self._initial
             self._metric_sign = 1
         else:
-            self._best_metric = 0 if initial is None else initial
+            self._best_metric = 0 if self._initial is None else self._initial
             self._metric_sign = -1
 
     def update(self, metric=None, **kwargs):
@@ -224,7 +229,7 @@ class EarlyStoppingPatience(StoppingCriterion):
 
         if metric is None or self._curr_iteration < self._warmup:
             return
-        
+
         if self._best_metric >= (self._metric_sign * metric):
             self._bad_epochs = 0
             self._best_metric = self._metric_sign * metric
@@ -235,6 +240,13 @@ class EarlyStoppingPatience(StoppingCriterion):
         parent_decision = super().check()
         decision = self._bad_epochs < self._patience
         return parent_decision & decision
+
+    def reset(self):
+        super().reset()
+        if self._target == 'min':
+            self._best_metric = float('inf') if self._initial is None else self._initial
+        else:
+            self._best_metric = 0 if self._initial is None else self._initial
 
     def __repr__(self):
         repr = super(EarlyStoppingPatience, self).__repr__()
@@ -247,26 +259,21 @@ class EarlyStoppingTarget(StoppingCriterion):
     """ Keep training while the inequality holds.  
     
     """
-    def __init__(self, target, comparison='l', warmup=0, **kwargs):
+    def __init__(self, target, comparison='l', **kwargs):
         super(EarlyStoppingTarget, self).__init__(**kwargs)
-        self._warmup = warmup
         self._target = target
         self._comparison = comparison
         self._last_metric = -1
 
     def update(self, metric=None, **kwargs):
         super(EarlyStoppingTarget, self).update(**kwargs)
-
-        # Do not store anythong until warmed up
-        if self._curr_iteration <= self._warmup:
-            return
-        
         self._last_metric = metric
 
-    def check(self):
-        if self._curr_iteration <= self._warmup:
-            return True
+    def reset(self):
+        super().reset()
+        self._last_metric = -1
 
+    def check(self):
         parent_decision = super(EarlyStoppingTarget, self).check()
 
         # If the criterion is met, the training is stopped

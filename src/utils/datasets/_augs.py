@@ -42,7 +42,9 @@ class AddGaussianNoise(object):
         self.mean = mean
 
     def __call__(self, tensor):
-        return tensor + torch.randn(tensor.size()) * self.std + self.mean
+        noisy_tensor = tensor + torch.randn(tensor.size()) * self.std + self.mean
+        noisy_tensor.clip_(0, 1)
+        return noisy_tensor
 
 
 class RandomElasticDeformationInputTarget(object):
