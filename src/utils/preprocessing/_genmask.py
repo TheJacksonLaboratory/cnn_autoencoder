@@ -105,14 +105,25 @@ def generate_mask(zarr_fn, data_group='0/0', data_axes='XYZCT',
     # Resize the input image.
     sample_size = int(math.ceil(org_mag / scale_mag))
     dwn_sigma = sample_size / math.sqrt(2*math.log(2))
+
+    H, W = gray_arr.shape
+    sigma_overlap = int(math.ceil(4 * dwn_sigma)) + 1
+
+    H_out = max(1, int(math.ceil(H / sample_size))) * sample_size
+    W_out = max(1, int(math.ceil(W / sample_size))) * sample_size
+    H_out_overlap = max(1, int(math.ceil(sigma_overlap / sample_size))) * sample_size
+    W_out_overlap = max(1, int(math.ceil(sigma_overlap / sample_size))) * sample_size
+
+    H_pad = max(H_out, H_out_overlap) - H
+    W_pad = max(W_out, W_out_overlap) - W
+
+    gray_arr = da.pad(gray_arr, pad_width=((0, H_pad), (0, W_pad)))
+
+    print(gray_arr)
+    
     gray_arr = ndfilters.gaussian_filter(gray_arr, order=0, sigma=dwn_sigma,
                                          mode='reflect')
     gray_arr = gray_arr.astype(np.uint8)
-    H, W = gray_arr.shape
-    H_pad = max(1, int(math.ceil(H / sample_size))) * sample_size - H
-    W_pad = max(1, int(math.ceil(W / sample_size))) * sample_size - W
-
-    gray_arr = da.pad(gray_arr, pad_width=((0, H_pad), (0, W_pad)))
     gray_arr = da.coarsen(np.mean, gray_arr, {0: sample_size, 1: sample_size})
 
     # Compute a threshold level to segment foreground from background
@@ -129,6 +140,7 @@ def generate_mask(zarr_fn, data_group='0/0', data_axes='XYZCT',
 
     mask = da.from_delayed(dask.delayed(_clean_mask)(mask), shape=mask.shape,
                            meta=np.empty((), dtype=bool))
+    mask = mask[:H_out, :W_out]
 
     # Return the axes order of the mask to the order given by `data_axes`.
     rem_axes = list(set(data_axes) - set('YX'))

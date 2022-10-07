@@ -1,3 +1,5 @@
+from dask.diagnostics import ProgressBar
+
 import logging
 import os
 
@@ -116,17 +118,20 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
     transpose_order += [data_axes.index(a) + 1 for a in unused_axis]
     transpose_order += [data_axes.index(a) + 1 for a in 'YXC']
 
-    y = da.block([[da.from_delayed(encode(np.transpose(z[slices[i*np_W + j]],
-                                                       transpose_order),
-                                          comp_model,
-                                          transform,
-                                          out_offset),
-                                   shape=(1, channels_bn, 1,
-                                          out_patch_size,
-                                          out_patch_size),
-                                   meta=np.empty((), dtype=np.uint8))
-                   for j in range(np_W)]
-                  for i in range(np_H)])
+    y_blocks = []
+    for i in range(np_H):
+        y_blocks.append([])
+        for j in range(np_W):
+            y_blocks[-1].append(
+                da.from_delayed(
+                    encode(
+                        np.transpose(z[slices[i*np_W + j]], transpose_order),
+                        comp_model,
+                        transform,
+                        out_offset),
+                    shape=(1, channels_bn, 1, out_patch_size, out_patch_size),
+                    meta=np.empty((), dtype=np.uint8)))
+    y = da.block(y_blocks)
 
     comp_H = math.ceil(in_H / 2**compression_level)
     comp_W = math.ceil(in_W / 2**compression_level)
@@ -138,8 +143,9 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
     else:
         component = data_group
 
-    y.to_zarr(output_filename, component=component, overwrite=True,
-              compressor=compressor)
+    with ProgressBar():
+        y.to_zarr(output_filename, component=component, overwrite=True,
+                  compressor=compressor)
 
     # Add metadata to the compressed zarr file
     group = zarr.open(output_filename)

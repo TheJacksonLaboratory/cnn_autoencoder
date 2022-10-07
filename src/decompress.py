@@ -1,3 +1,5 @@
+from dask.diagnostics import ProgressBar
+
 import logging
 import os
 
@@ -212,8 +214,9 @@ def decompress_image(decomp_model, input_filename, output_filename,
         comp_pyr = '/'.join(component.split('/')[:-1])
         for r, y_r in enumerate(y_pyr):
             comp_r = comp_pyr + '/%i' % r
-            y_r.to_zarr(output_filename, component=comp_r, overwrite=True,
-                        compressor=compressor)
+            with ProgressBar():
+                y_r.to_zarr(output_filename, component=comp_r, overwrite=True,
+                            compressor=compressor)
 
         group = zarr.open(output_filename)
         if len(decomp_label):
@@ -244,7 +247,9 @@ def decompress_image(decomp_model, input_filename, output_filename,
         for r, y_r in enumerate(y_pyr):
             fn_out = (fn_out_base + '_%i' % (reconstruction_level - r)
                       + destination_format)
-            im = Image.fromarray(y_r.squeeze().transpose(1, 2, 0).compute())
+            with ProgressBar():
+                im = Image.fromarray(
+                    y_r.squeeze().transpose(1, 2, 0).compute())
             im.save(fn_out, quality_opts={'compress_level': 9,
                                           'optimize': False})
 
