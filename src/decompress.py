@@ -2,6 +2,8 @@ from dask.diagnostics import ProgressBar
 
 import logging
 import os
+import shutil
+import requests
 
 from itertools import product
 import numpy as np
@@ -19,7 +21,7 @@ import models
 import utils
 
 
-DECOMP_VERSION = '0.1.2'
+DECOMP_VERSION = '0.1.3'
 
 
 @dask.delayed
@@ -83,8 +85,8 @@ def decompress_image(decomp_model, input_filename, output_filename,
                      seed=None,
                      decomp_label='reconstruction'):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
-
-    src_group = zarr.open(input_filename.split(';')[0], mode='r')
+    fn, rois = utils.parse_roi(input_filename, '.zarr')
+    src_group = zarr.open(fn, mode='r')
     z_arr = src_group[data_group]
     comp_metadata = src_group[data_group.split('/')[0]]
     comp_metadata = comp_metadata.attrs['compression_metadata']
@@ -92,8 +94,14 @@ def decompress_image(decomp_model, input_filename, output_filename,
     # Extract the compression level, original channels, and original shape from the compression metadata
     comp_level = comp_metadata['compression_level']
     in_channels = comp_metadata['channels']
-    H = comp_metadata['height']
-    W = comp_metadata['width']
+    a_H, a_W = [data_axes.index(a) for a in "YX"]
+    if len(rois):
+        H = (rois[0][a_H].stop - rois[0][a_H].start) // rois[0][a_H].step
+        W = (rois[0][a_W].stop - rois[0][a_W].start) // rois[0][a_W].step
+    else:
+        H = comp_metadata['height']
+        W = comp_metadata['width']
+
     comp_label = comp_metadata.get('group', data_group.split('/')[0])
 
     if reconstruction_level < 0:
@@ -125,7 +133,27 @@ def decompress_image(decomp_model, input_filename, output_filename,
                                      pad_x + 2 * in_offset,
                                      in_patch_size)
 
-    z = da.from_zarr(z_arr)
+    if len(rois):
+        rois = rois[0]
+        uncomp_axis = ''.join(list(set(data_axes) - set('YX')))
+
+        # Modify the height and width according to the compression level.
+        comp_rois = [rois[data_axes.index(a)] for a in uncomp_axis]
+        comp_rois += [slice(rois[a_H].start // 2 ** comp_level,
+                            rois[a_H].stop // 2 ** comp_level,
+                            1),
+                      slice(rois[a_W].start // 2 ** comp_level,
+                            rois[a_W].stop // 2 ** comp_level,
+                            1)]
+
+        # Return the slices to the original data axes ordering.
+        all_axes = uncomp_axis + 'YX'
+        comp_rois = tuple([comp_rois[all_axes.index(a)] for a in data_axes])
+
+        z = da.from_zarr(z_arr)[comp_rois]
+    else:
+        z = da.from_zarr(z_arr)
+        rois = None
 
     padding = [(in_offset, in_offset), (in_offset, in_offset), (0, 0), (0, 0),
                (0, 0)]
@@ -232,13 +260,35 @@ def decompress_image(decomp_model, input_filename, output_filename,
             model=str(decomp_model),
             model_seed=seed,
             original=data_group,
+            rois=rois,
             version=DECOMP_VERSION
         )
 
-        if 'zarr' in destination_format and output_filename != input_filename:
-            z_org = zarr.open(output_filename, mode='rw')
-            if 'labels' in z_org.keys():
+        # Copy the labels of the original image
+        if (isinstance(z_arr.store, zarr.storage.FSStore)
+           or not os.path.samefile(output_filename, input_filename)):
+            z_org = zarr.open(output_filename, mode="rw")
+            if 'labels' in z_org.keys() and 'labels' not in group.keys():
                 zarr.copy(z_org['labels'], group)
+
+            # If the source file has metadata (e.g. extracted by
+            # bioformats2raw) copy that the destination zarr file.
+            if isinstance(z_arr.store, zarr.storage.FSStore):
+                metadata_resp = requests.get(input_filename
+                                             + '/OME/METADATA.ome.xml')
+                if metadata_resp.status_code == 200:
+                    os.mkdir(os.path.join(output_filename, 'OME'))
+                    # Download METADATA.ome.xml into the creted output dir
+                    with open(os.path.join(output_filename,
+                                           'OME',
+                                           'METADATA.ome.xml'),
+                              'wb') as fp:
+                        fp.write(metadata_resp.content)
+
+            elif os.path.isdir(os.path.join(input_filename, 'OME')):
+                shutil.copytree(os.path.join(input_filename, 'OME'),
+                                os.path.join(output_filename, 'OME'),
+                                dirs_exist_ok=True)
     else:
         # Note that the image should have a number of classes that can be
         # interpreted as a GRAYSCALE image, RGB image or RBGA image.

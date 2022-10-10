@@ -79,12 +79,12 @@ def compute_num_patches(size, patch_size, padding, stride):
     return n_patches
 
 
-def parse_roi(filename):
+def parse_roi(filename, source_format):
     """Parse the filename and ROIs from `filename`.
 
     The filename and ROIs must be separated by a semicolon (;).
     Any number of ROIs are accepted. ROIs are expected to be passed as
-    (start_coords:axis_lengths), in the axis order of XYZCT.
+    (start_coords:axis_lengths), in the axis order of the input data axes.
 
     Notes:
     ------
@@ -97,7 +97,9 @@ def parse_roi(filename):
     Parameters:
     ----------
     filename : str, numpy.ndarray, zarr.Array, or zarr.Group
-        Path to the image
+        Path to the image.
+    source_format : str
+        Format of the input file.
 
     Returns
     -------
@@ -113,27 +115,29 @@ def parse_roi(filename):
         rois = filename.attrs['rois']
 
     elif (isinstance(filename, str)
-          and filename.lower().endswith('.zarr') and ';' not in filename):
+          and filename.lower().endswith('.zarr')
+          and ';' not in filename.split('.zarr')[1:]):
         # The input is a zarr file, and the rois should be taken from it
         fn = filename
-        z = zarr.open(filename, 'r')      
+        z = zarr.open(filename, 'r')
         rois = z.attrs.get('rois', [])
 
     elif isinstance(filename, str):
-        broken_filename = filename.split(";")
-        fn = broken_filename[0]
-        rois_str = broken_filename[1:]
-
+        fn, rois_str = filename.split(source_format)
+        fn = fn + source_format
+        rois_str = rois_str.split(";")[1:]
         for roi in rois_str:
             start_coords, axis_lengths = roi.split(':')
 
             start_coords = tuple([int(c.strip('\n\r ()'))
                                   for c in start_coords.split(',')])
 
-            axis_lengths = tuple([int(l.strip('\n\r ()'))
-                                  for l in axis_lengths.split(',')])
+            axis_lengths = tuple([int(ln.strip('\n\r ()'))
+                                  for ln in axis_lengths.split(',')])
 
-            rois.append((start_coords, axis_lengths))
+            roi_slices = tuple([slice(c_i, c_i + l_i, 1) for c_i, l_i in
+                                zip(start_coords, axis_lengths)])
+            rois.append(roi_slices)
 
     return fn, rois
 
@@ -216,10 +220,6 @@ def compute_grid(index, imgs_shapes, imgs_sizes, patch_size, padding, stride,
                  by_rows=True):
     """ Compute the coordinate on a grid of indices corresponding to 'index'.
 
-    The indices are in the form of [i, tl_x, tl_y], where 'i' is the file index.
-    tl_x and tl_y are the top left coordinates of the patched image.
-    To get a patch from any image, tl_y and tl_x must be multiplied by patch_size.
-
     Parameters:
     ----------
     index : int
@@ -241,10 +241,14 @@ def compute_grid(index, imgs_shapes, imgs_sizes, patch_size, padding, stride,
     Returns
     -------
     i : int
+        The file index relative to the list of filenames.
     tl_y : int
+        The top left `y` coordinate of the patched image.
     tl_x : int
+        The top left `x` coordinate of the patched image.
     """
-    # This allows to generate virtually infinite data from bootstrapping the same data
+    # This allows to generate virtually infinite data from bootstrapping the
+    # same data by resampling with replacement.
     index %= imgs_sizes[-1]
 
     # Get the file index among the available file names
@@ -352,7 +356,8 @@ def zarrdataset_worker_init(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset_obj = worker_info.dataset
 
-    filenames_rois = list(map(parse_roi, dataset_obj._filenames))
+    filenames_rois = list(map(parse_roi, dataset_obj._filenames,
+                              dataset_obj._source_format))
 
     if (len(filenames_rois) > 1
        and len(filenames_rois) >= worker_info.num_workers):
@@ -517,10 +522,11 @@ class ZarrDataset(Dataset):
 
         return filenames
 
-    def _preload_files(self, filenames, data_group='0/0', data_axes='TCZYX',
+    def _preload_files(self, filenames, data_group='0/0',
                        compressed_input=False, rois=None):
         if rois is None:
-            filenames_rois = list(map(parse_roi, filenames))
+            filenames_rois = list(map(parse_roi, filenames,
+                                      self._source_format))
         else:
             filenames_rois = zip(filenames, rois)
 
@@ -536,32 +542,22 @@ class ZarrDataset(Dataset):
 
             # List all ROIs in this image
             if len(rois) > 0:
-                for (cx, cy, cz, cc, ct), (lx, ly, lz, lc, lt) in rois:
-                    roi = [
-                        slice(cx, cx+lx, 1),
-                        slice(cy, cy+ly, 1),
-                        slice(cz, cz+lz, 1),
-                        slice(cc, cc+lc, 1),
-                        slice(ct, ct+lt, 1)
-                        ]
-
-                    # Because data could have been passed in a different axes
-                    # ordering, slicing is reordered to match the input data
-                    # axes ordering.
-                    roi = [roi['XYZCT'.index(a)] for a in data_axes]
-
+                # Handle any number of dimensions in the ROIs list
+                for roi in rois:
                     # Take the ROI as the original size of the image
-                    rois_list.append((id, tuple(roi)))
+                    rois_list.append((id, roi))
 
             else:
-                roi = [slice(0, s, 1) for s in arr_shape]
-                rois_list.append((id, tuple(roi)))
+                roi = tuple([slice(0, s, 1) for s in arr_shape])
+                rois_list.append((id, roi))
 
         return z_list, rois_list, compression_level
 
     def _compute_size(self, z_list, rois_list):
-        imgs_shapes = [((roi[-2].stop - roi[-2].start)//roi[-2].step,
-                        (roi[-1].stop - roi[-1].start)//roi[-1].step)
+        # Get the axis position for the input image height and width.
+        a_H, a_W = [self._data_axes[a] for a in 'HW']
+        imgs_shapes = [((roi[a_H].stop - roi[a_H].start)//roi[a_H].step,
+                        (roi[a_W].stop - roi[a_W].start)//roi[a_W].step)
                        for _, roi in rois_list]
         imgs_sizes = np.cumsum(
             [0]

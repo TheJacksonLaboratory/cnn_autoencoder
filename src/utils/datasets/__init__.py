@@ -1,5 +1,6 @@
 from ._zarrbased import (LabeledZarrDataset,
                          ZarrDataset,
+                         parse_roi,
                          get_patch,
                          image_to_zarr,
                          compute_num_patches,

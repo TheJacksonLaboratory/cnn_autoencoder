@@ -2,6 +2,8 @@ from dask.diagnostics import ProgressBar
 
 import logging
 import os
+import shutil
+import requests
 
 from itertools import product
 import math
@@ -20,7 +22,7 @@ import models
 import utils
 
 
-COMP_VERSION = '0.1.2'
+COMP_VERSION = '0.1.3'
 
 
 @dask.delayed
@@ -52,12 +54,18 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                    comp_label='compressed'):
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
-
-    z_arr, _, _ = utils.image_to_zarr(input_filename.split(';')[0], patch_size,
-                                      source_format,
+    fn, rois = utils.parse_roi(input_filename, source_format)
+    z_arr, _, _ = utils.image_to_zarr(fn, patch_size, source_format,
                                       data_group)
 
-    in_channels, in_H, in_W = [z_arr.shape[data_axes.index(s)] for s in "CYX"]
+    a_ch, a_H, a_W = [data_axes.index(a) for a in "CYX"]
+    in_channels = z_arr.shape[a_ch]
+    if len(rois):
+        in_H = (rois[0][a_H].stop - rois[0][a_H].start) // rois[0][a_H].step
+        in_W = (rois[0][a_W].stop - rois[0][a_W].start) // rois[0][a_W].step
+    else:
+        in_H = z_arr.shape[a_H]
+        in_W = z_arr.shape[a_W]
 
     in_offset = 0
     out_offset = 0
@@ -81,7 +89,12 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                                      pad_x + 2 * in_offset,
                                      patch_size)
 
-    z = da.from_zarr(z_arr)
+    if len(rois):
+        z = da.from_zarr(z_arr)[rois[0]]
+        rois = rois[0]
+    else:
+        z = da.from_zarr(z_arr)
+        rois = None
 
     padding = [(in_offset, in_offset), (in_offset, in_offset), (0, 0), (0, 0),
                (0, 0)]
@@ -169,15 +182,35 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
         model_seed=seed,
         original=data_group,
         group=comp_label,
+        rois=str(rois),
         version=COMP_VERSION
     )
 
     # Copy the labels of the original image
-    # TODO: Copy the Metadata from the OME folder if any
-    if 'zarr' in source_format and output_filename != input_filename:
+    if ('zarr' in source_format
+       and isinstance(z_arr.store, zarr.storage.FSStore)
+       or not os.path.samefile(output_filename, fn)):
         z_org = zarr.open(output_filename, mode="rw")
         if 'labels' in z_org.keys() and 'labels' not in group.keys():
             zarr.copy(z_org['labels'], group)
+
+        # If the source file has metadata (e.g. extracted by bioformats2raw)
+        # copy that the destination zarr file.
+        if isinstance(z_arr.store, zarr.storage.FSStore):
+            metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
+            if metadata_resp.status_code == 200:
+                os.mkdir(os.path.join(output_filename, 'OME'))
+                # Download METADATA.ome.xml into the creted output dir
+                with open(os.path.join(output_filename,
+                                       'OME',
+                                       'METADATA.ome.xml'),
+                          'wb') as fp:
+                    fp.write(metadata_resp.content)
+
+        elif os.path.isdir(os.path.join(fn, 'OME')):
+            shutil.copytree(os.path.join(fn, 'OME'),
+                            os.path.join(output_filename, 'OME'),
+                            dirs_exist_ok=True)
 
 
 def setup_network(state, use_gpu=False):
