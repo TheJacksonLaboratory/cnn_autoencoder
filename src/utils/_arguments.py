@@ -4,7 +4,17 @@ import torch
 import json
 import argparse
 
-from ._info import DATASETS, SEG_MODELS, CAE_MODELS, PROJ_MODELS, FE_MODELS, CLASS_MODELS, CAE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS, MERGE_TYPES
+from ._info import (DATASETS,
+                    SEG_MODELS,
+                    CAE_MODELS,
+                    PROJ_MODELS,
+                    FE_MODELS,
+                    CLASS_MODELS,
+                    CAE_CRITERIONS,
+                    SEG_CRITERIONS,
+                    OPTIMIZERS,
+                    SCHEDULERS,
+                    MERGE_TYPES)
 
 
 def override_config_file(parser):
@@ -112,9 +122,11 @@ def add_data_args(parser, task, mode='training'):
 def add_config_args(parser, mode=True):
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
 
-    if mode not in 'training': return
+    if mode not in 'training':
+        return
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
+    parser.add_argument('-opt', '--optimizer', type=str, dest='optim_algo', help='Optimization algorithm', default='Adam', choices=OPTIMIZERS)
     parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler_type', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
     parser.add_argument('-wd', '--wdecay', type=float, dest='weight_decay', help='Optimizer weight decay (L2 regularizer)', default=0)
 

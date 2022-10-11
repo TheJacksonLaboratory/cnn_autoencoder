@@ -1,6 +1,5 @@
 import logging
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
@@ -9,11 +8,19 @@ import torch.optim as optim
 import models
 import utils
 
-from functools import reduce
 from inspect import signature
 
-scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau}
-model_options = {"AutoEncoder": models.AutoEncoder, "MaskedAutoEncoder": models.MaskedAutoEncoder}
+from tqdm import tqdm
+
+
+optimization_algorithms = {"Adam": optim.Adam,
+                           "SGD": optim.SGD}
+
+scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
+                     "StepLR": optim.lr_scheduler.StepLR}
+
+model_options = {"AutoEncoder": models.AutoEncoder,
+                 "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
 
 def valid(cae_model, data, criterion, args):
@@ -41,6 +48,7 @@ def valid(cae_model, data, criterion, args):
     cae_model.eval()
     sum_loss = 0
 
+    q = tqdm(total=len(data), desc='Validating')
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
             x_r, y, p_y = cae_model.module.forward_steps(x)
@@ -53,7 +61,8 @@ def valid(cae_model, data, criterion, args):
                 dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
                 logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     i, len(data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
-
+            q.update()
+    q.close()
     mean_loss = sum_loss / len(data)
 
     return mean_loss
@@ -81,7 +90,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         If provided, a learning rate scheduler for the optimizer
     args : Namespace
         The input arguments passed at running time
-    
+
     Returns
     -------
     completed : bool
@@ -101,6 +110,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         # Reset the average loss computation every epoch
         sum_loss = 0
 
+        q = tqdm(total=len(train_data), desc="Training")
         for i, (x, _) in enumerate(train_data):
             step += 1
 
@@ -142,14 +152,15 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             sum_loss += step_loss
 
             if (scheduler is not None
-                  and 'metrics' not in signature(scheduler.step).parameters):
+               and 'metrics' not in signature(scheduler.step).parameters):
                 scheduler.step()
             # End of training step
+            q.update()
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
                 dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
-                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                logger.debug('\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
             # Checkpoint step
@@ -185,8 +196,9 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: '
                              'Interrupting training ****')
+                q.close()
                 break
-
+        q.close()
     else:
         completed = True
 
@@ -227,12 +239,12 @@ def setup_criteria(args):
     ----------
     args : Namespace
         The input arguments passed at running time. All the parameters are passed directly to the criteria constructors.
-            
+
     Returns
     -------
     criterion : nn.Module
         The loss function that is used as target to optimize the parameters of the nerual network.
-    
+
     stopping_criteria : list[StoppingCriterion]
         A list of stopping criteria. The first element is always set to stop the training after a fixed number of iterations.
         Depending on the criterion used, additional stopping criteria is set.        
@@ -262,8 +274,27 @@ def setup_criteria(args):
                                        target=args.energy_limit,
                                        **args.__dict__)
 
+    elif args.criterion == 'RMS-SSIM_MS_PA':
+        criterion = models.RateMSSSIMPyrPenaltyA(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='le',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_MS_PB':
+        criterion = models.RateMSSSIMPyrPenaltyB(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='ge',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
     elif args.criterion == 'RD_MS':
         criterion = models.RateDistortionMultiscale(**args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_MS':
+        criterion = models.MultiScaleStructuralsSimilarityIndexPyramid(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
@@ -284,7 +315,7 @@ def setup_optim(cae_model, args):
         The convolutional autoencoder model to be optimized
     scheduler_type : str
         The type of learning rate scheduler used during the neural network training
-            
+ 
     Returns
     -------
     optimizer : torch.optim.Optimizer
@@ -294,8 +325,9 @@ def setup_optim(cae_model, args):
     """
 
     # By now, only the ADAM optimizer is used
-    optimizer = optim.Adam(params=cae_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    
+    optim_algo = optimization_algorithms[args.optim_algo]
+    optimizer = optim_algo(params=cae_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
@@ -328,7 +360,7 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
         checkpoint_state = torch.load(checkpoint, map_location=torch.device('cpu'))
     else:
         checkpoint_state = torch.load(checkpoint)
-    
+
     cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
     cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
     cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
@@ -386,5 +418,5 @@ if __name__ == '__main__':
     utils.setup_logger(args)
 
     main(args)
-    
+
     logging.shutdown()

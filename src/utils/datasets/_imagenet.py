@@ -17,10 +17,10 @@ try:
 
     class ImageS3(Dataset):
         def __init__(self, root, transform=None, endpoint=None, bucket_name=None):
-            
+
             if isinstance(root, list):
                 self._s3_urls = root
-            
+
             elif root.endswith('.txt'):
                 with open(root, 'r') as f:
                     self._s3_urls = [l.strip() for l in f.readlines()]
@@ -33,16 +33,19 @@ try:
                 self._remove_endpoint = True
 
             else:
-                self._remove_endpoint = False            
-        
+                self._remove_endpoint = False
+
             if bucket_name is not None:
                 self._bucket_name = bucket_name
             else:
                 self._bucket_name = self._s3_urls[0].split('/')[3]
-            
+
             # Access the bucket anonymously
-            self._s3 = boto3.client('s3', aws_access_key_id='', aws_secret_access_key='', region_name='us-east-2', endpoint_url=endpoint)
-            
+            self._s3 = boto3.client('s3', aws_access_key_id='',
+                                    aws_secret_access_key='',
+                                    region_name='us-east-2',
+                                    endpoint_url=endpoint)
+
             self._s3._request_signer.sign = (lambda *args, **kwargs: None)
 
             self._transform = transform
@@ -52,7 +55,7 @@ try:
                 fn = '/'.join(self._s3_urls[index].split('/')[4:])
             else:
                 fn = self._s3_urls[index]
-            
+
             im_bytes = self._s3.get_object(Bucket=self._bucket_name, Key=fn)['Body'].read()
             im_s3 = Image.open(BytesIO(im_bytes))
 
@@ -62,7 +65,7 @@ try:
 
             if self._transform is not None:
                 im = self._transform(im)
-            
+
             return im, [0]
 
         def __len__(self):

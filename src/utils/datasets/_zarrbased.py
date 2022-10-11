@@ -6,13 +6,72 @@ import numpy as np
 import zarr
 
 from PIL import Image
+import boto3
+from io import BytesIO
 
+from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset
 
 
+class LazyImage(object):
+    """Class to open images lazyly when they are needed for computation.
+    """
+    def __init__(self, filename, s3_obj=None):
+        """Load the image at `filename` using the Image class from the PIL
+        library and returns it as a numpy array.
+
+        Parameters:
+        ----------
+        filename : str
+            Path to the image, either in local or S3 bucket storage
+        s3 : boto3.client or None
+            A clinet connected to a S3 bucket
+        Returns
+        -------
+        arr : numpy.array
+        """
+        self._filename = filename
+        self._s3_obj = s3_obj
+
+        if self._s3_obj is not None:
+            # Remove the end-point from the file name
+            self._filename = '/'.join(self._filename.split('/')[4:])
+            self.shape = (-1, -1, 3)
+            self._im = None
+        else:
+            self._im = Image.open(self._filename, mode="r").convert('RGB')
+
+            self.shape = (self._im.height, self._im.width, 3)
+
+    def __getitem__(self, roi):
+        if self._s3_obj is not None:
+            im_bytes = self._s3_obj['s3'].get_object(
+                Bucket=self._s3_obj['bucket_name'],
+                Key=self._filename)['Body'].read()
+            im_s3 = Image.open(BytesIO(im_bytes))
+            im = im_s3.copy().convert('RGB')
+            im_s3.close()
+            arr = np.array(im)
+            shape = arr.shape
+
+            # When loading images from buckets, the shape of the image could
+            # not be known beforhand. That makes the ROI be negative, which is
+            # corrected here.
+            roi = tuple([slice(0, s, 1) if (r.stop - r.start) / r.step < 0 else r
+                         for r, s in zip(roi, shape)])
+        else:
+            arr = np.array(self._im)
+
+        return arr[roi]
+
+    def get_orthogonal_selection(self, roi):
+        return self[roi]
+
+
 def image_to_zarr(arr_src, patch_size, source_format, data_group,
-                  compressed_input=False):
+                  compressed_input=False,
+                  s3_obj=None):
     if (isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str)
        and '.zarr' in source_format)):
         # If the passed object is a zarr group/file, open it and
@@ -39,11 +98,10 @@ def image_to_zarr(arr_src, patch_size, source_format, data_group,
     elif (isinstance(arr_src, str) and '.zarr' not in source_format):
         # If the input is a path to an image stored in a format
         # supported by PIL, open it and use it as a numpy array.
-        arr = load_image(arr_src)
-        arr = zarr.array(arr, chunks=(1, arr.shape[1], 1, patch_size,
-                         patch_size))
+        arr = LazyImage(arr_src, s3_obj=s3_obj)
         arr_shape = arr.shape
         compression_level = 0
+
     else:
         # Otherwise, use directly the zarr array
         arr = arr_src
@@ -116,15 +174,16 @@ def parse_roi(filename, source_format):
 
     elif (isinstance(filename, str)
           and filename.lower().endswith('.zarr')
-          and ';' not in filename.split('.zarr')[1:]):
+          and ';' not in filename.lower().split('.zarr')[1:]):
         # The input is a zarr file, and the rois should be taken from it
         fn = filename
         z = zarr.open(filename, 'r')
         rois = z.attrs.get('rois', [])
 
     elif isinstance(filename, str):
-        fn, rois_str = filename.split(source_format)
-        fn = fn + source_format
+        split_pos = filename.lower().find(source_format)
+        rois_str = filename[split_pos + len(source_format):]
+        fn = filename[:split_pos + len(source_format)]
         rois_str = rois_str.split(";")[1:]
         for roi in rois_str:
             start_coords, axis_lengths = roi.split(':')
@@ -193,29 +252,6 @@ def get_filenames(source, source_format, data_mode):
     return []
 
 
-def load_image(filename):
-    """Load the image at `filename` using the Image class from the PIL library
-    and returns it as a numpy array.
-
-    Parameters:
-    ----------
-    filename : str
-        Path to the image
-
-    Returns
-    -------
-    arr : numpy.array
-    """
-    im = Image.open(filename, mode="r").convert('RGB')
-    arr = np.array(im)
-
-    # Complete the number of dimensions to match the expected axis ordering
-    # (from OMERO).
-    arr = arr.transpose(2, 0, 1)[np.newaxis, :, np.newaxis, ...]
-
-    return arr
-
-
 def compute_grid(index, imgs_shapes, imgs_sizes, patch_size, padding, stride,
                  by_rows=True):
     """ Compute the coordinate on a grid of indices corresponding to 'index'.
@@ -275,7 +311,8 @@ def compute_grid(index, imgs_shapes, imgs_sizes, patch_size, padding, stride,
 
 
 def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
-              compression_level=0):
+              compression_level=0,
+              data_axes="XYZCT"):
     """Get a squared region from an array z (numpy or zarr).
 
     Parameters:
@@ -306,10 +343,18 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
     tl_y *= stride[0]
     tl_x *= stride[1]
 
-    # TODO extract this information from the zarr metadata. For now, the color
-    # channel is considered to be in the second axis.
-    c = z.shape[1 if z.ndim > 3 else 0]
-    H, W = shape[-2:]
+    a_ch, a_H, a_W = [data_axes.index(a) for a in 'CYX']
+    c = z.shape[a_ch]
+    H = shape[a_H]
+    W = shape[a_W]
+
+    # If the shape is negative take it from the input `z` array. The shape can
+    # be negative when the data is being pulled from a S3 bucket.
+    true_H = z.shape[a_H] * 2 ** compression_level
+    true_W = z.shape[a_W] * 2 ** compression_level
+
+    H = H if H > 0 else true_H
+    W = W if W > 0 else true_W
 
     tl_x_padding = tl_x - padding[0]
     br_x_padding = tl_x + patch_size + padding[1]
@@ -320,34 +365,57 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
     tl_x = max(tl_x_padding, 0) // 2 ** compression_level
     br_y = min(br_y_padding, H) // 2 ** compression_level
     br_x = min(br_x_padding, W) // 2 ** compression_level
-    tl_x_padding //= 2 ** compression_level
-    br_x_padding //= 2 ** compression_level
-    tl_y_padding //= 2 ** compression_level
-    br_y_padding //= 2 ** compression_level
 
-    patch = z[..., tl_y:br_y, tl_x:br_x].squeeze()
+    slices = [slice(tl_x, br_x, 1),
+              slice(tl_y, br_y, 1),
+              slice(0, 1, 1),
+              slice(0, c, 1),
+              slice(0, 1, 1)]
+
+    slices = tuple([slices['XYZCT'.index(a)] for a in data_axes])
+
+    unused_axis = list(set(data_axes) - set('CYX'))
+    transpose_order = [data_axes.index(a) for a in unused_axis]
+    transpose_order += [data_axes.index(a) for a in 'CYX']
+
+    patch = z[slices].squeeze()
+    patch = np.transpose(patch, transpose_order)
 
     if c == 1:
         patch = patch[np.newaxis, ...]
 
-    # In the case that the input patch contains more than three dimensions, pad
-    # the leading dimensions with (0, 0).
-    leading_padding = [(0, 0)] * (patch.ndim - 2)
-
     # Pad the patch using the symmetric mode
-    if (patch.shape[-2] < patch_size // 2 ** compression_level
-       or patch.shape[-1] < patch_size // 2 ** compression_level):
-        pad_up = tl_y - tl_y_padding
-        pad_down = br_y_padding - br_y
-        pad_left = tl_x - tl_x_padding
-        pad_right = br_x_padding - br_x
+    patch_size //= 2 ** compression_level
+    if patch.shape[-2] < patch_size or patch.shape[-1] < patch_size:
+        # In the case that the input patch contains more than three dimensions,
+        # pad the leading dimensions with (0, 0).
+        leading_padding = [(0, 0)] * (patch.ndim - 2)
 
-        patch = np.pad(patch,
-                       (*leading_padding,
-                        (pad_up, pad_down),
-                        (pad_left, pad_right)),
-                       mode='symmetric',
+        cp_left = padding[0] if tl_x_padding < 0 else 0
+        cp_right = padding[1] if br_x_padding > W else 0
+        cp_up = padding[2] if tl_y_padding < 0 else 0
+        cp_down = padding[3] if tl_y_padding < 0 else 0
+
+        cp_left //= 2 ** compression_level
+        cp_right //= 2 ** compression_level
+        cp_up //= 2 ** compression_level
+        cp_down //= 2 ** compression_level
+
+        context_padding = (
+            *leading_padding,
+            (cp_up, cp_down),
+            (cp_left, cp_right)
+        )
+
+        filling_padding = (
+            *leading_padding,
+            (0, patch_size - cp_up - cp_down - br_y + tl_y),
+            (0, patch_size - cp_left - cp_right - br_x + tl_x)
+        )
+
+        patch = np.pad(patch, context_padding, mode='symmetric',
                        reflect_type='even')
+        patch = np.pad(patch, filling_padding, mode='constant')
 
     return patch
 
@@ -356,6 +424,7 @@ def zarrdataset_worker_init(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset_obj = worker_info.dataset
 
+    dataset_obj._s3_obj = dataset_obj._connect_s3(dataset_obj._filenames[0])
     filenames_rois = list(map(parse_roi, dataset_obj._filenames,
                               dataset_obj._source_format))
 
@@ -383,9 +452,9 @@ def zarrdataset_worker_init(worker_id):
         dataset_obj._preload_files(
             curr_worker_filenames,
             data_group=dataset_obj._data_group,
-            data_axes=dataset_obj._data_axes,
             compressed_input=dataset_obj._compressed_input,
-            rois=curr_worker_rois)
+            rois=curr_worker_rois,
+            s3_obj=dataset_obj._s3_obj)
 
     if hasattr(dataset_obj, '_lab_list'):
         (dataset_obj._lab_list,
@@ -394,9 +463,9 @@ def zarrdataset_worker_init(worker_id):
             dataset_obj._preload_files(
                 curr_worker_filenames,
                 data_group=dataset_obj._labels_group,
-                data_axes=dataset_obj._labels_data_axes,
                 compressed_input=False,
-                rois=curr_worker_rois)
+                rois=curr_worker_rois,
+                s3_obj=dataset_obj._s3_obj)
 
     (dataset_obj._dataset_size,
      dataset_obj._max_H,
@@ -463,20 +532,26 @@ class ZarrDataset(Dataset):
 
         self._filenames = self._split_dataset(root)
 
+    def __iter__(self):
+        self._s3_obj = self._connect_s3(self._filenames[0])
+
         (self.z_list,
          self._rois_list,
          self._compression_level) = \
             self._preload_files(self._filenames,
                                 data_group=self._data_group,
-                                data_axes=self._data_axes,
-                                compressed_input=self._compressed_input)
+                                compressed_input=self._compressed_input,
+                                s3_obj=self._s3_obj)
 
-        (self._dataset_size,
+        (dataset_size,
          self._max_H,
          self._max_W,
          self._org_channels,
          self._imgs_sizes,
          self.imgs_shapes) = self._compute_size(self.z_list, self._rois_list)
+
+        if self._dataset_size < 0:
+            self._dataset_size = dataset_size
 
     def _get_filenames(self, source):
         if (isinstance(source, str)
@@ -522,11 +597,29 @@ class ZarrDataset(Dataset):
 
         return filenames
 
+    def _connect_s3(self, filename_sample):
+        if (filename_sample.startswith('s3')
+           or filename_sample.startswith('http')):
+            endpoint = '/'.join(filename_sample.split('/')[:3])
+            s3_obj = dict(bucket_name=filename_sample.split('/')[3],
+                          s3=boto3.client('s3', aws_access_key_id='',
+                                          aws_secret_access_key='',
+                                          region_name='us-east-2',
+                                          endpoint_url=endpoint))
+
+            s3_obj['s3']._request_signer.sign = (lambda *args, **kwargs: None)
+        else:
+            s3_obj = None
+        return s3_obj
+
     def _preload_files(self, filenames, data_group='0/0',
-                       compressed_input=False, rois=None):
+                       compressed_input=False,
+                       rois=None,
+                       s3_obj=None):
         if rois is None:
-            filenames_rois = list(map(parse_roi, filenames,
-                                      self._source_format))
+            filenames_rois = list(
+                map(parse_roi, filenames,
+                    [self._source_format] * len(filenames)))
         else:
             filenames_rois = zip(filenames, rois)
 
@@ -534,10 +627,14 @@ class ZarrDataset(Dataset):
         rois_list = []
         compression_level = 0
 
+        q = tqdm(total=len(filenames_rois), desc="Preloading data")
         for id, (arr_src, rois) in enumerate(filenames_rois):
+            q.update()
             arr, arr_shape, compression_level = \
                 image_to_zarr(arr_src, self._patch_size, self._source_format,
-                              data_group, compressed_input)
+                              data_group,
+                              compressed_input,
+                              s3_obj)
             z_list.append(arr)
 
             # List all ROIs in this image
@@ -550,12 +647,13 @@ class ZarrDataset(Dataset):
             else:
                 roi = tuple([slice(0, s, 1) for s in arr_shape])
                 rois_list.append((id, roi))
+        q.close()
 
         return z_list, rois_list, compression_level
 
     def _compute_size(self, z_list, rois_list):
         # Get the axis position for the input image height and width.
-        a_H, a_W = [self._data_axes[a] for a in 'HW']
+        a_H, a_W = [self._data_axes.index(a) for a in 'YX']
         imgs_shapes = [((roi[a_H].stop - roi[a_H].start)//roi[a_H].step,
                         (roi[a_W].stop - roi[a_W].start)//roi[a_W].step)
                        for _, roi in rois_list]
@@ -568,6 +666,7 @@ class ZarrDataset(Dataset):
                                      self._padding[2] + self._padding[3],
                                      self._stride[1])
                for H, W in imgs_shapes])
+
         # Get the upper bound of patches that can be obtained from all zarr
         # files (images with smaller size will be padded).
         max_H, max_W = np.max(np.array(imgs_shapes), axis=0)
@@ -611,7 +710,8 @@ class ZarrDataset(Dataset):
                           self._patch_size,
                           self._padding,
                           self._stride,
-                          self._compression_level).squeeze()
+                          self._compression_level,
+                          self._data_axes).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
@@ -645,7 +745,8 @@ class LabeledZarrDataset(ZarrDataset):
         self._lab_list, self._lab_rois_list, _ = \
             self._preload_files(self._filenames, data_group=self._labels_group,
                                 data_axes=self._labels_data_axes,
-                                compressed_input=False)
+                                compressed_input=False,
+                                s3_obj=self._s3_obj)
 
         # This is a transform that affects the geometry of the input, and then
         # it has to be applied to the target as well
@@ -667,7 +768,8 @@ class LabeledZarrDataset(ZarrDataset):
                           self._patch_size,
                           self._padding,
                           self._stride,
-                          self._compression_level).squeeze()
+                          self._compression_level,
+                          self._data_axes).squeeze()
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
@@ -680,7 +782,8 @@ class LabeledZarrDataset(ZarrDataset):
                            self._patch_size,
                            self._padding,
                            self._stride,
-                           0).astype(np.float32)
+                           0,
+                           self._labels_data_axes).astype(np.float32)
 
         if self._input_target_transform:
             patch, target = self._input_target_transform((patch, target))
