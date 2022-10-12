@@ -8,17 +8,17 @@ import torch.nn.functional as F
 
 class RateDistortion(nn.Module):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
-        super(RateDistortion, self).__init__() 
+        super(RateDistortion, self).__init__()
         if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
             self._distorsion_lambda = distorsion_lambda[0]
         else:
             self._distorsion_lambda = distorsion_lambda
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        dist, rate = self.compute_distortion(x, x_r, p_y, net)
+        dist, rate = self.compute_distortion(x, y, x_r, p_y, net)
         return self._distorsion_lambda * dist + rate, None
 
-    def compute_distortion(self, x=None, x_r=None, p_y=None, net=None):
+    def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
         dist = F.mse_loss(x_r, x.to(x_r.device))
 
@@ -28,9 +28,9 @@ class RateDistortion(nn.Module):
         return dist, rate
 
 
-class RateDistortionMultiscale(nn.Module):
+class RateDistortionPyramid(nn.Module):
     def __init__(self, distorsion_lambda=0.01, **kwargs):
-        super(RateDistortionMultiscale, self).__init__()
+        super(RateDistortionPyramid, self).__init__()
         if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
             self._distorsion_lambda = distorsion_lambda[0]
         else:
@@ -71,8 +71,14 @@ class RateDistortionMultiscale(nn.Module):
 
 
 class MultiScaleSSIM(nn.Module):
-    def __init__(self, distorsion_lambda=0.01, **kwargs):
+    def __init__(self, patch_size, distorsion_lambda=0.01, **kwargs):
         super(MultiScaleSSIM, self).__init__()
+        if isinstance(distorsion_lambda, list):
+            distorsion_lambda = distorsion_lambda[0]
+        self._distorsion_lambda = distorsion_lambda
+
+        self.padding = nn.ZeroPad2d((11 - patch_size // 2 ** 4) * 2 ** 3)
+
         self.msssim = torchmetrics.MultiScaleStructuralSimilarityIndexMeasure(
             kernel_size=(11, 11),
             sigma=(1.5, 1.5),
@@ -80,17 +86,17 @@ class MultiScaleSSIM(nn.Module):
             k1=0.01,
             k2=0.03,
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-            normalize=None,
-            compute_on_step=True,
-            dist_sync_on_step=False)
+            normalize='simple')
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        ms_ssim, rate = self.compute_distortion(x, x_r, p_y, net)
+        ms_ssim, rate = self.compute_distortion(x, y, x_r, p_y, net)
         return self._distorsion_lambda * ms_ssim + rate, None
 
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
-        ms_ssim = 1. - self.msssim(x_r, x)
+        self.msssim = self.msssim.to(x_r.device)
+        ms_ssim = 1. - self.msssim(self.padding(x_r),
+                                   self.padding(x.to(x_r.device)))
 
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
@@ -98,31 +104,27 @@ class MultiScaleSSIM(nn.Module):
 
 
 class MultiScaleSSIMPyramid(nn.Module):
-    def __init__(self, distorsion_lambda=0.01, **kwargs):
+    def __init__(self, patch_size, distorsion_lambda=0.01, **kwargs):
         super(MultiScaleSSIMPyramid, self).__init__()
         if not isinstance(distorsion_lambda, list):
             distorsion_lambda = [distorsion_lambda]
 
-        self.msssim_pyr = [
-            torchmetrics.MultiScaleStructuralSimilarityIndexMeasure(
-                kernel_size=(11, 11),
-                sigma=(1.5, 1.5),
-                reduction="elementwise_mean",
-                k1=0.01,
-                k2=0.03,
-                betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-                normalize=None,
-                compute_on_step=True,
-                dist_sync_on_step=False)]
+        self.padding = []
+        self.msssim_pyr = []
+        for s in range(len(distorsion_lambda)):
+            self.padding.append(nn.ZeroPad2d(
+                ((11 - 2 * s) - patch_size // 2 ** (s + 4)) * 2 ** 3))
 
-        self.msssim_pyr += [
-            torchmetrics.StructuralSimilarityIndexMeasure(
-                sigma=(1.5, 1.5),
-                kernel_size=(11, 11),
-                reduction='elementwise_mean',
-                k1=0.01,
-                k2=0.03)
-            for s in range(1, len(distorsion_lambda))]
+            self.msssim_pyr.append(
+                torchmetrics.MultiScaleStructuralSimilarityIndexMeasure(
+                    kernel_size=(11 - 2 * s,
+                                 11 - 2 * s),
+                    sigma=(1.5 / 2 ** s, 1.5 / 2 ** s),
+                    reduction="elementwise_mean",
+                    k1=0.01,
+                    k2=0.03,
+                    betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
+                    normalize='simple'))
 
         self._distorsion_lambda = distorsion_lambda
 
@@ -151,13 +153,26 @@ class MultiScaleSSIMPyramid(nn.Module):
         # Distortion
         ms_ssim_pyr = []
         x_org = x.clone().to(x_r[0].device)
-        for x_r_s, msssim_s in zip(x_r[:-1], self.msssim_pyr[:-1]):
-            ms_ssim_pyr.append(1. - msssim_s(x_r_s, x_org))
+        for x_r_s, pad_fn, msssim_s in zip(x_r[:-1],
+                                           self.padding[:-1],
+                                           self.msssim_pyr[:-1]):
+            msssim_s = msssim_s.to(x_r_s.device)
+            ms_ssim_pyr.append(1. - msssim_s(pad_fn(x_r_s), pad_fn(x_org)))
             with torch.no_grad():
-                x_org = F.conv2d(x_org, self._pyramid_downsample_kernel.repeat(x.size(1), 1, 1, 1).to(x_r_s.device), padding=2, groups=x.size(1))
-                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear', align_corners=False)
+                x_org = F.conv2d(
+                    x_org,
+                    self._pyramid_downsample_kernel.repeat(x.size(1),
+                                                           1,
+                                                           1,
+                                                           1).to(x_r_s.device),
+                    padding=2,
+                    groups=x.size(1))
+                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear',
+                                      align_corners=False)
 
-        ms_ssim_pyr.append(1. - self.msssim_pyr[-1](x_r[-1], x_org))
+        self.msssim_pyr[-1] = self.msssim_pyr[-1].to(x_r_s.device)
+        ms_ssim_pyr.append(1. - self.msssim_pyr[-1](self.padding[-1](x_r[-1]),
+                                                    self.padding[-1](x_org)))
 
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
@@ -232,14 +247,14 @@ class RateDistortionPenaltyA(RateDistortion, PenaltyA):
         return dist_rate + self._penalty_beta * P_A, max_energy
 
 
-class RateDistortionMSPenaltyA(RateDistortionMultiscale, PenaltyA):
+class RateDistortionPyramidPenaltyA(RateDistortionPyramid, PenaltyA):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionMSPenaltyA, self).__init__(distorsion_lambda, **kwargs)
+        super(RateDistortionPyramidPenaltyA, self).__init__(distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion and rate of compression loss:
-        dist_rate, _ = super(RateDistortionMSPenaltyA, self).forward(x, y, x_r, p_y, net)
+        dist_rate, _ = super(RateDistortionPyramidPenaltyA, self).forward(x, y, x_r, p_y, net)
         P_A, max_energy = self.compute_penalty(x, y, x_r, p_y, net)
 
         return dist_rate + self._penalty_beta * P_A, max_energy
@@ -258,14 +273,14 @@ class RateMSSSIMPenaltyA(MultiScaleSSIM, PenaltyA):
         return ms_ssim_rate + self._penalty_beta * P_A, max_energy
 
 
-class RateMSSSIMPyrPenaltyA(MultiScaleSSIMPyramid, PenaltyA):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateMSSSIMPyrPenaltyA, self).__init__(distorsion_lambda, **kwargs)
+class RateMSSSIMPyramidPenaltyA(MultiScaleSSIMPyramid, PenaltyA):
+    def __init__(self, patch_size, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateMSSSIMPyramidPenaltyA, self).__init__(patch_size, distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion and rate of compression loss:
-        ms_ssim_rate, _ = super(RateMSSSIMPyrPenaltyA, self).forward(x, y, x_r, p_y, net)
+        ms_ssim_rate, _ = super(RateMSSSIMPyramidPenaltyA, self).forward(x, y, x_r, p_y, net)
         P_A, max_energy = self.compute_penalty(x, y, x_r, p_y, net)
 
         return ms_ssim_rate + self._penalty_beta * P_A, max_energy
@@ -283,14 +298,14 @@ class RateDistortionPenaltyB(RateDistortion, PenaltyB):
         return dist_rate + self._penalty_beta * P_B, P_B_mean
 
 
-class RateDistortionMSPenaltyB(RateDistortionMultiscale, PenaltyB):
+class RateDistortionPyramidPenaltyB(RateDistortionPyramid, PenaltyB):
     def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateDistortionMSPenaltyB, self).__init__(distorsion_lambda, **kwargs)
+        super(RateDistortionPyramidPenaltyB, self).__init__(distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion and rate of compression loss:
-        dist_rate, _ = super(RateDistortionMSPenaltyB, self).forward(x, y, x_r, p_y, net)
+        dist_rate, _ = super(RateDistortionPyramidPenaltyB, self).forward(x, y, x_r, p_y, net)
         P_B, P_B_mean = self.compute_penalty(x, y, x_r, p_y, net)
         return dist_rate + self._penalty_beta * P_B, P_B_mean
 
@@ -307,14 +322,14 @@ class RateMSSSIMPenaltyB(MultiScaleSSIM, PenaltyB):
         return ms_ssim_rate + self._penalty_beta * P_B, P_B_mean
 
 
-class RateMSSSIMPyrPenaltyB(MultiScaleSSIMPyramid, PenaltyB):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateMSSSIMPyrPenaltyB, self).__init__(distorsion_lambda, **kwargs)
+class RateMSSSIMPyramidPenaltyB(MultiScaleSSIMPyramid, PenaltyB):
+    def __init__(self, patch_size, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateMSSSIMPyramidPenaltyB, self).__init__(patch_size, distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion and rate of compression loss:
-        ms_ssim_rate, _ = super(RateMSSSIMPyrPenaltyB, self).forward(x, y, x_r, p_y, net)
+        ms_ssim_rate, _ = super(RateMSSSIMPyramidPenaltyB, self).forward(x, y, x_r, p_y, net)
         P_B, P_B_mean = self.compute_penalty(x, y, x_r, p_y, net)
         return ms_ssim_rate + self._penalty_beta * P_B, P_B_mean
 

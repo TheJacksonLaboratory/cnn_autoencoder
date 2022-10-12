@@ -23,12 +23,26 @@ model_options = {"AutoEncoder": models.AutoEncoder,
                  "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
 
-def valid(cae_model, data, criterion, args):
+def forward_step_base(x, cae_model):
+    x_r, y, p_y = cae_model(x)
+    x_r.clip_(-1., 1.)
+    return x_r, y, p_y
+
+
+def forward_step_pyramid(x, cae_model):
+    x_r, y, p_y = cae_model.module.forward_steps(x)
+    x_r = [x_r_s.clip_(-1., 1.) for x_r_s in x_r]
+    return x_r, y, p_y
+
+
+def valid(forward_fun, cae_model, data, criterion, args):
     """ Validation step.
     Evaluates the performance of the network in its current state using the full set of validation elements.
 
     Parameters
     ----------
+    forward_fun : function
+        The function used to make the forward pass to the input batch
     cae_model : torch.nn.Module
         The network model in the current state
     data : torch.utils.data.DataLoader or list[tuple]
@@ -37,7 +51,7 @@ def valid(cae_model, data, criterion, args):
         The loss criterion to evaluate the network's performance
     args: Namespace
         The input arguments passed at running time
-    
+
     Returns
     -------
     mean_loss : float
@@ -48,10 +62,11 @@ def valid(cae_model, data, criterion, args):
     cae_model.eval()
     sum_loss = 0
 
-    q = tqdm(total=len(data), desc='Validating')
+    if args.print_log:
+        q = tqdm(total=len(data), desc='Validating', position=2)
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
-            x_r, y, p_y = cae_model.module.forward_steps(x)
+            x_r, y, p_y = forward_fun(x, cae_model)
 
             loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
             loss = torch.mean(loss)
@@ -59,21 +74,28 @@ def valid(cae_model, data, criterion, args):
 
             if i % max(1, int(0.1 * len(data))) == 0:                
                 dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+                if not isinstance(dist, list):
+                    dist = [dist]
                 logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     i, len(data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
-            q.update()
-    q.close()
+            if args.print_log:
+                q.update()
+
+    if args.print_log:
+        q.close()
     mean_loss = sum_loss / len(data)
 
     return mean_loss
 
 
-def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
-    """ Training loop by steps.
+def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
+    """Training loop by steps.
     This loop involves validation and network training checkpoint creation.
 
     Parameters
     ----------
+    forward_fun : function
+        The function used to make the forward pass to the input batch
     cae_model : torch.nn.Module
         The model to be trained
     train_data : torch.utils.data.DataLoader or list[tuple]
@@ -110,7 +132,8 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
         # Reset the average loss computation every epoch
         sum_loss = 0
 
-        q = tqdm(total=len(train_data), desc="Training")
+        if args.print_log:
+            q = tqdm(total=len(train_data), desc="Training", position=1)
         for i, (x, _) in enumerate(train_data):
             step += 1
 
@@ -121,7 +144,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 # Start of training step
                 optimizer.zero_grad()
 
-                x_r, y, p_y = cae_model.module.forward_steps(x)
+                x_r, y, p_y = forward_fun(x, cae_model)
 
                 synthesizer = DataParallel(cae_model.module.synthesis)
                 if args.gpu:
@@ -133,7 +156,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 loss = torch.mean(loss)
                 loss.backward()
 
-                # Clip the gradients to prevent from exploding gradients problems
+                # Clip the gradients to prevent from exploding gradients
                 nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
                 optimizer.step()
                 step_loss = loss.item()
@@ -155,11 +178,14 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                and 'metrics' not in signature(scheduler.step).parameters):
                 scheduler.step()
             # End of training step
-            q.update()
+            if args.print_log:
+                q.update()
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
                 dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+                if not isinstance(dist, list):
+                    dist = [dist]
                 logger.debug('\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
@@ -170,7 +196,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(cae_model, valid_data, criterion, args)
+                valid_loss = valid(forward_fun, cae_model, valid_data, criterion, args)
 
                 cae_model.train()
 
@@ -196,9 +222,11 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: '
                              'Interrupting training ****')
-                q.close()
+                if args.print_log:
+                    q.close()
                 break
-        q.close()
+        if args.print_log:
+            q.close()
     else:
         completed = True
 
@@ -207,14 +235,14 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria, optim
 
 
 def setup_network(args):
-    """ Setup a nerual network for image compression/decompression.
+    """Setup a nerual network for image compression/decompression.
 
     Parameters
     ----------
     args : Namespace
         The input arguments passed at running time. All the parameters are passed directly to the model constructor.
         This way, the constructor can take the parameters needed that have been passed by the user.
-    
+
     Returns
     -------
     cae_model : nn.Module
@@ -232,8 +260,8 @@ def setup_network(args):
     return cae_model
 
 
-def setup_criteria(args):
-    """ Setup a loss function for the neural network optimization, and training stopping criteria.
+def setup_criteria(cae_model, args):
+    """Setup a loss function for the neural network optimization, and training stopping criteria.
 
     Parameters
     ----------
@@ -258,8 +286,53 @@ def setup_criteria(args):
     }
 
     # Loss function
-    if args.criterion == 'RD_MS_PA':
-        criterion = models.RateDistortionMSPenaltyA(**args.__dict__)
+    if args.criterion == 'RD_PA':
+        forward_fun = forward_step_base
+        criterion = models.RateDistortionPenaltyA(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='le',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RD_PB':
+        forward_fun = forward_step_base
+        criterion = models.RateDistortionPenaltyB(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='ge',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_PA':
+        forward_fun = forward_step_base
+        criterion = models.RateMSSSIMPenaltyA(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='le',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_PB':
+        forward_fun = forward_step_base
+        criterion = models.RateMSSSIMPenaltyB(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='ge',
+                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RD':
+        forward_fun = forward_step_base
+        criterion = models.RateDistortion(**args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM':
+        forward_fun = forward_step_base
+        criterion = models.MultiScaleSSIM(**args.__dict__)
+
+    elif args.criterion == 'RD_MS_PA':
+        forward_fun = forward_step_pyramid
+        criterion = models.RateDistortionPyramidPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
                                        max_iterations=max(10, int(args.steps * 0.0001)),
@@ -267,7 +340,8 @@ def setup_criteria(args):
                                        **args.__dict__)
 
     elif args.criterion == 'RD_MS_PB':
-        criterion = models.RateDistortionMSPenaltyB(**args.__dict__)
+        forward_fun = forward_step_pyramid
+        criterion = models.RateDistortionPyramidPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
                                        max_iterations=max(10, int(args.steps * 0.0001)),
@@ -275,7 +349,8 @@ def setup_criteria(args):
                                        **args.__dict__)
 
     elif args.criterion == 'RMS-SSIM_MS_PA':
-        criterion = models.RateMSSSIMPyrPenaltyA(**args.__dict__)
+        forward_fun = forward_step_pyramid
+        criterion = models.RateMSSSIMPyramidPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
                                        max_iterations=max(10, int(args.steps * 0.0001)),
@@ -283,7 +358,8 @@ def setup_criteria(args):
                                        **args.__dict__)
 
     elif args.criterion == 'RMS-SSIM_MS_PB':
-        criterion = models.RateMSSSIMPyrPenaltyB(**args.__dict__)
+        forward_fun = forward_step_pyramid
+        criterion = models.RateMSSSIMPyramidPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
                                        max_iterations=max(10, int(args.steps * 0.0001)),
@@ -291,10 +367,12 @@ def setup_criteria(args):
                                        **args.__dict__)
 
     elif args.criterion == 'RD_MS':
-        criterion = models.RateDistortionMultiscale(**args.__dict__)
+        forward_fun = forward_step_pyramid
+        criterion = models.RateDistortionPyramid(**args.__dict__)
 
     elif args.criterion == 'RMS-SSIM_MS':
-        criterion = models.MultiScaleStructuralsSimilarityIndexPyramid(**args.__dict__)
+        forward_fun = forward_step_pyramid
+        criterion = models.MultiScaleSSIMPyramid(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
@@ -303,19 +381,21 @@ def setup_criteria(args):
     if args.gpu:
         criterion = criterion.cuda()
 
-    return criterion, stopping_criteria
+    return forward_fun, criterion, stopping_criteria
 
 
 def setup_optim(cae_model, args):
-    """ Setup a loss function for the neural network optimization, and training stopping criteria.
+    """Setup a loss function for the neural network optimization, and training
+    stopping criteria.
 
     Parameters
     ----------
     cae_model : torch.nn.Module
         The convolutional autoencoder model to be optimized
     scheduler_type : str
-        The type of learning rate scheduler used during the neural network training
- 
+        The type of learning rate scheduler used during the neural network
+        training
+
     Returns
     -------
     optimizer : torch.optim.Optimizer
@@ -340,7 +420,7 @@ def setup_optim(cae_model, args):
 
 
 def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
-    """ Resume training from a previous checkpoint
+    """Resume training from a previous checkpoint
 
     Parameters
     ----------
@@ -373,7 +453,7 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
 
 
 def main(args):
-    """ Set up the training environment
+    """Set up the training environment
 
     Parameters
     ----------
@@ -383,7 +463,7 @@ def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
     cae_model = setup_network(args)
-    criterion, stopping_criteria = setup_criteria(args)
+    forward_fun, criterion, stopping_criteria = setup_criteria(cae_model, args)
     optimizer, scheduler = setup_optim(cae_model, args)
 
     if args.resume is not None:
@@ -409,7 +489,7 @@ def main(args):
 
     train_data, valid_data = utils.get_data(args)
 
-    train(cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
+    train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
 
 
 if __name__ == '__main__':

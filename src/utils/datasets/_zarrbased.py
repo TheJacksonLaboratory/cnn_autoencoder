@@ -9,7 +9,6 @@ from PIL import Image
 import boto3
 from io import BytesIO
 
-from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset
 
@@ -426,7 +425,8 @@ def zarrdataset_worker_init(worker_id):
 
     dataset_obj._s3_obj = dataset_obj._connect_s3(dataset_obj._filenames[0])
     filenames_rois = list(map(parse_roi, dataset_obj._filenames,
-                              dataset_obj._source_format))
+                              [dataset_obj._source_format]
+                              * len(dataset_obj._filenames)))
 
     if (len(filenames_rois) > 1
        and len(filenames_rois) >= worker_info.num_workers):
@@ -627,9 +627,7 @@ class ZarrDataset(Dataset):
         rois_list = []
         compression_level = 0
 
-        q = tqdm(total=len(filenames_rois), desc="Preloading data")
         for id, (arr_src, rois) in enumerate(filenames_rois):
-            q.update()
             arr, arr_shape, compression_level = \
                 image_to_zarr(arr_src, self._patch_size, self._source_format,
                               data_group,
@@ -647,7 +645,6 @@ class ZarrDataset(Dataset):
             else:
                 roi = tuple([slice(0, s, 1) for s in arr_shape])
                 rois_list.append((id, roi))
-        q.close()
 
         return z_list, rois_list, compression_level
 

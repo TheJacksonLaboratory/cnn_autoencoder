@@ -9,10 +9,10 @@ import torch.nn.functional as F
 
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d):
-        nn.init.xavier_normal_(m.weight.data)
+        nn.init.xavier_normal_(m.weight.data, gain=math.sqrt(2 / 1.01))
 
         if m.bias is not None:
-            nn.init.constant_(m.bias.data, 0.0)
+            nn.init.constant_(m.bias.data, 0.01)
 
 
 class PositionalEncoding(nn.Module):
@@ -23,11 +23,11 @@ class PositionalEncoding(nn.Module):
 
         pos_y, pos_x = torch.meshgrid([torch.arange(max_dim)]*2)
         div_term = torch.exp(torch.arange(0, d_model//2, 2)*(-math.log(max_dim*2)/(d_model//2)))
-        
+
         pe = torch.zeros(max_dim, max_dim, d_model)
         pe[..., 0:d_model//2:2] = torch.sin(pos_x.unsqueeze(dim=2) * div_term)
         pe[..., 1:d_model//2:2] = torch.cos(pos_x.unsqueeze(dim=2) * div_term)
-        
+
         pe[..., d_model//2::2] = torch.sin(pos_y.unsqueeze(dim=2) * div_term)
         pe[..., (d_model//2+1)::2] = torch.cos(pos_y.unsqueeze(dim=2) * div_term)
 
@@ -145,7 +145,7 @@ class FactorizedEntropyLaplace(nn.Module):
     def __init__(self, **kwargs):
         super(FactorizedEntropyLaplace, self).__init__()
         self._gaussian_approx = None
-    
+
     def reset(self, x):
         self._gaussian_approx = torch.distributions.Laplace(torch.zeros_like(x), torch.var(x.detach(), dim=(0, 2,3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
 
@@ -224,7 +224,7 @@ class Analyzer(nn.Module):
         super(Analyzer, self).__init__()
 
         down_track = [DownsamplingUnit(channels_in=channels_net * channels_expansion ** i, channels_out=channels_net * channels_expansion ** (i+1), 
-                                     groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+                                       groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
                     for i in range(compression_level)]
 
         # Final convolution in the analysis track
@@ -338,13 +338,13 @@ class AutoEncoder(nn.Module):
     def forward(self, x, synthesize_only=False):
         if synthesize_only:
             return self.synthesis(x)
-        
+
         fx = self.embedding(x)
-        
+
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
-        
+
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -352,9 +352,9 @@ class AutoEncoder(nn.Module):
     def forward_steps(self, x, synthesize_only=False):
         if synthesize_only:
             return self.synthesis(x.to(self.synthesis.synthesis_track[0].weight.device))
-        
+
         fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
-        
+
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
