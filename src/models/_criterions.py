@@ -261,8 +261,8 @@ class RateDistortionPyramidPenaltyA(RateDistortionPyramid, PenaltyA):
 
 
 class RateMSSSIMPenaltyA(MultiScaleSSIM, PenaltyA):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateMSSSIMPenaltyA, self).__init__(distorsion_lambda, **kwargs)
+    def __init__(self, patch_size, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateMSSSIMPenaltyA, self).__init__(patch_size, distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
@@ -311,8 +311,8 @@ class RateDistortionPyramidPenaltyB(RateDistortionPyramid, PenaltyB):
 
 
 class RateMSSSIMPenaltyB(MultiScaleSSIM, PenaltyB):
-    def __init__(self, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
-        super(RateMSSSIMPenaltyB, self).__init__(distorsion_lambda, **kwargs)
+    def __init__(self, patch_size, distorsion_lambda=0.01, penalty_beta=0.001, **kwargs):
+        super(RateMSSSIMPenaltyB, self).__init__(patch_size, distorsion_lambda, **kwargs)
         self._penalty_beta = penalty_beta
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
