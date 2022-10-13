@@ -63,7 +63,7 @@ def valid(forward_fun, cae_model, data, criterion, args):
     sum_loss = 0
 
     if args.print_log:
-        q = tqdm(total=len(data), desc='Validating', position=1)
+        q = tqdm(total=len(data), desc='Validating', position=1, leave=None)
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
             x_r, y, p_y = forward_fun(x, cae_model)
@@ -72,14 +72,18 @@ def valid(forward_fun, cae_model, data, criterion, args):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            if i % max(1, int(0.1 * len(data))) == 0:                
-                dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
-                if not isinstance(dist, list):
-                    dist = [dist]
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
-                    i, len(data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+            dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+            if not isinstance(dist, list):
+                dist = [dist]
+
             if args.print_log:
+                q.set_description('Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized bottleneck [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                    loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
                 q.update()
+            else:
+                if i % max(1, int(0.1 * len(data))) == 0:
+                    logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                    i, len(data), loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
     if args.print_log:
         q.close()
@@ -137,7 +141,6 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
         for i, (x, _) in enumerate(train_data):
             step += 1
             q_penalty = None
-
             if 'penalty' in stopping_criteria.keys():
                 stopping_criteria['penalty'].reset()
 
@@ -167,18 +170,17 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 if 'penalty' in stopping_criteria.keys():
                     if args.print_log:
                         if q_penalty is None:
-                            q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, desc="Sub iteration", position=1)
-                        q_penalty.update(desc="Sub iteration loss=%0.4f, energy=%0.4f" % (step_loss, extra_info))
+                            q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, position=2, leave=None)
+                        q_penalty.set_description('Sub-iteration loss=%0.4f, energy=%0.4f' % (step_loss, extra_info))
+                        q_penalty.update()
                     stopping_criteria['penalty'].update(iteration=step,
                                                         metric=extra_info.item())
 
                     if not stopping_criteria['penalty'].check():
                         if args.print_log:
-                            q_penalty.update()
+                            q_penalty.close()
                         break
                 else:
-                    if args.print_log:
-                        q_penalty.update()
                     break
 
             sum_loss += step_loss
@@ -187,16 +189,21 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                and 'metrics' not in signature(scheduler.step).parameters):
                 scheduler.step()
             # End of training step
+
+            dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+            if not isinstance(dist, list):
+                dist = [dist]
+
             if args.print_log:
+                q.set_description('Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized bottleneck in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                    loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
                 q.update()
 
-            # Log the training performance every 10% of the training set
-            if i % max(1, int(0.01 * len(train_data))) == 0:
-                dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
-                if not isinstance(dist, list):
-                    dist = [dist]
-                logger.debug('\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
-                    step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join([str(d.item()) for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+            else:
+                # Log the training performance every 10% of the training set
+                if i % max(1, int(0.01 * len(train_data))) == 0:
+                    logger.debug('\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+                    step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
             # Checkpoint step
             keep_training = stopping_criteria['early_stopping'].check()
@@ -213,9 +220,10 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
-                logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
-                    step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
-                )
+                if not args.print_log:
+                    logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
+                        step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
+                    )
 
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
@@ -348,53 +356,9 @@ def setup_criteria(cae_model, args):
                                        target=args.energy_limit,
                                        **args.__dict__)
 
-    elif args.criterion == 'RMS-SSIM_PB':
-        forward_fun = forward_step_base
-        criterion = models.RateMSSSIMPenaltyB(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RD':
-        forward_fun = forward_step_base
-        criterion = models.RateDistortion(**args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM':
-        forward_fun = forward_step_base
-        criterion = models.MultiScaleSSIM(**args.__dict__)
-
-    elif args.criterion == 'RD_MS_PA':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateDistortionPyramidPenaltyA(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
     elif args.criterion == 'RD_MS_PB':
         forward_fun = forward_step_pyramid
         criterion = models.RateDistortionPyramidPenaltyB(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_MS_PA':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateMSSSIMPyramidPenaltyA(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_MS_PB':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateMSSSIMPyramidPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
                                        max_iterations=100,
