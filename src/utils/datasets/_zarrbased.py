@@ -32,6 +32,7 @@ def image_to_zarr(arr_src, patch_size, source_format, data_group,
             org_W = comp_metadata['width']
             compression_level = comp_metadata['compression_level']
             arr_shape = (1, compressed_channels, 1, org_H, org_W)
+
         else:
             arr_shape = arr.shape
             compression_level = 0
@@ -44,6 +45,7 @@ def image_to_zarr(arr_src, patch_size, source_format, data_group,
                          patch_size))
         arr_shape = arr.shape
         compression_level = 0
+
     else:
         # Otherwise, use directly the zarr array
         arr = arr_src

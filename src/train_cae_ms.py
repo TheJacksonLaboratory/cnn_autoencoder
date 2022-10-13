@@ -250,7 +250,7 @@ def setup_criteria(args):
         criterion = models.RateDistortionMSPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -258,7 +258,7 @@ def setup_criteria(args):
         criterion = models.RateDistortionMSPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 

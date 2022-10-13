@@ -280,6 +280,9 @@ def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
         compressed_input = False
         scale_input = 1.0
 
+    state_args['autoencoder_channels_net'] = 0
+    state_args['autoencoder_channels_expansion'] = 0
+
     if ('Decoder' in state_args['model_type']
        and autoencoder_model is not None):
         # If a decoder model is passed as argument, use the decoded step
@@ -296,8 +299,12 @@ def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
 
         dec_model.eval()
         state_args['use_bridge'] = True
+        state_args['autoencoder_channels_bn'] = \
+            checkpoint_state['args']['channels_bn']
         state_args['autoencoder_channels_net'] = \
             checkpoint_state['args']['channels_net']
+        state_args['autoencoder_channels_expansion'] = \
+            checkpoint_state['args']['channels_expansion']
 
     elif ('Decoder' in state_args['model_type']
           and autoencoder_model is None):
@@ -308,8 +315,9 @@ def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
 
     elif 'NoBridge' in state_args['model_type']:
         state_args['use_bridge'] = False
-        dec_model = models.EmptyBridge(compression_level=3,
-                                       compressed_input=False)
+        dec_model = models.EmptyBridge(
+            compression_level=state_args['compression_level'],
+            compressed_input=False)
 
     else:
         state_args['use_bridge'] = True

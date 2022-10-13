@@ -307,7 +307,7 @@ class SynthesizerInflate(Synthesizer):
         if color:
             self.color_layers = self.color_layers
         else:
-            self.color_layers = [nn.Identity()] * rec_level
+            self.color_layers = nn.ModuleList([nn.Identity()] * rec_level)
 
         self.rec_level = rec_level
 

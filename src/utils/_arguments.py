@@ -4,7 +4,16 @@ import torch
 import json
 import argparse
 
-from ._info import DATASETS, SEG_MODELS, CAE_MODELS, PROJ_MODELS, FE_MODELS, CLASS_MODELS, CAE_CRITERIONS, SEG_CRITERIONS, SCHEDULERS, MERGE_TYPES
+from ._info import (DATASETS,
+                    SEG_MODELS,
+                    CAE_MODELS,
+                    PROJ_MODELS,
+                    FE_MODELS,
+                    CLASS_MODELS,
+                    CAE_CRITERIONS,
+                    SEG_CRITERIONS,
+                    SCHEDULERS,
+                    MERGE_TYPES)
 
 
 def override_config_file(parser):
@@ -109,10 +118,11 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-pyr', '--pyramids', action='store_true', dest='compute_pyramids', help='Compute a pyramid representation of the image and store it in the same file', default=False)
 
 
-def add_config_args(parser, mode=True):
+def add_config_args(parser, task, mode='training'):
     parser.add_argument('-bs', '--batch', type=int, dest='batch_size', help='Batch size for the training step', default=16)
 
-    if mode not in 'training': return
+    if mode not in 'training':
+        return
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
     parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler_type', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
@@ -125,15 +135,22 @@ def add_config_args(parser, mode=True):
 
     parser.add_argument('-rm', '--resume', type=str, dest='resume', help='Resume training from an existing checkpoint')
 
-    parser.add_argument('-ich', '--inputch', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
-    parser.add_argument('-nch', '--netch', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)
-    parser.add_argument('-bch', '--bnch', type=int, dest='channels_bn', help='Number of channels of the compressed representation', default=16)
-    parser.add_argument('-ech', '--expch', type=int, dest='channels_expansion', help='Rate of expansion of the number of channels in the analysis and synthesis tracks', default=1)
+    parser.add_argument('-ich', '--input-channels', type=int, dest='channels_org', help='Number of channels in the input data', default=3)
+    parser.add_argument('-nch', '--net-channels', type=int, dest='channels_net', help='Number of channels in the analysis and synthesis tracks', default=8)
+    parser.add_argument('-bch', '--bottleneck-channels', type=int, dest='channels_bn', help='Number of channels of the compressed representation', default=16)
+    parser.add_argument('-ech', '--expansion-channels', type=int, dest='channels_expansion', help='Rate of expansion of the number of channels in the analysis and synthesis tracks', default=1)
 
-    parser.add_argument('-cl', '--compl', type=int, dest='compression_level', help='Level of compression', default=3)
+    parser.add_argument('-cl', '--compression-level', type=int, dest='compression_level', help='Level of compression', default=3)
+
+    if task in ['segmentation']:
+        parser.add_argument('-aebch', '--ae-bottleneck-channels', type=int,
+                            dest='autoencoder_channels_bn',
+                            help='Number of channels in the analysis and '
+                                 'synthesis tracks',
+                            default=48)
 
 
-def add_model_args(parser, task, mode=True):
+def add_model_args(parser, task, mode='training'):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
 
     if task in ['segmentation']:
@@ -171,7 +188,7 @@ def add_model_args(parser, task, mode=True):
         parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of %s model' % task, choices=model_choices)
 
 
-def add_criteria_args(parser, task, mode=True):
+def add_criteria_args(parser, task, mode='training'):
     if mode not in ['training']:
         return
 
@@ -199,7 +216,7 @@ def get_args(task, mode, add_model=True, add_criteria=True, add_config=True, add
         add_criteria_args(parser, task, mode)
 
     if add_config:
-        add_config_args(parser, mode)
+        add_config_args(parser, task, mode)
 
     if add_data:
         add_data_args(parser, task, mode)
