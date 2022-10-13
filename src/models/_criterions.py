@@ -256,8 +256,7 @@ class EarlyStoppingPatience(StoppingCriterion):
 
 
 class EarlyStoppingTarget(StoppingCriterion):
-    """ Keep training while the inequality holds.  
-    
+    """ Keep training while the inequality holds.
     """
     def __init__(self, target, comparison='l', **kwargs):
         super(EarlyStoppingTarget, self).__init__(**kwargs)

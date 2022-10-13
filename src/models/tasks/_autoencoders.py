@@ -255,9 +255,11 @@ class Synthesizer(nn.Module):
                      for i in reversed(range(compression_level))]
 
         # Final color reconvertion
-        up_track.append(nn.Conv2d(channels_net, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect'))
-
         self.synthesis_track = nn.Sequential(*up_track)
+
+        self.color_layers = nn.ModuleList(
+            [nn.Conv2d(channels_net * channels_expansion**i, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect')
+             for i in reversed(range(compression_level))])
 
         self.rec_level = compression_level
 
@@ -267,27 +269,28 @@ class Synthesizer(nn.Module):
         x_brg = []
         # DataParallel only sends 'x' to the GPU memory when the forward method is used and not for other methods
         fx = x.clone().to(self.synthesis_track[0].weight.device)
-        for layer in self.synthesis_track[:-1]:
+        for layer in self.synthesis_track:
             fx = layer(fx)
             x_brg.append(fx)
 
         if not color:
             return x_brg
 
-        fx = self.synthesis_track[-1](fx)
+        fx = self.color_layers[-1](fx)
 
         return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)
+        x = self.color_layers[-1](x)
         return x
 
-    def forward_steps(self, x, rec_level=-2):
+    def forward_steps(self, x):
         fx = self.synthesis_track[0](x.to(self.synthesis_track[0].weight.device))
-        color_layer = self.synthesis_track[-1]
 
         x_r_ms = []
-        for up_layer in self.synthesis_track[1:(rec_level+1)]:
+        for up_layer, color_layer in zip(self.synthesis_track[1:],
+                                         self.color_layers):
             fx = up_layer(fx)
             x_r = color_layer(fx)
             x_r_ms.insert(0, x_r)
@@ -299,12 +302,12 @@ class SynthesizerInflate(Synthesizer):
     def __init__(self, rec_level=-1, color=True, **kwargs):
         super(SynthesizerInflate, self).__init__(**kwargs)
         if rec_level < 1:
-            rec_level = len(self.synthesis_track) - 2
+            rec_level = len(self.synthesis_track) - 1
 
         if color:
-            self.color_layer = self.synthesis_track[-1]
+            self.color_layers = self.color_layers
         else:
-            self.color_layer = nn.Identity()
+            self.color_layers = [nn.Identity()] * rec_level
 
         self.rec_level = rec_level
 
@@ -312,9 +315,10 @@ class SynthesizerInflate(Synthesizer):
         fx = self.synthesis_track[0](x)
         x_r_ms = []
 
-        for up_layer in self.synthesis_track[1:1 + self.rec_level]:
+        for up_layer, color_layer in zip(self.synthesis_track[1:1 + self.rec_level],
+                                         self.color_layers):
             fx = up_layer(fx)
-            x_r = self.color_layer(fx)
+            x_r = color_layer(fx)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms
@@ -338,13 +342,13 @@ class AutoEncoder(nn.Module):
     def forward(self, x, synthesize_only=False):
         if synthesize_only:
             return self.synthesis(x)
-        
+
         fx = self.embedding(x)
-        
+
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
-        
+
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -352,13 +356,13 @@ class AutoEncoder(nn.Module):
     def forward_steps(self, x, synthesize_only=False):
         if synthesize_only:
             return self.synthesis(x.to(self.synthesis.synthesis_track[0].weight.device))
-        
+
         fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
-        
+
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
-        
+
         # Get the reconstruction at multiple scales
         x_r_ms = self.synthesis.forward_steps(y_q)
 
