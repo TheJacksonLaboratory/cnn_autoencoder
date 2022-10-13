@@ -63,7 +63,7 @@ def valid(forward_fun, cae_model, data, criterion, args):
     sum_loss = 0
 
     if args.print_log:
-        q = tqdm(total=len(data), desc='Validating', position=2)
+        q = tqdm(total=len(data), desc='Validating', position=1)
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
             x_r, y, p_y = forward_fun(x, cae_model)
@@ -133,9 +133,10 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
         sum_loss = 0
 
         if args.print_log:
-            q = tqdm(total=len(train_data), desc="Training", position=1)
+            q = tqdm(total=len(train_data), desc="Training", position=0)
         for i, (x, _) in enumerate(train_data):
             step += 1
+            q_penalty = None
 
             if 'penalty' in stopping_criteria.keys():
                 stopping_criteria['penalty'].reset()
@@ -164,12 +165,20 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 # When training with penalty on the energy of the compression
                 # representation, update the respective stopping criterion
                 if 'penalty' in stopping_criteria.keys():
+                    if args.print_log:
+                        if q_penalty is None:
+                            q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, desc="Sub iteration", position=1)
+                        q_penalty.update(desc="Sub iteration loss=%0.4f, energy=%0.4f" % (step_loss, extra_info))
                     stopping_criteria['penalty'].update(iteration=step,
                                                         metric=extra_info.item())
 
                     if not stopping_criteria['penalty'].check():
+                        if args.print_log:
+                            q_penalty.update()
                         break
                 else:
+                    if args.print_log:
+                        q_penalty.update()
                     break
 
             sum_loss += step_loss
@@ -291,7 +300,7 @@ def setup_criteria(cae_model, args):
         criterion = models.RateDistortionPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -300,7 +309,7 @@ def setup_criteria(cae_model, args):
         criterion = models.RateDistortionPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -309,7 +318,7 @@ def setup_criteria(cae_model, args):
         criterion = models.RateMSSSIMPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -318,7 +327,7 @@ def setup_criteria(cae_model, args):
         criterion = models.RateMSSSIMPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -335,7 +344,33 @@ def setup_criteria(cae_model, args):
         criterion = models.RateDistortionPyramidPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_PB':
+        forward_fun = forward_step_base
+        criterion = models.RateMSSSIMPenaltyB(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='ge',
+                                       max_iterations=100,
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RD':
+        forward_fun = forward_step_base
+        criterion = models.RateDistortion(**args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM':
+        forward_fun = forward_step_base
+        criterion = models.MultiScaleSSIM(**args.__dict__)
+
+    elif args.criterion == 'RD_MS_PA':
+        forward_fun = forward_step_pyramid
+        criterion = models.RateDistortionPyramidPenaltyA(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='le',
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -344,7 +379,7 @@ def setup_criteria(cae_model, args):
         criterion = models.RateDistortionPyramidPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -353,7 +388,7 @@ def setup_criteria(cae_model, args):
         criterion = models.RateMSSSIMPyramidPenaltyA(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
@@ -362,7 +397,25 @@ def setup_criteria(cae_model, args):
         criterion = models.RateMSSSIMPyramidPenaltyB(**args.__dict__)
         stopping_criteria['penalty'] = \
             models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=max(10, int(args.steps * 0.0001)),
+                                       max_iterations=100,
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_MS_PA':
+        forward_fun = forward_step_pyramid
+        criterion = models.RateMSSSIMPyramidPenaltyA(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='le',
+                                       max_iterations=100,
+                                       target=args.energy_limit,
+                                       **args.__dict__)
+
+    elif args.criterion == 'RMS-SSIM_MS_PB':
+        forward_fun = forward_step_pyramid
+        criterion = models.RateMSSSIMPyramidPenaltyB(**args.__dict__)
+        stopping_criteria['penalty'] = \
+            models.EarlyStoppingTarget(comparison='ge',
+                                       max_iterations=100,
                                        target=args.energy_limit,
                                        **args.__dict__)
 
