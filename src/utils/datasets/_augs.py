@@ -147,6 +147,9 @@ def get_zarr_transform(data_mode='testing', normalize=True,
     prep_trans_list = [transforms.ToTensor(),
                        transforms.ConvertImageDtype(torch.float32)]
 
+    if add_noise:
+        prep_trans_list.append(AddGaussianNoise(0., 0.1))
+
     if normalize:
         # The ToTensor transforms the input into the range [0, 1]. However, if
         # the input is compressed, it is required in the range [-127.5, 127.5].
@@ -155,9 +158,6 @@ def get_zarr_transform(data_mode='testing', normalize=True,
         else:
             prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                         std=(0.5, 0.5, 0.5)))
-
-    if add_noise:
-        prep_trans_list.append(AddGaussianNoise(0., 0.1))
 
     prep_trans = transforms.Compose(prep_trans_list)
 

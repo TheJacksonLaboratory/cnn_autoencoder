@@ -1,9 +1,11 @@
 import logging
+import sys
 
 import torch
 import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
+import math
 
 import models
 import utils
@@ -25,13 +27,11 @@ model_options = {"AutoEncoder": models.AutoEncoder,
 
 def forward_step_base(x, cae_model):
     x_r, y, p_y = cae_model(x)
-    x_r.clip_(-1., 1.)
     return x_r, y, p_y
 
 
 def forward_step_pyramid(x, cae_model):
     x_r, y, p_y = cae_model.module.forward_steps(x)
-    x_r = [x_r_s.clip_(-1., 1.) for x_r_s in x_r]
     return x_r, y, p_y
 
 
@@ -72,13 +72,13 @@ def valid(forward_fun, cae_model, data, criterion, args):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+            dist, rate = criterion.compute_distortion(x=x, x_r=x_r, p_y=p_y)
             if not isinstance(dist, list):
                 dist = [dist]
 
             if args.print_log:
-                q.set_description('Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized bottleneck [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
-                    loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+                q.set_description('Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}).'.format(
+                    loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item()))
                 q.update()
             else:
                 if i % max(1, int(0.1 * len(data))) == 0:
@@ -132,12 +132,12 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
     valid_loss_history = []
 
     step = 0
+    if args.print_log:
+        q = tqdm(total=stopping_criteria['early_stopping']._max_iterations,
+                 desc="Training", position=0)
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
-
-        if args.print_log:
-            q = tqdm(total=len(train_data), desc="Training", position=0)
         for i, (x, _) in enumerate(train_data):
             step += 1
             q_penalty = None
@@ -160,18 +160,34 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 loss = torch.mean(loss)
                 loss.backward()
 
-                # Clip the gradients to prevent from exploding gradients
+                # Clip the gradients to prevent from exploding gradients problems
                 nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
-                optimizer.step()
                 step_loss = loss.item()
 
                 # When training with penalty on the energy of the compression
                 # representation, update the respective stopping criterion
                 if 'penalty' in stopping_criteria.keys():
                     if args.print_log:
+                        param_nan = False
+                        for param_name, param in cae_model.named_parameters():
+                            if (param.grad is not None
+                              and (math.isnan(param.data.detach().norm(2))
+                                   or math.isnan(param.grad.data.detach().norm(2)))):
+                                print('Paramater set to nan\n', param_name, param.data.detach().min(), param.data.detach().max(), param.data.detach().std())
+                                print('Paramater gradient\n', param_name, param.grad.detach().data.min(), param.grad.detach().data.max(), param.grad.detach().data.std())
+                                param_nan = True
+
+                        if param_nan:
+                            print('Org', x.detach().min(), x.detach().max(), x.detach().std())
+                            print('Rec', x_r.detach().min(), x_r.detach().max(), x_r.detach().std())
+                            print('Comp', y.detach().min(), y.detach().max(), y.detach().std())
+                            print('Prob', p_y.detach().min(), p_y.detach().max(), p_y.detach().std())
+                            print('Loss', step_loss, extra_info, torch.sum(-torch.log2(p_y.detach())))
+                            sys.exit()
+
                         if q_penalty is None:
                             q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, position=2, leave=None)
-                        q_penalty.set_description('Sub-iteration loss=%0.4f, energy=%0.4f' % (step_loss, extra_info))
+                        q_penalty.set_description('Sub-iter loss=%0.4f, energy=%0.4f' % (step_loss, extra_info))
                         q_penalty.update()
                     stopping_criteria['penalty'].update(iteration=step,
                                                         metric=extra_info.item())
@@ -183,6 +199,8 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 else:
                     break
 
+                optimizer.step()
+
             sum_loss += step_loss
 
             if (scheduler is not None
@@ -190,13 +208,14 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 scheduler.step()
             # End of training step
 
-            dist, rate = criterion.module.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+            dist, rate = criterion.compute_distortion(x=x, y=y, x_r=x_r, p_y=p_y)
             if not isinstance(dist, list):
                 dist = [dist]
+                x_r = [x_r]
 
             if args.print_log:
-                q.set_description('Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized bottleneck in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
-                    loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+                q.set_description('Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quant bn [{:.4f}, {:.4f}], rec [{:.4f}, {:.4f}]'.format(
+                    step_loss, sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
                 q.update()
 
             else:
@@ -394,9 +413,9 @@ def setup_criteria(cae_model, args):
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)
 
-    criterion = nn.DataParallel(criterion)
-    if args.gpu:
-        criterion = criterion.cuda()
+    # criterion = nn.DataParallel(criterion)
+    # if args.gpu:
+    #    criterion = criterion.cuda()
 
     return forward_fun, criterion, stopping_criteria
 

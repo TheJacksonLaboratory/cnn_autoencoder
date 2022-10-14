@@ -8,8 +8,8 @@ import torch.nn.functional as F
 
 
 def initialize_weights(m):
-    if isinstance(m, nn.Conv2d):
-        nn.init.xavier_normal_(m.weight.data, gain=math.sqrt(2 / 1.01))
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.xavier_uniform_(m.weight.data, gain=math.sqrt(2 / 1.01))
 
         if m.bias is not None:
             nn.init.constant_(m.bias.data, 0.01)
@@ -91,9 +91,9 @@ class FactorizedEntropyLayer(nn.Module):
         self._channels = channels_bn
 
         # The non-parametric density model is initialized with random normal distributed weights
-        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r, d, 1, 1), 0.0, 0.01))
-        self._b = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r), 0.0, 0.01))
-        self._a = nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r, 1, 1), 0.0, 0.01))
+        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r, d, 1, 1), 0., 0.01))
+        self._b = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r), 0., 0.01))
+        self._a = nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r, 1, 1), 0., 0.01))
 
     def forward(self, x):
         # Reparametrerize the matrix H, and vector a to generate nonegative Jacobian matrices
@@ -124,7 +124,7 @@ class FactorizedEntropy(nn.Module):
 
         # The non-parametric density model is initialized with random normal distributed weights
         self._layers = nn.Sequential(*[FactorizedEntropyLayer(channels_bn=channels_bn, d=d_k, r=r_k) for d_k, r_k in zip(d[:-1], r[:-1])])
-        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r[-1], d[-1], 1, 1), 0.0, 0.01))
+        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r[-1], d[-1], 1, 1), 0., 0.01))
         self._b = nn.Parameter(torch.zeros(channels_bn * r[-1]))
 
     def reset(self, x):
@@ -258,7 +258,10 @@ class Synthesizer(nn.Module):
         self.synthesis_track = nn.Sequential(*up_track)
 
         self.color_layers = nn.ModuleList(
-            [nn.Conv2d(channels_net * channels_expansion**i, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect')
+            [nn.Sequential(
+                 nn.Conv2d(channels_net * channels_expansion**i, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect'),
+                 # nn.Hardtanh(min_val=-1.5, max_val=1.5, inplace=False)
+                 )
              for i in reversed(range(compression_level))])
 
         self.rec_level = compression_level
@@ -346,7 +349,7 @@ class AutoEncoder(nn.Module):
         fx = self.embedding(x)
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         x_r = self.synthesis(y_q)
@@ -360,7 +363,7 @@ class AutoEncoder(nn.Module):
         fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         # Get the reconstruction at multiple scales
@@ -395,7 +398,7 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.pos_enc(fx)
         
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         x_r = self.synthesis(y_q)
@@ -411,7 +414,7 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.pos_enc(fx)
         
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q.detach() + 0.5) - self.fact_entropy(y_q.detach() - 0.5) + 1e-10
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
         # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         # Get the reconstruction at multiple scales

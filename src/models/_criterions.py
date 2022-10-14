@@ -1,4 +1,6 @@
 from functools import reduce
+import sys
+import math
 
 import torchmetrics
 import torch
@@ -82,11 +84,12 @@ class MultiScaleSSIM(nn.Module):
         self.msssim = torchmetrics.MultiScaleStructuralSimilarityIndexMeasure(
             kernel_size=(11, 11),
             sigma=(1.5, 1.5),
-            reduction="elementwise_mean",
+            reduction='elementwise_mean',
             k1=0.01,
             k2=0.03,
+            data_range=2,
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-            normalize='simple')
+            normalize='relu')
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         ms_ssim, rate = self.compute_distortion(x, y, x_r, p_y, net)
@@ -94,12 +97,21 @@ class MultiScaleSSIM(nn.Module):
 
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
-        self.msssim = self.msssim.to(x_r.device)
-        ms_ssim = 1. - self.msssim(self.padding(x_r),
+        ms_ssim = 1. - self.msssim.to(x_r.device)(self.padding(x_r),
                                    self.padding(x.to(x_r.device)))
 
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+
+        if math.isnan(rate) or math.isnan(ms_ssim):
+            torch.save(x_r.detach().cpu(), "/home/cervaf/NN_imaging/x_r.pth")
+            torch.save(x.detach().cpu(), "/home/cervaf/NN_imaging/x.pth")
+            print('Prediction is Nan', ms_ssim.item(), rate.item())
+            print('Input', x.min(), x.max(), x.std())
+            print('Pred', x_r.min(), x_r.max(), x_r.std())
+            print('Quant', y.min(), y.max(), y.std())
+            print('Prob', p_y.min(), p_y.max(), p_y.std())
+            sys.exit(0)
         return ms_ssim, rate
 
 
@@ -120,11 +132,12 @@ class MultiScaleSSIMPyramid(nn.Module):
                     kernel_size=(11 - 2 * s,
                                  11 - 2 * s),
                     sigma=(1.5 / 2 ** s, 1.5 / 2 ** s),
-                    reduction="elementwise_mean",
+                    reduction='elementwise_mean',
                     k1=0.01,
                     k2=0.03,
+                    data_range=2,
                     betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-                    normalize='simple'))
+                    normalize='relu'))
 
         self._distorsion_lambda = distorsion_lambda
 
@@ -170,12 +183,13 @@ class MultiScaleSSIMPyramid(nn.Module):
                 x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear',
                                       align_corners=False)
 
-        self.msssim_pyr[-1] = self.msssim_pyr[-1].to(x_r_s.device)
+        self.msssim_pyr[-1] = self.msssim_pyr[-1].to(x_r[0].device)
         ms_ssim_pyr.append(1. - self.msssim_pyr[-1](self.padding[-1](x_r[-1]),
                                                     self.padding[-1](x_org)))
 
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+
         return ms_ssim_pyr, rate
 
 
@@ -197,6 +211,12 @@ class PenaltyA(nn.Module):
             max_energy = A.max(dim=1)[0]
 
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
+        if torch.any(torch.isnan(P_A)):
+            print('P_A nan:', A.detach().min(), A.detach().max())
+            print('X:', x.detach().amin(dim=(1, 2, 3)), x.detach().amax(dim=(1, 2, 3)))
+            print('Y:', y.detach().amin(dim=(1, 2, 3)), y.detach().amax(dim=(1, 2, 3)))
+            print('A:', torch.var(y.detach(), dim=(1, 2, 3)) / x_var.to(y.device))
+            sys.exit(0)
 
         return torch.mean(P_A), torch.mean(max_energy)
 

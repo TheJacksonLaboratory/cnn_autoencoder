@@ -84,8 +84,9 @@ def add_data_args(parser, task, mode='training'):
     if mode == 'training':
         parser.add_argument('-aed', '--elastic-def', action='store_true', dest='elastic_deformation', help='Use elastic deformation to augment the original data')
         parser.add_argument('-ar', '--rotation', action='store_true', dest='rotation', help='Augment the original data by rotating the inputs and their respectice targets')
+        parser.add_argument('-an', '--noise', action='store_true', dest='add_noise', help='Augment the original data by adding Gaussian noise')
 
-        parser.add_argument('-shtr', '--shuffle-train', action='store_true', dest='shuffle_train', help='Shuffle the training set?')
+        parser.add_argument('-nshtr', '--no-shuffle-train', action='store_false', dest='shuffle_train', help=argparse.SUPPRESS, default=True)
         parser.add_argument('-shva', '--shuffle-val', action='store_true', dest='shuffle_val', help='Shuffle the validation set?')
         parser.add_argument('-ntr', '--num-train', type=int, dest='train_dataset_size', help='Size of set of test images used to evaluate the model.', default=-1)
         parser.add_argument('-nva', '--num-val', type=int, dest='val_dataset_size', help='Size of set of test images used to evaluate the model.', default=-1)
