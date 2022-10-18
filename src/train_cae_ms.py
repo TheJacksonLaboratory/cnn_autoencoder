@@ -162,6 +162,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
 
                 # Clip the gradients to prevent from exploding gradients problems
                 nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
+                optimizer.step()
                 step_loss = loss.item()
 
                 # When training with penalty on the energy of the compression
@@ -171,8 +172,8 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                         param_nan = False
                         for param_name, param in cae_model.named_parameters():
                             if (param.grad is not None
-                              and (math.isnan(param.data.detach().norm(2))
-                                   or math.isnan(param.grad.data.detach().norm(2)))):
+                               and (math.isnan(param.data.detach().norm(2))
+                                    or math.isnan(param.grad.data.detach().norm(2)))):
                                 print('Paramater set to nan\n', param_name, param.data.detach().min(), param.data.detach().max(), param.data.detach().std())
                                 print('Paramater gradient\n', param_name, param.grad.detach().data.min(), param.grad.detach().data.max(), param.grad.detach().data.std())
                                 param_nan = True
@@ -198,8 +199,6 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                         break
                 else:
                     break
-
-                optimizer.step()
 
             sum_loss += step_loss
 
@@ -258,14 +257,12 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: '
                              'Interrupting training ****')
-                if args.print_log:
-                    q.close()
                 break
-        if args.print_log:
-            q.close()
     else:
         completed = True
 
+    if args.print_log:
+        q.close()
     # Return True if the training finished sucessfully
     return completed
 

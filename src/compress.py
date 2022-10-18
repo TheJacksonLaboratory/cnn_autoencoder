@@ -55,8 +55,13 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
     fn, rois = utils.parse_roi(input_filename, source_format)
+
+    s3_obj = utils.connect_s3(fn)
     z_arr, _, _ = utils.image_to_zarr(fn, patch_size, source_format,
-                                      data_group)
+                                      data_group, s3_obj=s3_obj)
+
+    if not isinstance(z_arr, zarr.core.Array):
+        z_arr = zarr.array(data=z_arr[:])
 
     a_ch, a_H, a_W = [data_axes.index(a) for a in "CYX"]
     in_channels = z_arr.shape[a_ch]
@@ -188,8 +193,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
 
     # Copy the labels of the original image
     if ('zarr' in source_format
-       and isinstance(z_arr.store, zarr.storage.FSStore)
-       or not os.path.samefile(output_filename, fn)):
+       and (isinstance(z_arr.store, zarr.storage.FSStore)
+            or not os.path.samefile(output_filename, fn))):
         z_org = zarr.open(output_filename, mode="rw")
         if 'labels' in z_org.keys() and 'labels' not in group.keys():
             zarr.copy(z_org['labels'], group)
@@ -268,7 +273,7 @@ def compress(args):
         # If the output path is a directory, append the input filenames to it,
         # so the compressed files have the same name as the original file.
         fn_list = map(lambda fn:
-                      fn.split(args.source_format)[0].replace('\\', '/').split('/')[-1],
+                      fn[:fn.lower().find(args.source_format)].replace('\\', '/').split('/')[-1],
                       input_fn_list)
         output_fn_list = [os.path.join(args.output_dir[0],
                                        '%s%s.zarr' % (fn, args.comp_identifier))

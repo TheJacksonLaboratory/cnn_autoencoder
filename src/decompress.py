@@ -328,6 +328,9 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
         decomp_model = models.Synthesizer(**state['args'])
 
     decomp_model.load_state_dict(state['decoder'], strict=False)
+    if state['args']['version'] == '0.5.5':
+        for color_layer in decomp_model.color_layers:
+            color_layer[0].weight.data.copy_(state['decoder']['synthesis_track.4.weight'])
 
     decomp_model = nn.DataParallel(decomp_model)
     if use_gpu:

@@ -40,7 +40,6 @@ class LazyImage(object):
             self._im = None
         else:
             self._im = Image.open(self._filename, mode="r").convert('RGB')
-
             self.shape = (self._im.height, self._im.width, 3)
 
     def __getitem__(self, roi):
@@ -57,8 +56,15 @@ class LazyImage(object):
             # When loading images from buckets, the shape of the image could
             # not be known beforhand. That makes the ROI be negative, which is
             # corrected here.
-            roi = tuple([slice(0, s, 1) if (r.stop - r.start) / r.step < 0 else r
-                         for r, s in zip(roi, shape)])
+            if not isinstance(roi, list):
+                roi = [roi] * len(shape)
+            new_roi = []
+            for r, s in zip(roi, shape):
+                if (r.stop is None or (r.stop - r.start) / r.step < 0):
+                    new_roi.append(slice(0, s, 1))
+                else:
+                    new_roi.append(r)
+            roi = tuple(new_roi)
         else:
             arr = np.array(self._im)
 
@@ -66,6 +72,25 @@ class LazyImage(object):
 
     def get_orthogonal_selection(self, roi):
         return self[roi]
+
+    def __call__(self):
+        return self[:]
+
+
+def connect_s3(filename_sample):
+    if (filename_sample.startswith('s3')
+       or filename_sample.startswith('http')):
+        endpoint = '/'.join(filename_sample.split('/')[:3])
+        s3_obj = dict(bucket_name=filename_sample.split('/')[3],
+                      s3=boto3.client('s3', aws_access_key_id='',
+                                      aws_secret_access_key='',
+                                      region_name='us-east-2',
+                                      endpoint_url=endpoint))
+
+        s3_obj['s3']._request_signer.sign = (lambda *args, **kwargs: None)
+    else:
+        s3_obj = None
+    return s3_obj
 
 
 def image_to_zarr(arr_src, patch_size, source_format, data_group,
@@ -424,7 +449,7 @@ def zarrdataset_worker_init(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset_obj = worker_info.dataset
 
-    dataset_obj._s3_obj = dataset_obj._connect_s3(dataset_obj._filenames[0])
+    dataset_obj._s3_obj = connect_s3(dataset_obj._filenames[0])
     filenames_rois = list(map(parse_roi, dataset_obj._filenames,
                               [dataset_obj._source_format]
                               * len(dataset_obj._filenames)))
@@ -534,7 +559,7 @@ class ZarrDataset(Dataset):
         self._filenames = self._split_dataset(root)
 
     def __iter__(self):
-        self._s3_obj = self._connect_s3(self._filenames[0])
+        self._s3_obj = connect_s3(self._filenames[0])
 
         (self.z_list,
          self._rois_list,
@@ -597,21 +622,6 @@ class ZarrDataset(Dataset):
                 filenames = filenames[train_size+val_size:]
 
         return filenames
-
-    def _connect_s3(self, filename_sample):
-        if (filename_sample.startswith('s3')
-           or filename_sample.startswith('http')):
-            endpoint = '/'.join(filename_sample.split('/')[:3])
-            s3_obj = dict(bucket_name=filename_sample.split('/')[3],
-                          s3=boto3.client('s3', aws_access_key_id='',
-                                          aws_secret_access_key='',
-                                          region_name='us-east-2',
-                                          endpoint_url=endpoint))
-
-            s3_obj['s3']._request_signer.sign = (lambda *args, **kwargs: None)
-        else:
-            s3_obj = None
-        return s3_obj
 
     def _preload_files(self, filenames, data_group='0/0',
                        compressed_input=False,

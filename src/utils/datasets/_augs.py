@@ -11,31 +11,6 @@ from scipy.ndimage import rotate
 merge_funs = {'mean': np.mean, 'max': np.max, 'median':np.median}
 
 
-def unfold_input(x, in_channels, patch_size, stride, padding):
-    # Axes of x is expected to be in TCZYX order.
-    x_type = x.dtype
-    x_t = np.pad(x, padding, mode='reflect')
-    x_t = torch.from_numpy(x_t)
-    batch = F.unfold(x_t[0].float(), kernel_size=patch_size,
-                     padding=0,
-                     stride=stride)
-    batch = batch.reshape(in_channels, patch_size, patch_size, -1).numpy()
-    batch = np.moveaxis(batch, -1, 0).astype(x_type)
-    return batch
-
-
-def fold_input(x, in_channels, patch_size, np_H, np_W, H, W):
-    x_type = x.dtype
-    x_t = torch.from_numpy(x)
-    x_t = x_t.permute(1, 2, 3, 0).reshape(in_channels * patch_size ** 2, -1)
-    z = F.fold(x_t.float(), output_size=(np_H * patch_size, np_W * patch_size),
-               kernel_size=patch_size,
-               padding=0,
-               stride=patch_size).int()
-    z = z[..., :H, :W].reshape(1, -1, 1, H, W).numpy().astype(x_type)
-    return z
-
-
 class AddGaussianNoise(object):
     def __init__(self, mean=0.0, std=1.0):
         self.std = std
