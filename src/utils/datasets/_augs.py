@@ -123,7 +123,7 @@ def get_zarr_transform(data_mode='testing', normalize=True,
                        transforms.ConvertImageDtype(torch.float32)]
 
     if add_noise:
-        prep_trans_list.append(AddGaussianNoise(0., 0.1))
+        prep_trans_list.append(AddGaussianNoise(0., 0.001))
 
     if normalize:
         # The ToTensor transforms the input into the range [0, 1]. However, if
@@ -131,6 +131,7 @@ def get_zarr_transform(data_mode='testing', normalize=True,
         if compressed_input:
             prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
         else:
+            pass
             prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                         std=(0.5, 0.5, 0.5)))
 
@@ -175,6 +176,7 @@ def get_imagenet_transform(mode='training', normalize=True, patch_size=128):
     prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
 
     if normalize:
+        pass
         # prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 

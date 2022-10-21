@@ -3,6 +3,7 @@ import os
 from functools import reduce
 
 import numpy as np
+from sympy import true
 import zarr
 
 from PIL import Image
@@ -56,11 +57,9 @@ class LazyImage(object):
             # When loading images from buckets, the shape of the image could
             # not be known beforhand. That makes the ROI be negative, which is
             # corrected here.
-            if not isinstance(roi, list):
-                roi = [roi] * len(shape)
             new_roi = []
             for r, s in zip(roi, shape):
-                if (r.stop is None or (r.stop - r.start) / r.step < 0):
+                if (r.stop - r.start) / r.step < 0:
                     new_roi.append(slice(0, s, 1))
                 else:
                     new_roi.append(r)
@@ -501,6 +500,8 @@ def zarrdataset_worker_init(worker_id):
      dataset_obj.imgs_shapes) = \
         dataset_obj._compute_size(dataset_obj.z_list, dataset_obj._rois_list)
 
+    dataset_obj._initialized = True
+
 
 class ZarrDataset(Dataset):
     """A zarr-based dataset.
@@ -555,8 +556,9 @@ class ZarrDataset(Dataset):
 
         self._data_mode = data_mode
         self._requires_split = False
-
         self._filenames = self._split_dataset(root)
+
+        self._initialized = False
 
     def __iter__(self):
         self._s3_obj = connect_s3(self._filenames[0])
@@ -578,6 +580,8 @@ class ZarrDataset(Dataset):
 
         if self._dataset_size < 0:
             self._dataset_size = dataset_size
+
+        self._initialized = True
 
     def _get_filenames(self, source):
         if (isinstance(source, str)
@@ -706,6 +710,9 @@ class ZarrDataset(Dataset):
         return self._dataset_size
 
     def __getitem__(self, index):
+        if not self._initialized:
+            self.__iter__()
+
         i, tl_y, tl_x = compute_grid(index, self.imgs_shapes, self._imgs_sizes,
                                      self._patch_size,
                                      self._padding,

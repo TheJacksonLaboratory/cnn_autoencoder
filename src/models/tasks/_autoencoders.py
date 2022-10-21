@@ -180,6 +180,54 @@ class DownsamplingUnit(nn.Module):
         return fx
 
 
+class ResidualDownsamplingUnit(DownsamplingUnit):
+    def __init__(self, channels_in, channels_out, groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=False):
+        super(ResidualDownsamplingUnit, self).__init__()
+
+        res_model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
+                               channels_in if groups else 1,
+                               bias=bias,
+                               padding_mode='reflect')]
+
+        if batch_norm:
+            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+        res_model.append(nn.LeakyReLU(inplace=False))
+        res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
+                                   channels_in if groups else 1,
+                                   bias=bias,
+                                   padding_mode='reflect'))
+
+        if batch_norm:
+            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+        model = [nn.LeakyReLU(inplace=False)]
+        model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1,
+                               channels_in if groups else 1,
+                               bias=bias,
+                               padding_mode='reflect'))
+
+        if batch_norm:
+            model.append(nn.BatchNorm2d(channels_out, affine=True))
+
+        model.append(nn.LeakyReLU(inplace=False))
+
+        if dropout > 0.0:
+            model.append(nn.Dropout2d(dropout))
+
+        self.res_model = nn.Sequential(*res_model)
+        self.model = nn.Sequential(*model)
+
+    def forward(self, x):
+        fx = self.res_model(x)
+        fx = fx + x
+        fx = self.model(fx)
+        return fx
+
+
 class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=True):
         super(UpsamplingUnit, self).__init__()
@@ -207,10 +255,62 @@ class UpsamplingUnit(nn.Module):
         return fx
 
 
+class ResidualUpsamplingUnit(nn.Module):
+    def __init__(self, channels_in, channels_out, groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=True):
+        super(ResidualUpsamplingUnit, self).__init__()
+
+        res_model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
+                               channels_in if groups else 1,
+                               bias=bias,
+                               padding_mode='reflect')]
+
+        if batch_norm:
+            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+        res_model.append(nn.LeakyReLU(inplace=False))
+        res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
+                                   channels_in if groups else 1,
+                                   bias=bias,
+                                   padding_mode='reflect'))
+
+        if batch_norm:
+            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+        model = [nn.LeakyReLU(inplace=False)]
+        model.append(nn.ConvTranspose2d(channels_in, channels_out, 3, 2, 1, 1,
+                                        channels_in if groups else 1,
+                                        bias=bias))
+
+        if batch_norm:
+            model.append(nn.BatchNorm2d(channels_out, affine=True))
+
+        model.append(nn.LeakyReLU(inplace=False))
+
+        if dropout > 0.0:
+            model.append(nn.Dropout2d(dropout))
+
+        self.res_model = nn.Sequential(*res_model)
+        self.model = nn.Sequential(*model)
+
+    def forward(self, x):
+        fx = self.res_model(x)
+        fx = fx + x
+        fx = self.model(x)
+        return fx
+
+
 class ColorEmbedding(nn.Module):
-    def __init__(self, channels_org=3, channels_net=8, groups=False, bias=False, **kwargs):
+    def __init__(self, channels_org=3, channels_net=8, groups=False,
+                 bias=False,
+                 **kwargs):
         super(ColorEmbedding, self).__init__()
-        self.embedding = nn.Conv2d(channels_org, channels_net, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect')
+        self.embedding = nn.Conv2d(channels_org, channels_net, 3, 1, 1, 1,
+                                   channels_org if groups else 1,
+                                   bias=bias,
+                                   padding_mode='reflect')
 
         self.apply(initialize_weights)
 
@@ -220,16 +320,45 @@ class ColorEmbedding(nn.Module):
 
 
 class Analyzer(nn.Module):
-    def __init__(self, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, **kwargs):
+    def __init__(self, channels_net=8, channels_bn=16, compression_level=3,
+                 channels_expansion=1,
+                 groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=False,
+                 use_residual=False,
+                 **kwargs):
         super(Analyzer, self).__init__()
 
-        down_track = [DownsamplingUnit(channels_in=channels_net * channels_expansion ** i, channels_out=channels_net * channels_expansion ** (i+1), 
-                                       groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-                    for i in range(compression_level)]
+        if use_residual:
+            downsampling_op = ResidualDownsamplingUnit
+        else:
+            downsampling_op = DownsamplingUnit
+
+        down_track = [downsampling_op(channels_in=channels_net
+                                      * channels_expansion ** i,
+                                      channels_out=channels_net
+                                      * channels_expansion ** (i+1),
+                                      groups=groups,
+                                      batch_norm=batch_norm,
+                                      dropout=dropout,
+                                      bias=bias)
+                      for i in range(compression_level)]
 
         # Final convolution in the analysis track
-        down_track.append(nn.Conv2d(channels_net * channels_expansion**compression_level, channels_bn, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect'))
-        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5, inplace=False))
+        down_track.append(nn.Conv2d(channels_net
+                                    * channels_expansion**compression_level,
+                                    channels_bn,
+                                    3,
+                                    1,
+                                    1,
+                                    1,
+                                    channels_bn if groups else 1,
+                                    bias=bias,
+                                    padding_mode='reflect'))
+
+        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+                                      inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
 
@@ -245,13 +374,41 @@ class Analyzer(nn.Module):
 
 
 class Synthesizer(nn.Module):
-    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, **kwargs):
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
+                 compression_level=3,
+                 channels_expansion=1,
+                 groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=False,
+                 use_residual=False,
+                 **kwargs):
         super(Synthesizer, self).__init__()
 
+        if use_residual:
+            upsampling_op = ResidualUpsamplingUnit
+        else:
+            upsampling_op = UpsamplingUnit
+
         # Initial convolution in the synthesis track
-        up_track = [nn.Conv2d(channels_bn, channels_net * channels_expansion**compression_level, 3, 1, 1, 1, channels_bn if groups else 1, bias=bias, padding_mode='reflect')]
-        up_track += [UpsamplingUnit(channels_in=channels_net * channels_expansion**(i+1), channels_out=channels_net * channels_expansion**i, 
-                                    groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+        up_track = [nn.Conv2d(channels_bn,
+                              channels_net
+                              * channels_expansion**compression_level,
+                              3,
+                              1,
+                              1,
+                              1,
+                              channels_bn if groups else 1,
+                              bias=bias,
+                              padding_mode='reflect')]
+        up_track += [upsampling_op(channels_in=channels_net
+                                   * channels_expansion**(i+1),
+                                   channels_out=channels_net
+                                   * channels_expansion**i, 
+                                   groups=groups,
+                                   batch_norm=batch_norm,
+                                   dropout=dropout,
+                                   bias=bias)
                      for i in reversed(range(compression_level))]
 
         # Final color reconvertion
@@ -259,8 +416,16 @@ class Synthesizer(nn.Module):
 
         self.color_layers = nn.ModuleList(
             [nn.Sequential(
-                 nn.Conv2d(channels_net * channels_expansion**i, channels_org, 3, 1, 1, 1, channels_org if groups else 1, bias=bias, padding_mode='reflect'),
-                 # nn.Hardtanh(min_val=-1.5, max_val=1.5, inplace=False)
+                 nn.Conv2d(channels_net * channels_expansion**i, channels_org,
+                           3,
+                           1,
+                           1,
+                           1,
+                           channels_org if groups else 1,
+                           bias=bias,
+                           padding_mode='reflect'),
+                 # nn.Hardtanh(min_val=-1.0, max_val=1.0, inplace=False)
+                 nn.Hardsigmoid(inplace=False)
                  )
              for i in reversed(range(compression_level))])
 
@@ -270,7 +435,8 @@ class Synthesizer(nn.Module):
 
     def inflate(self, x, color=True):
         x_brg = []
-        # DataParallel only sends 'x' to the GPU memory when the forward method is used and not for other methods
+        # DataParallel only sends 'x' to the GPU memory when the forward method
+        # is used and not for other methods
         fx = x.clone().to(self.synthesis_track[0].weight.device)
         for layer in self.synthesis_track:
             fx = layer(fx)
@@ -326,17 +492,48 @@ class SynthesizerInflate(Synthesizer):
 
 
 class AutoEncoder(nn.Module):
-    """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
+    """ AutoEncoder encapsulates the full compression-decompression process.
+    In this manner, the network can be trained end-to-end.
     """
-    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, K=4, r=3, **kwargs):
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
+                 compression_level=3,
+                 channels_expansion=1,
+                 groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=False,
+                 use_residual=False,
+                 K=4,
+                 r=3,
+                 **kwargs):
         super(AutoEncoder, self).__init__()
 
         # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
+        self.embedding = ColorEmbedding(channels_org=channels_org,
+                                        channels_net=channels_net,
+                                        groups=groups,
+                                        bias=bias)
 
-        self.analysis = Analyzer(channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+        self.analysis = Analyzer(channels_net=channels_net,
+                                 channels_bn=channels_bn,
+                                 compression_level=compression_level,
+                                 channels_expansion=channels_expansion,
+                                 groups=groups,
+                                 batch_norm=batch_norm,
+                                 dropout=dropout,
+                                 bias=bias,
+                                 use_residual=use_residual)
 
-        self.synthesis = Synthesizer(channels_org=channels_org, channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+        self.synthesis = Synthesizer(channels_org=channels_org,
+                                     channels_net=channels_net,
+                                     channels_bn=channels_bn,
+                                     compression_level=compression_level,
+                                     channels_expansion=channels_expansion,
+                                     groups=groups,
+                                     batch_norm=batch_norm,
+                                     dropout=dropout,
+                                     bias=bias,
+                                     use_residual=use_residual)
 
         self.fact_entropy = FactorizedEntropy(channels_bn, K=K, r=r)
 
@@ -374,17 +571,50 @@ class AutoEncoder(nn.Module):
 class MaskedAutoEncoder(nn.Module):
     """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
     """
-    def __init__(self, channels_org=3, channels_net=8, channels_bn=16, compression_level=3, channels_expansion=1, groups=False, batch_norm=False, dropout=0.0, bias=False, K=4, r=3, n_masks=1, masks_size=64, **kwargs):
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
+                 compression_level=3,
+                 channels_expansion=1,
+                 groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=False,
+                 use_residual=False,
+                 K=4,
+                 r=3,
+                 n_masks=1,
+                 masks_size=64,
+                 **kwargs):
         super(MaskedAutoEncoder, self).__init__()
 
         # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org=channels_org, channels_net=channels_net, groups=groups, bias=bias)
+        self.embedding = ColorEmbedding(channels_org=channels_org,
+                                        channels_net=channels_net,
+                                        groups=groups,
+                                        bias=bias)
 
         self.masking = RandMasking(n_masks=n_masks, masks_size=masks_size)
-        self.pos_enc = PositionalEncoding(channels_net, max_dim=1024, dropout=dropout)
+        self.pos_enc = PositionalEncoding(channels_net, max_dim=1024,
+                                          dropout=dropout)
 
-        self.analysis = Analyzer(channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
-        self.synthesis = Synthesizer(channels_org=channels_org, channels_net=channels_net, channels_bn=channels_bn, compression_level=compression_level, channels_expansion=channels_expansion, groups=groups, batch_norm=batch_norm, dropout=dropout, bias=bias)
+        self.analysis = Analyzer(channels_net=channels_net,
+                                 channels_bn=channels_bn,
+                                 compression_level=compression_level,
+                                 channels_expansion=channels_expansion,
+                                 groups=groups,
+                                 batch_norm=batch_norm,
+                                 dropout=dropout,
+                                 bias=bias,
+                                 use_residual=use_residual)
+        self.synthesis = Synthesizer(channels_org=channels_org,
+                                     channels_net=channels_net,
+                                     channels_bn=channels_bn,
+                                     compression_level=compression_level,
+                                     channels_expansion=channels_expansion,
+                                     groups=groups,
+                                     batch_norm=batch_norm,
+                                     dropout=dropout,
+                                     bias=bias,
+                                     use_residual=use_residual)
         self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
 
     def forward(self, x, synthesize_only=False):
@@ -425,7 +655,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from PIL import Image
     from torchvision.transforms import ToTensor, Normalize, Compose
-    
+
     print('Testing random crop masking')
 
     im = Image.open(r'C:\Users\cervaf\Documents\Datasets\Kodak\kodim21.png')
@@ -436,7 +666,7 @@ if __name__ == '__main__':
     checkpoint = torch.load(r'C:\Users\cervaf\Documents\Logging\tested\autoencoder\best_ver0.5.4_74691.pth', map_location='cpu')
 
     masker = MaskedAutoEncoder(n_masks=20, masks_size=64, **checkpoint['args'])
-    
+
     x_m, _, _ = masker(x)
 
     print('Masked tensor', x_m.size())

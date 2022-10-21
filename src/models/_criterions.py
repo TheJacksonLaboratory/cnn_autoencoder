@@ -87,9 +87,9 @@ class MultiScaleSSIM(nn.Module):
             reduction='elementwise_mean',
             k1=0.01,
             k2=0.03,
-            data_range=2,
+            data_range=1,
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-            normalize='relu')
+            normalize=None)
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         ms_ssim, rate = self.compute_distortion(x, y, x_r, p_y, net)
@@ -135,9 +135,9 @@ class MultiScaleSSIMPyramid(nn.Module):
                     reduction='elementwise_mean',
                     k1=0.01,
                     k2=0.03,
-                    data_range=2,
+                    data_range=1,
                     betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-                    normalize='relu'))
+                    normalize=None))
 
         self._distorsion_lambda = distorsion_lambda
 
@@ -211,12 +211,6 @@ class PenaltyA(nn.Module):
             max_energy = A.max(dim=1)[0]
 
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
-        if torch.any(torch.isnan(P_A)):
-            print('P_A nan:', A.detach().min(), A.detach().max())
-            print('X:', x.detach().amin(dim=(1, 2, 3)), x.detach().amax(dim=(1, 2, 3)))
-            print('Y:', y.detach().amin(dim=(1, 2, 3)), y.detach().amax(dim=(1, 2, 3)))
-            print('A:', torch.var(y.detach(), dim=(1, 2, 3)) / x_var.to(y.device))
-            sys.exit(0)
 
         return torch.mean(P_A), torch.mean(max_energy)
 
@@ -241,17 +235,15 @@ class PenaltyB(nn.Module):
 
         fake_codes = torch.cat(
             [torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1)
-             for k in range(K)
-            ], dim=0)
+             for k in range(K)], dim=0)
 
         fake_rec = net(fake_codes, synthesize_only=True)
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / torch.sum(B)
 
-        # P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
+        P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1), kernel_size=K, stride=K).squeeze()
         P_B = B[max_energy_channel]
-
-        return torch.mean(P_B), P_B.detach().mean()
+        return P_B, P_B.detach()
 
 
 class RateDistortionPenaltyA(RateDistortion, PenaltyA):

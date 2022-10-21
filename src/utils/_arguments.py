@@ -156,10 +156,6 @@ def add_config_args(parser, task, mode='training'):
 def add_model_args(parser, task, mode='training'):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
 
-    if task in ['segmentation']:
-        parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
-        parser.add_argument('-st', '--segmentation-threshold', type=float, dest='seg_threshold', help='Objects will be assigned to their corresponding class if those have a predicted confidence higher than this threshold value', default=0.5)
-
     if task == 'autoencoder':
         model_choices = CAE_MODELS
         if mode in ['training']:
@@ -167,6 +163,7 @@ def add_model_args(parser, task, mode='training'):
             parser.add_argument('-er', '--entr', type=int, dest='r', help='Number of channels in the latent space of the factorized entropy model', default=3)
             parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
             parser.add_argument('-ms', '--masks-size', type=int, dest='masks_size', help='Standard size of the patched masks for the masked autoencoder training', default=4)
+            parser.add_argument('-res', '--residual', action='store_true', dest='use_residual', help='Use residual blocks')
 
     elif task == 'classifier':
         model_choices = CLASS_MODELS
@@ -176,10 +173,11 @@ def add_model_args(parser, task, mode='training'):
             parser.add_argument('-mrg', '--merge-labels', type=str, dest='merge_labels', help='Merge the labels spatialy to define the class of a patch', choices=MERGE_TYPES)
 
     elif task == 'segmentation':
+        parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
+        parser.add_argument('-st', '--segmentation-threshold', type=float, dest='seg_threshold', help='Objects will be assigned to their corresponding class if those have a predicted confidence higher than this threshold value', default=0.5)
         model_choices = SEG_MODELS
         if mode in ['training']:
             parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
-            parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
 
     elif task == 'projection':
         model_choices = PROJ_MODELS
@@ -189,6 +187,7 @@ def add_model_args(parser, task, mode='training'):
 
     if mode in ['training']:
         parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of %s model' % task, choices=model_choices)
+        parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
 
 
 def add_criteria_args(parser, task, mode='training'):
