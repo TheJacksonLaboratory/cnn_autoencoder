@@ -3,7 +3,6 @@ import os
 from functools import reduce
 
 import numpy as np
-from sympy import true
 import zarr
 
 from PIL import Image
@@ -369,8 +368,8 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
 
     a_ch, a_H, a_W = [data_axes.index(a) for a in 'CYX']
     c = z.shape[a_ch]
-    H = shape[a_H]
-    W = shape[a_W]
+    H = shape[0]
+    W = shape[1]
 
     # If the shape is negative take it from the input `z` array. The shape can
     # be negative when the data is being pulled from a S3 bucket.
@@ -392,9 +391,9 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
 
     slices = [slice(tl_x, br_x, 1),
               slice(tl_y, br_y, 1),
-              slice(0, 1, 1),
-              slice(0, c, 1),
-              slice(0, 1, 1)]
+              slice(None),
+              slice(0, c, 1) if c > 1 else slice(None),
+              slice(None)]
 
     slices = tuple([slices['XYZCT'.index(a)] for a in data_axes])
 
@@ -402,8 +401,8 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
     transpose_order = [data_axes.index(a) for a in unused_axis]
     transpose_order += [data_axes.index(a) for a in 'CYX']
 
-    patch = z[slices].squeeze()
-    patch = np.transpose(patch, transpose_order)
+    patch = z[slices]
+    patch = np.transpose(patch, transpose_order).squeeze()
 
     if c == 1:
         patch = patch[np.newaxis, ...]
@@ -757,11 +756,6 @@ class LabeledZarrDataset(ZarrDataset):
         if labels_data_axes is None:
             labels_data_axes = self._data_axes
         self._labels_data_axes = labels_data_axes
-        self._lab_list, self._lab_rois_list, _ = \
-            self._preload_files(self._filenames, data_group=self._labels_group,
-                                data_axes=self._labels_data_axes,
-                                compressed_input=False,
-                                s3_obj=self._s3_obj)
 
         # This is a transform that affects the geometry of the input, and then
         # it has to be applied to the target as well
@@ -770,7 +764,17 @@ class LabeledZarrDataset(ZarrDataset):
         # This is a transform that only affects the target
         self._target_transform = target_transform
 
+    def __iter__(self):
+        super().__iter__()
+        self._lab_list, self._lab_rois_list, _ = \
+            self._preload_files(self._filenames, data_group=self._labels_group,
+                                compressed_input=False,
+                                s3_obj=self._s3_obj)
+
     def __getitem__(self, index):
+        if not self._initialized:
+            self.__iter__()
+
         i, tl_y, tl_x = compute_grid(index, self.imgs_shapes, self._imgs_sizes,
                                      self._patch_size,
                                      self._padding,

@@ -90,19 +90,28 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
     patches from images stored in zarr format.
     """
 
+    (prep_trans,
+     input_target_trans,
+     target_trans) = get_zarr_transform(
+        data_mode=data_mode,
+        normalize=normalize,
+        compressed_input=compressed_input,
+        rotation=rotation,
+        elastic_deformation=elastic_deformation,
+        map_labels=map_labels,
+        merge_labels=merge_labels,
+        add_noise=add_noise)
+
     if task == 'autoencoder':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, add_noise=add_noise)
         histo_dataset = ZarrDataset
 
     elif task == 'segmentation':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, add_noise=add_noise)
         if mode in ['training', 'test']:
             histo_dataset = LabeledZarrDataset
         else:
             histo_dataset = ZarrDataset
 
     elif task == 'classification':
-        prep_trans, input_target_trans, target_trans = get_zarr_transform(data_mode=data_mode, normalize=normalize, compressed_input=compressed_input, rotation=rotation, elastic_deformation=elastic_deformation, map_labels=map_labels, merge_labels=merge_labels, add_noise=add_noise)
         if mode in ['training', 'test']:
             histo_dataset = LabeledZarrDataset
         else:

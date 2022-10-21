@@ -89,7 +89,7 @@ class MultiScaleSSIM(nn.Module):
             k2=0.03,
             data_range=1,
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-            normalize=None)
+            normalize='relu')
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         ms_ssim, rate = self.compute_distortion(x, y, x_r, p_y, net)
@@ -137,7 +137,7 @@ class MultiScaleSSIMPyramid(nn.Module):
                     k2=0.03,
                     data_range=1,
                     betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-                    normalize=None))
+                    normalize='relu'))
 
         self._distorsion_lambda = distorsion_lambda
 
