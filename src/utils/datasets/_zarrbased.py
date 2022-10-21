@@ -764,6 +764,9 @@ class LabeledZarrDataset(ZarrDataset):
         # This is a transform that only affects the target
         self._target_transform = target_transform
 
+        self._lab_list = []
+        self._lab_rois_list = []
+
     def __iter__(self):
         super().__iter__()
         self._lab_list, self._lab_rois_list, _ = \
