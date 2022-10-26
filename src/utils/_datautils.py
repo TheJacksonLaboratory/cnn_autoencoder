@@ -119,12 +119,12 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
 
     # Modes can vary from testing, segmentation, compress, decompress, etc. For this reason, only when it is properly training, two data queues are returned, otherwise, only one queue is returned.
     if 'train' not in data_mode:
-        zarr_data = histo_dataset(root=data_dir, dataset_size=test_dataset_size, data_mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+        zarr_data = histo_dataset(root=data_dir, dataset_size=test_dataset_size, data_mode='test', transform=prep_trans, intput_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, workers=workers, **kwargs)
         test_queue = DataLoader(zarr_data, batch_size=batch_size, shuffle=shuffle_test, num_workers=min(workers, len(zarr_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
         return test_queue
 
-    zarr_train_data = histo_dataset(root=data_dir, dataset_size=train_dataset_size, data_mode='train', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
-    zarr_valid_data = histo_dataset(root=data_dir, dataset_size=val_dataset_size, data_mode='val', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, **kwargs)
+    zarr_train_data = histo_dataset(root=data_dir, dataset_size=train_dataset_size, data_mode='train', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, workers=workers, **kwargs)
+    zarr_valid_data = histo_dataset(root=data_dir, dataset_size=val_dataset_size, data_mode='val', transform=prep_trans, input_target_transform=input_target_trans, target_transform=target_trans, compressed_input=compressed_input, workers=workers, **kwargs)
 
     # When training a network that expects to receive a complete image divided into patches, it is better to use shuffle_trainin=False to preserve all patches in the same batch.
     train_queue = DataLoader(zarr_train_data, batch_size=batch_size, shuffle=shuffle_train, num_workers=min(workers, len(zarr_train_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)

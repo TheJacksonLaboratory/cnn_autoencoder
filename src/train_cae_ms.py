@@ -293,7 +293,7 @@ def setup_network(args):
     return cae_model
 
 
-def setup_criteria(cae_model, args):
+def setup_criteria(args):
     """Setup a loss function for the neural network optimization, and training stopping criteria.
 
     Parameters
@@ -496,7 +496,7 @@ def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
     cae_model = setup_network(args)
-    forward_fun, criterion, stopping_criteria = setup_criteria(cae_model, args)
+    forward_fun, criterion, stopping_criteria = setup_criteria(args)
     optimizer, scheduler = setup_optim(cae_model, args)
 
     if args.resume is not None:

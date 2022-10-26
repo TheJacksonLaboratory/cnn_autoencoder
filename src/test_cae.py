@@ -6,6 +6,7 @@ from skimage.color import deltaE_cie76, rgb2lab
 from skimage.metrics import (mean_squared_error,
                              peak_signal_noise_ratio,
                              structural_similarity)
+from torchmetrics import MultiScaleStructuralSimilarityIndexMeasure
 
 import numpy as np
 import zarr
@@ -46,6 +47,23 @@ def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
                                    delta_shape_y=delta_cielab.shape[1])
 
 
+def compute_ms_ssim(x=None, x_r=None, **kwargs):
+    ms_ssim_fn = MultiScaleStructuralSimilarityIndexMeasure(
+        kernel_size=(11, 11),
+        sigma=(1.5, 1.5),
+        reduction='elementwise_mean',
+        k1=0.01,
+        k2=0.03,
+        data_range=1,
+        betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
+        normalize='relu'
+    )
+    ms_ssim = ms_ssim_fn(
+        torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float() / 255.0,
+        torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float() / 255.0)
+    return ms_ssim, None
+
+
 def compute_ssim(x=None, x_r=None, **kwargs):
     ssim = structural_similarity(x, x_r, channel_axis=2)
     return ssim, None
@@ -76,6 +94,7 @@ def compute_rate(x=None, x_r=None, y_q_ptr=None, **kwargs):
 """
 metric_fun = {'dist': compute_rmse,
               'rate': compute_rate,
+              'ms-ssim': compute_ms_ssim,
               'ssim': compute_ssim,
               'psnr': compute_psnr,
               'delta_cielab': compute_deltaCIELAB}
@@ -203,6 +222,9 @@ def test_cae(args):
     all_metrics_stats = dict([(m_k, []) for m_k in metric_fun])
     all_metrics_stats['execution_time'] = []
     all_metrics_stats['evaluation_time'] = []
+
+    if not args.output_dir.lower().endswith(".zarr"):
+        args.output_dir += ".zarr"
 
     for i, in_fn in enumerate(input_fn_list):
         all_metrics = test_image(comp_model=comp_model,

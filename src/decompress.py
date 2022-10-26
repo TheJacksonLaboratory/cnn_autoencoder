@@ -54,10 +54,9 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False):
         p_h = h - 2 * cl_offset
         p_w = w - 2 * cl_offset
 
-        x.mul_(127.5)
-        x.add_(127.5)
+        x.clip_(0, 1)
+        x.mul_(255)
         x.round_()
-        x.clip_(0, 255)
         x = x.to(torch.uint8).unsqueeze(2).numpy()
 
         x_rec_pyr[..., prev_h:prev_h + p_h, prev_w:prev_w + p_w] = \
@@ -91,7 +90,8 @@ def decompress_image(decomp_model, input_filename, output_filename,
     comp_metadata = src_group[data_group.split('/')[0]]
     comp_metadata = comp_metadata.attrs['compression_metadata']
 
-    # Extract the compression level, original channels, and original shape from the compression metadata
+    # Extract the compression level, original channels, and original shape from
+    # the compression metadata
     comp_level = comp_metadata['compression_level']
     in_channels = comp_metadata['channels']
     a_H, a_W = [data_axes.index(a) for a in "YX"]

@@ -1,6 +1,4 @@
 from functools import reduce
-import sys
-import math
 
 import torchmetrics
 import torch
@@ -44,7 +42,7 @@ class RateDistortionPyramid(nn.Module):
                [6, 24, 36, 24, 6],
                [4, 16, 24, 16, 4],
                [1, 4, 6, 4, 1]
-            ]]], requires_grad=False) / 256.0
+               ]]], requires_grad=False) / 256.0
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         if isinstance(self._distorsion_lambda, float):
@@ -98,20 +96,12 @@ class MultiScaleSSIM(nn.Module):
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
         ms_ssim = 1. - self.msssim.to(x_r.device)(self.padding(x_r),
-                                   self.padding(x.to(x_r.device)))
+                                                  self.padding(x.to(x_r.device)))
 
         # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        rate = (torch.sum(-torch.log2(p_y))
+                / (x.size(0) * x.size(2) * x.size(3)))
 
-        if math.isnan(rate) or math.isnan(ms_ssim):
-            torch.save(x_r.detach().cpu(), "/home/cervaf/NN_imaging/x_r.pth")
-            torch.save(x.detach().cpu(), "/home/cervaf/NN_imaging/x.pth")
-            print('Prediction is Nan', ms_ssim.item(), rate.item())
-            print('Input', x.min(), x.max(), x.std())
-            print('Pred', x_r.min(), x_r.max(), x_r.std())
-            print('Quant', y.min(), y.max(), y.std())
-            print('Prob', p_y.min(), p_y.max(), p_y.std())
-            sys.exit(0)
         return ms_ssim, rate
 
 
@@ -124,9 +114,11 @@ class MultiScaleSSIMPyramid(nn.Module):
         self.padding = []
         self.msssim_pyr = []
         for s in range(len(distorsion_lambda)):
-            self.padding.append(nn.ZeroPad2d(
-                ((11 - 2 * s) - patch_size // 2 ** (s + 4)) * 2 ** 3))
-
+            if ((11 - 2 * s) - patch_size // 2 ** (s + 4)) > 0:
+                self.padding.append(nn.ZeroPad2d(
+                    ((11 - 2 * s) - patch_size // 2 ** (s + 4)) * 2 ** 3))
+            else:
+                self.padding.append(nn.Identity())
             self.msssim_pyr.append(
                 torchmetrics.MultiScaleStructuralSimilarityIndexMeasure(
                     kernel_size=(11 - 2 * s,
@@ -169,8 +161,8 @@ class MultiScaleSSIMPyramid(nn.Module):
         for x_r_s, pad_fn, msssim_s in zip(x_r[:-1],
                                            self.padding[:-1],
                                            self.msssim_pyr[:-1]):
-            msssim_s = msssim_s.to(x_r_s.device)
-            ms_ssim_pyr.append(1. - msssim_s(pad_fn(x_r_s), pad_fn(x_org)))
+            ms_ssim_pyr.append(1. - msssim_s.to(x_r_s.device)(pad_fn(x_r_s),
+                                                              pad_fn(x_org)))
             with torch.no_grad():
                 x_org = F.conv2d(
                     x_org,

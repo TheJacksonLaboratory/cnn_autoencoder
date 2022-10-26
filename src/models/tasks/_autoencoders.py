@@ -147,9 +147,13 @@ class FactorizedEntropyLaplace(nn.Module):
         self._gaussian_approx = None
 
     def reset(self, x):
-        self._gaussian_approx = torch.distributions.Laplace(torch.zeros_like(x), torch.var(x.detach(), dim=(0, 2,3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
+        self._gaussian_approx = torch.distributions.Laplace(
+            torch.zeros_like(x),
+            torch.var(x.detach(),
+                      dim=(0, 2, 3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
 
     def forward(self, x):
+        self.reset(x)
         return self._gaussian_approx.cdf(x)
 
 
@@ -180,7 +184,7 @@ class DownsamplingUnit(nn.Module):
         return fx
 
 
-class ResidualDownsamplingUnit(DownsamplingUnit):
+class ResidualDownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False,
                  batch_norm=False,
                  dropout=0.0,
@@ -424,8 +428,8 @@ class Synthesizer(nn.Module):
                            channels_org if groups else 1,
                            bias=bias,
                            padding_mode='reflect'),
-                 # nn.Hardtanh(min_val=-1.0, max_val=1.0, inplace=False)
-                 nn.Hardsigmoid(inplace=False)
+                 nn.Hardtanh(min_val=0.0, max_val=1.0, inplace=False)
+                 # nn.Hardsigmoid(inplace=False)
                  )
              for i in reversed(range(compression_level))])
 

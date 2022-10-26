@@ -12,32 +12,62 @@ from skimage.metrics import (mean_squared_error,
                              peak_signal_noise_ratio,
                              structural_similarity)
 
+from torchmetrics import MultiScaleStructuralSimilarityIndexMeasure
+
 format_dict = {'JPEG2000': 'jp2', 'JPEG': 'jpeg', 'PNG': 'png'}
 
 
-def compute_deltaCIELAB(img, rec):
-    return np.mean(deltaE_ciede2000(rgb2lab(img), rgb2lab(rec)))
+def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
+    x_lab = rgb2lab(x)
+    x_r_lab = rgb2lab(x_r)
+    delta_cielab = deltaE_cie76(x_lab, x_r_lab)
+    mean_delta_cielab = np.mean(delta_cielab)
+
+    return mean_delta_cielab
+
+
+def compute_ms_ssim(x=None, x_r=None, **kwargs):
+    ms_ssim_fn = MultiScaleStructuralSimilarityIndexMeasure(
+        kernel_size=(11, 11),
+        sigma=(1.5, 1.5),
+        reduction='elementwise_mean',
+        k1=0.01,
+        k2=0.03,
+        data_range=1,
+        betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
+        normalize='relu'
+    )
+    ms_ssim = ms_ssim_fn(
+        torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float() / 255.0,
+        torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float() / 255.0)
+    return ms_ssim
 
 
 def compute_ssim(x=None, x_r=None, **kwargs):
     ssim = structural_similarity(x, x_r, channel_axis=2)
-    return ssim, None
+    return ssim
 
 
 def compute_psnr(x=None, x_r=None, **kwargs):
     psnr = peak_signal_noise_ratio(x, x_r)
-    return psnr, None
+    return psnr
 
 
 def compute_rmse(x=None, x_r=None, **kwargs):
     rmse = np.sqrt(mean_squared_error(x / 255.0, x_r / 255.0))
-    return rmse, None
+    return rmse
 
 
 def compute_rate(img, comp_size):
     # Compute the compression rate as bits per pixel (bpp)
     return 8 * float(comp_size) / np.prod(img.shape[:-1])
 
+
+metric_fun = {'dist': compute_rmse,
+              'ms-ssim': compute_ms_ssim,
+              'ssim': compute_ssim,
+              'psnr': compute_psnr,
+              'delta_cielab': compute_deltaCIELAB}
 
 def metrics_image(src_fn, comp_fn):
     """Compute distortion and compression ratio from the compressed
@@ -67,12 +97,10 @@ def metrics_image(src_fn, comp_fn):
     comp_arr = np.array(comp)
     comp.close()
 
-    dist = compute_rmse(img_arr, comp_arr)
-    rate = compute_rate(img_arr, comp_size)
-    psnr = compute_psnr(dist)
-    delta_cielab = compute_deltaCIELAB(img_arr, comp_arr)
+    metrics_dict = {'rate': compute_rate(img_arr, comp_size)}
 
-    metrics_dict = dict(dist=dist, rate=rate, psnr=psnr, delta_cielab=delta_cielab)
+    for m_k in metric_fun.keys():
+        metrics_dict[m_k] = metric_fun[m_k](x=img_arr, x_r=comp_arr)
 
     return metrics_dict
 

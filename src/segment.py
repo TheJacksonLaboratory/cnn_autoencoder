@@ -331,7 +331,7 @@ def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
 
     seg_model = seg_model_class(**state_args)
     if pretrained_model is not None:
-        seg_model.load_state_dict(pretrained_model)
+        seg_model.load_state_dict(pretrained_model, strict=False)
 
     seg_model = nn.DataParallel(seg_model)
     if use_gpu:

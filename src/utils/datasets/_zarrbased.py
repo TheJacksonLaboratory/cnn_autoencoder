@@ -56,9 +56,12 @@ class LazyImage(object):
             # When loading images from buckets, the shape of the image could
             # not be known beforhand. That makes the ROI be negative, which is
             # corrected here.
+            if not isinstance(roi, (list, tuple)):
+                roi = [roi]
+
             new_roi = []
             for r, s in zip(roi, shape):
-                if (r.stop - r.start) / r.step < 0:
+                if r.stop is None or (r.stop - r.start) / r.step < 0:
                     new_roi.append(slice(0, s, 1))
                 else:
                     new_roi.append(r)
@@ -523,6 +526,7 @@ class ZarrDataset(Dataset):
                  compressed_input=False,
                  split_train=0.7,
                  split_val=0.1,
+                 workers=0,
                  **kwargs):
 
         if padding is None:
@@ -558,8 +562,13 @@ class ZarrDataset(Dataset):
         self._filenames = self._split_dataset(root)
 
         self._initialized = False
+        if workers == 0:
+            self.__iter__()
 
     def __iter__(self):
+        if self._initialized:
+            return
+
         self._s3_obj = connect_s3(self._filenames[0])
 
         (self.z_list,
@@ -709,9 +718,6 @@ class ZarrDataset(Dataset):
         return self._dataset_size
 
     def __getitem__(self, index):
-        if not self._initialized:
-            self.__iter__()
-
         i, tl_y, tl_x = compute_grid(index, self.imgs_shapes, self._imgs_sizes,
                                      self._patch_size,
                                      self._padding,
@@ -749,7 +755,6 @@ class LabeledZarrDataset(ZarrDataset):
                  labels_group='labels/0/0',
                  labels_data_axes=None,
                  **kwargs):
-        super(LabeledZarrDataset, self).__init__(root, **kwargs)
 
         # Open the labels from the labels group
         self._labels_group = labels_group
@@ -767,6 +772,8 @@ class LabeledZarrDataset(ZarrDataset):
         self._lab_list = []
         self._lab_rois_list = []
 
+        super(LabeledZarrDataset, self).__init__(root, **kwargs)
+
     def __iter__(self):
         super().__iter__()
         self._lab_list, self._lab_rois_list, _ = \
@@ -775,9 +782,6 @@ class LabeledZarrDataset(ZarrDataset):
                                 s3_obj=self._s3_obj)
 
     def __getitem__(self, index):
-        if not self._initialized:
-            self.__iter__()
-
         i, tl_y, tl_x = compute_grid(index, self.imgs_shapes, self._imgs_sizes,
                                      self._patch_size,
                                      self._padding,
