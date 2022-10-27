@@ -7,7 +7,7 @@ from tqdm import tqdm
 from time import perf_counter
 
 from PIL import Image
-from skimage.color import deltaE_ciede2000, rgb2lab
+from skimage.color import deltaE_cie76, rgb2lab
 from skimage.metrics import (mean_squared_error,
                              peak_signal_noise_ratio,
                              structural_similarity)
@@ -69,6 +69,7 @@ metric_fun = {'dist': compute_rmse,
               'psnr': compute_psnr,
               'delta_cielab': compute_deltaCIELAB}
 
+
 def metrics_image(src_fn, comp_fn):
     """Compute distortion and compression ratio from the compressed
     representation and reconstruction from a single image.
@@ -126,7 +127,7 @@ if __name__ == '__main__':
 
     in_filenames = ['.'.join(fn.split('.')[:-1]) for fn in os.listdir(args.src_dir) if fn.lower().endswith(format_dict[args.src_format])]
 
-    all_metrics = dict(dist=[], rate=[], psnr=[], delta_cielab=[], time=[])
+    all_metrics = {'time': []}
 
     if 'JPEG' in args.dst_format:
         quality_opts = {'quality': args.comp_quality}
@@ -145,6 +146,9 @@ if __name__ == '__main__':
         scores = metrics_image(src_fn, comp_fn)
 
         for m_k in scores.keys():
+            if all_metrics.get(m_k, None) is None:
+                all_metrics[m_k] = []
+
             if scores[m_k] > 0.0:
                 all_metrics[m_k].append(scores[m_k])
             else:
