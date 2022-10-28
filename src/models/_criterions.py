@@ -85,7 +85,7 @@ class MultiScaleSSIM(nn.Module):
             reduction='elementwise_mean',
             k1=0.01,
             k2=0.03,
-            data_range=1,
+            data_range=255,
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
             normalize='relu')
 
@@ -95,8 +95,8 @@ class MultiScaleSSIM(nn.Module):
 
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
-        ms_ssim = 1. - self.msssim.to(x_r.device)(self.padding(x_r),
-                                                  self.padding(x.to(x_r.device)))
+        ms_ssim = 1. - self.msssim.to(x_r.device)(255.0 * self.padding(x_r),
+                                                  255.0 * self.padding(x.to(x_r.device)))
 
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))
@@ -127,7 +127,7 @@ class MultiScaleSSIMPyramid(nn.Module):
                     reduction='elementwise_mean',
                     k1=0.01,
                     k2=0.03,
-                    data_range=1,
+                    data_range=255,
                     betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
                     normalize='relu'))
 
@@ -161,8 +161,8 @@ class MultiScaleSSIMPyramid(nn.Module):
         for x_r_s, pad_fn, msssim_s in zip(x_r[:-1],
                                            self.padding[:-1],
                                            self.msssim_pyr[:-1]):
-            ms_ssim_pyr.append(1. - msssim_s.to(x_r_s.device)(pad_fn(x_r_s),
-                                                              pad_fn(x_org)))
+            ms_ssim_pyr.append(1. - msssim_s.to(x_r_s.device)(255.0 * pad_fn(x_r_s),
+                                                              255.0 * pad_fn(x_org)))
             with torch.no_grad():
                 x_org = F.conv2d(
                     x_org,

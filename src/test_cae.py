@@ -269,9 +269,12 @@ def test_cae(args):
         avg_metrics = '%s=%0.4f (+-%0.4f)' % (m_k, avg_metric, std_metric)
         logger.debug('==== Test metrics {}'.format(avg_metrics))
 
+    all_metrics_stats['codec'] = 'CAE'
+    all_metrics_stats['seed'] = state['args']['seed']
+
     torch.save(all_metrics_stats,
                os.path.join(args.log_dir,
-                            'metrics_stats_%s%s.pth' % (args.seed,
+                            'metrics_stats_%s_CAE_%s.pth' % (args.seed,
                                                         args.log_identifier)))
 
 

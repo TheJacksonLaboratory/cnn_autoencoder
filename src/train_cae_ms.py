@@ -80,9 +80,8 @@ def valid(forward_fun, cae_model, data, criterion, args):
                 q.set_description('Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}).'.format(
                     loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item()))
                 q.update()
-            else:
-                if i % max(1, int(0.1 * len(data))) == 0:
-                    logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
+            elif i % max(1, int(0.1 * len(data))) == 0:
+                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
                     i, len(data), loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
 
     if args.print_log:

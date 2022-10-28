@@ -112,7 +112,7 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
 
     # Append any extra information passed by the training loop
     training_state.update(extra_info)
-    
+
     if args.task == 'autoencoder':
         training_state['embedding'] = model.module.embedding.state_dict()
         training_state['encoder'] = model.module.analysis.state_dict()

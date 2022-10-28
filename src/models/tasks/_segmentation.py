@@ -1,16 +1,14 @@
-import argparse
 import math
-
 import torch
 import torch.nn as nn
 
 
 def initialize_weights(m):
-    if isinstance(m, nn.Conv2d):
-        nn.init.xavier_normal_(m.weight.data)
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.xavier_normal_(m.weight.data, gain=math.sqrt(2 / 1.01))
 
         if m.bias is not None:
-            nn.init.constant_(m.bias.data, 0.0)
+            nn.init.constant_(m.bias.data, 0.01)
 
 
 class DownsamplingUnit(nn.Module):
@@ -20,7 +18,6 @@ class DownsamplingUnit(nn.Module):
                  bias=False):
         super(DownsamplingUnit, self).__init__()
 
-        self.downsample = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
                            padding=1,
                            dilation=1,
@@ -50,10 +47,12 @@ class DownsamplingUnit(nn.Module):
 
         self.model = nn.Sequential(*model)
 
+        self.downsample = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+
     def forward(self, x):
-        fx = self.downsample(x)
-        fx = self.model(fx)
-        return fx
+        fx_brg = self.model(x)
+        fx = self.downsample(fx_brg)
+        return fx, fx_brg
 
 
 class UpsamplingUnit(nn.Module):
@@ -99,6 +98,7 @@ class UpsamplingUnit(nn.Module):
                                            kernel_size=2,
                                            stride=2,
                                            padding=0,
+                                           output_padding=0,
                                            dilation=1,
                                            groups=channels_in if groups else 1,
                                            bias=bias)
@@ -120,34 +120,18 @@ class Analyzer(nn.Module):
         super(Analyzer, self).__init__()
 
         # Initial color convertion
-        self.embedding = nn.Sequential(
-            nn.Conv2d(channels_org, channels_net, kernel_size=3, stride=1,
-                      padding=1,
-                      dilation=1,
-                      groups=channels_org if groups else 1,
-                      bias=bias,
-                      padding_mode='reflect'),
-            nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1,
-                      padding=1,
-                      dilation=1,
-                      groups=channels_org if groups else 1,
-                      bias=bias,
-                      padding_mode='reflect'),
-            nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1,
-                      padding=1,
-                      dilation=1,
-                      groups=channels_org if groups else 1,
-                      bias=bias,
-                      padding_mode='reflect'))
-
-        down_track = [DownsamplingUnit(
-            channels_in=channels_net * channels_expansion ** i,
-            channels_out=channels_net * channels_expansion ** (i+1), 
-            groups=groups,
-            batch_norm=batch_norm,
-            dropout=dropout,
-            bias=bias)
-                      for i in range(compression_level)]
+        down_track = []
+        channels_prev = channels_org
+        for i in range(compression_level):
+            channels_curr = channels_net * channels_expansion ** i
+            down_track.append(
+                DownsamplingUnit(channels_in=channels_prev,
+                                 channels_out=channels_curr,
+                                 groups=groups,
+                                 batch_norm=batch_norm,
+                                 dropout=dropout,
+                                 bias=bias))
+            channels_prev = channels_curr
 
         # Final convolution in the analysis track
         self.analysis_track = nn.ModuleList(down_track)
@@ -155,14 +139,13 @@ class Analyzer(nn.Module):
         self.apply(initialize_weights)
 
     def forward(self, x):
-        fx = self.embedding(x)
-
         # Store the output of each layer as bridge connection to the synthesis
         # track
+        fx = x
         fx_brg_list = []
-        for i, layer in enumerate(self.analysis_track):
-            fx_brg_list.append(fx)
-            fx = layer(fx)
+        for layer in self.analysis_track:
+            fx, fx_brg = layer(fx)
+            fx_brg_list.append(fx_brg)
 
         return fx, fx_brg_list
 
@@ -201,6 +184,10 @@ class Synthesizer(nn.Module):
                     bias,
                     bridge_kernel_size)
                 for i in reversed(range(compression_level))]
+
+        elif not use_bridge:
+            bridge_ops = [EmptyBridgeLayer() for i in range(compression_level)]
+
         else:
             bridge_ops = [nn.Identity()
                           for i in reversed(range(compression_level))]
@@ -214,37 +201,47 @@ class Synthesizer(nn.Module):
             kernel_size=2,
             stride=2,
             padding=0,
+            output_padding=0,
+            dilation=1,
             groups=channels_bn if groups else 1,
             bias=bias)
 
         # Initial deconvolution in the synthesis track
-        up_track = [UpsamplingUnit(
-            channels_in=input_channels_mult
-                        * channels_net
-                        * channels_expansion**(i+1),
-            channels_out=channels_net * channels_expansion**i,
-            groups=groups,
-            batch_norm=batch_norm,
-            dropout=dropout,
-            bias=bias)
-                    for i in reversed(range(compression_level-1))]
+        up_track = []
+        for i in reversed(range(compression_level-1)):
+            up_track.append(
+                UpsamplingUnit(channels_in=input_channels_mult
+                               * channels_net
+                               * channels_expansion**(i+1),
+                               channels_out=channels_net
+                               * channels_expansion**i,
+                               groups=groups,
+                               batch_norm=batch_norm,
+                               dropout=dropout,
+                               bias=bias))
 
         self.synthesis_track = nn.ModuleList(up_track)
 
         # Final class prediction
         self.predict = nn.Sequential(
-            nn.Conv2d(input_channels_mult * channels_net, channels_net, 3, 1,
-                      1,
-                      1,
-                      classes if groups else 1,
+            nn.Conv2d(input_channels_mult * channels_net, channels_net,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1,
+                      dilation=1,
+                      groups=classes if groups else 1,
                       bias=bias,
                       padding_mode='reflect'),
-            nn.Conv2d(channels_net, channels_net, 3, 1, 1, 1,
-                      classes if groups else 1,
+            nn.Conv2d(channels_net, channels_net, kernel_size=3, stride=1,
+                      padding=1,
+                      dilation=1,
+                      groups=classes if groups else 1,
                       bias=bias,
                       padding_mode='reflect'),
-            nn.Conv2d(channels_net, classes, 1, 1, 0, 1,
-                      classes if groups else 1,
+            nn.Conv2d(channels_net, classes, kernel_size=1, stride=1,
+                      padding=0,
+                      dilation=1,
+                      groups=classes if groups else 1,
                       bias=bias))
 
         self.apply(initialize_weights)
@@ -261,21 +258,6 @@ class Synthesizer(nn.Module):
             fx = layer(fx)
 
         return fx
-
-    def extract_features(self, x, x_brg):
-        fx = self.embedding(x)
-
-        for i, (layer, x_k) in enumerate(zip(self.synthesis_track,
-                                             reversed(x_brg))):
-            fx = torch.cat((fx, x_k), dim=1)
-            fx = layer(fx)
-
-        fx = torch.cat((fx, x_brg[0]), dim=1)
-        for layer in self.predict[:-1]:
-            fx = layer(fx)
-
-        y = self.predict[-1](fx)
-        return y, fx
 
 
 class BridgeBlock(nn.Module):
@@ -339,14 +321,16 @@ class BottleNeck(nn.Module):
         super(BottleNeck, self).__init__()
 
         bottleneck = [nn.Conv2d(channels_net
-                                * channels_expansion ** compression_level,
+                                * channels_expansion
+                                ** (compression_level - 1),
                                 channels_bn,
-                                3,
-                                1,
-                                1,
-                                1,
-                                (channels_net
-                                 * channels_expansion ** compression_level)
+                                kernel_size=3,
+                                stride=1,
+                                padding=1,
+                                dilation=1,
+                                groups=(channels_net
+                                        * channels_expansion
+                                        ** compression_level)
                                 if groups else 1,
                                 bias=bias,
                                 padding_mode='reflect')]
@@ -359,8 +343,11 @@ class BottleNeck(nn.Module):
         if dropout > 0.0:
             bottleneck.append(nn.Dropout2d(dropout))
 
-        bottleneck.append(nn.Conv2d(channels_bn, channels_bn, 3, 1, 1, 1,
-                                    channels_bn if groups else 1,
+        bottleneck.append(nn.Conv2d(channels_bn, channels_bn, kernel_size=3,
+                                    stride=1,
+                                    padding=1,
+                                    dilation=1,
+                                    groups=channels_bn if groups else 1,
                                     bias=bias,
                                     padding_mode='reflect'))
 
@@ -392,6 +379,7 @@ class UNet(nn.Module):
                  batch_norm=False,
                  dropout=0.5,
                  bias=True,
+                 use_bridge=False,
                  **kwargs):
         super(UNet, self).__init__()
 
@@ -415,7 +403,7 @@ class UNet(nn.Module):
                                      batch_norm,
                                      dropout,
                                      autoencoder_channels_net=None,
-                                     use_bridge=True,
+                                     use_bridge=use_bridge,
                                      trainable_bridge=False,
                                      bias=bias)
 
@@ -424,66 +412,6 @@ class UNet(nn.Module):
         fx = self.bottleneck(fx)
         y = self.synthesis(fx, fx_brg)
         return y
-
-    def extract_features(self, x, fx_brg=None):
-        fx, fx_brg = self.analysis(x)
-        fx = self.bottleneck(fx)
-        y, fx = self.synthesis.extract_features(fx, fx_brg)
-        return y, fx
-
-
-class UNetNoBridge(nn.Module):
-    """U-Net model for end-to-end segmentation without bridge connections.
-    This is a custom architecture wich only end is comparing against the
-    DecoderUNet model.
-    """
-    def __init__(self, channels_org=3, classes=1, channels_net=8,
-                 channels_bn=48,
-                 compression_level=3,
-                 channels_expansion=1,
-                 groups=False,
-                 batch_norm=False,
-                 dropout=0.5,
-                 bias=True,
-                 **kwargs):
-        super(UNetNoBridge, self).__init__()
-
-        self.analysis = Analyzer(channels_org, channels_net, compression_level,
-                                 channels_expansion,
-                                 groups,
-                                 batch_norm,
-                                 dropout,
-                                 bias)
-        self.bottleneck = BottleNeck(channels_net, channels_bn,
-                                     compression_level,
-                                     channels_expansion,
-                                     groups,
-                                     batch_norm,
-                                     dropout,
-                                     bias)
-        self.synthesis = Synthesizer(classes, channels_net, channels_bn,
-                                     compression_level,
-                                     channels_expansion,
-                                     groups,
-                                     batch_norm,
-                                     dropout,
-                                     autoencoder_channels_net=None,
-                                     use_bridge=False,
-                                     trainable_bridge=False,
-                                     bias=bias)
-        self._compression_level = compression_level
-
-    def forward(self, x, fx_brg=None):
-        fx, _ = self.analysis(x)
-        fx = self.bottleneck(fx)
-        y = self.synthesis(fx, fx_brg)
-        return y
-
-    def extract_features(self, x, fx_brg=None):
-        fx, _ = self.analysis(x)
-        fx = self.bottleneck(fx)
-        y, fx = self.synthesis.extract_features(fx, fx_brg)
-        return y, fx
 
 
 class DecoderUNet(nn.Module):
@@ -505,13 +433,14 @@ class DecoderUNet(nn.Module):
                  trainable_bridge=False,
                  **kwargs):
         super(DecoderUNet, self).__init__()
-        self.bottleneck_embedding = BridgeBlock(autoencoder_channels_bn,
-                                                channels_bn,
-                                                groups,
-                                                batch_norm,
-                                                dropout,
-                                                bias,
-                                                1)
+        self.bottleneck_embedding = BottleNeck(autoencoder_channels_bn,
+                                               channels_bn,
+                                               compression_level,
+                                               1,
+                                               groups,
+                                               batch_norm,
+                                               dropout,
+                                               bias)
         self.synthesis = Synthesizer(classes, channels_net, channels_bn,
                                      compression_level,
                                      channels_expansion,
@@ -531,14 +460,26 @@ class DecoderUNet(nn.Module):
         y = self.synthesis(x_bn, fx_brg)
         return y
 
-    def extract_features(self, x, fx_brg):
-        x_bn = self.bottleneck_embedding(x)
-        y, fx = self.synthesis.extract_features(x_bn, fx_brg)
-        return y, fx
+
+class EmptyBridgeLayer(nn.Module):
+    """Returns an empty tensor of the same shape of the input.
+
+    This is used to break to avoid the bridge connection in UNetNoBridge.
+    """
+    def __init__(self):
+        super(EmptyBridgeLayer, self).__init__()
+
+    def forward(self, x):
+        b, _, h, w = x.size()
+        fx_brg = torch.empty((b, 0, h, w), device=x.device,
+                             requires_grad=False)
+        return fx_brg
 
 
 class EmptyBridge(nn.Module):
-    """Mimics the inflate function of a trained decoder/synthesizer model
+    """Mimics the inflate function of a trained decoder/synthesizer model but
+    returns a tensor of size 0, with the same shape of the required bridge
+    tensors.
     """
     def __init__(self, compression_level=3, compressed_input=False, **kwargs):
         super(EmptyBridge, self).__init__()

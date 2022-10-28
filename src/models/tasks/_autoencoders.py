@@ -51,12 +51,12 @@ class RandMasking(nn.Module):
     def forward(self, x):
         if self.disable_masking:
             return x
-        
+
         b, _, h, w = x.size()
 
         mask_w = w // self._masks_size
         mask_h = h // self._masks_size
-        
+
         with torch.no_grad():
             m = torch.ones((b, mask_h*mask_w), requires_grad=False)
             m_indices = torch.randint(0, mask_w*mask_h, (b, self._n_masks))
@@ -86,21 +86,30 @@ class Quantizer(nn.Module):
 
 
 class FactorizedEntropyLayer(nn.Module):
-    def __init__(self, channels_bn, d=3, r=3):
+    def __init__(self, channels_bn, K=3, d=3, r=3):
         super(FactorizedEntropyLayer, self).__init__()
         self._channels = channels_bn
 
-        # The non-parametric density model is initialized with random normal distributed weights
-        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r, d, 1, 1), 0., 0.01))
-        self._b = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r), 0., 0.01))
-        self._a = nn.Parameter(nn.init.normal_(torch.empty(1, channels_bn * r, 1, 1), 0., 0.01))
+        weights_scale = 10.0 ** (1 / (K + 1))
+        weights_scale = 1 / weights_scale / K
+
+        # The non-parametric density model is initialized with random normal
+        # distributed weights.
+        self._H = nn.Parameter(
+            nn.init.normal_(
+                torch.empty(channels_bn * r, d, 1, 1), weights_scale, 0.01))
+        self._b = nn.Parameter(
+            nn.init.uniform_(torch.empty(channels_bn * r), -0.5, 0.5))
+        self._a = nn.Parameter(torch.zeros(1, channels_bn * r, 1, 1))
 
     def forward(self, x):
-        # Reparametrerize the matrix H, and vector a to generate nonegative Jacobian matrices
+        # Reparametrerize the matrix H, and vector a to generate nonegative
+        # Jacobian matrices.
         H_k = F.softplus(self._H)
         a_k = torch.tanh(self._a)
 
-        # Using the 2d convolution instead of simple element-wise product allows to operate over all channels at the same time
+        # Using the 2d convolution iPnstead of simple element-wise product
+        # allows to operate over all channels at the same time.
         fx = F.conv2d(x, weight=H_k, bias=self._b, groups=self._channels)
         fx = fx + a_k * torch.tanh(fx)
 
@@ -118,14 +127,25 @@ class FactorizedEntropy(nn.Module):
         self._channels = channels_bn
         self._K = K
         if isinstance(r, int):
-            r = [r] * (K - 1) + [1]
+            r = [r] * K + [1]
 
         d = [1] + r[:-1]
 
-        # The non-parametric density model is initialized with random normal distributed weights
-        self._layers = nn.Sequential(*[FactorizedEntropyLayer(channels_bn=channels_bn, d=d_k, r=r_k) for d_k, r_k in zip(d[:-1], r[:-1])])
-        self._H = nn.Parameter(nn.init.normal_(torch.empty(channels_bn * r[-1], d[-1], 1, 1), 0., 0.01))
-        self._b = nn.Parameter(torch.zeros(channels_bn * r[-1]))
+        # The non-parametric density model is initialized with random normal
+        # distributed weights.
+        weights_scale = 10.0 ** (1 / (K + 1))
+        weights_scale = 1 / weights_scale / K
+
+        self._layers = nn.Sequential(
+            *[FactorizedEntropyLayer(channels_bn=channels_bn, K=K, d=d_k,
+                                     r=r_k)
+              for d_k, r_k in zip(d[:-1], r[:-1])])
+        self._H = nn.Parameter(
+            nn.init.normal_(
+                torch.empty(channels_bn * r[-1], d[-1], 1, 1),
+                weights_scale, 0.01))
+        self._b = nn.Parameter(
+            nn.init.uniform_(torch.empty(channels_bn * r[-1]), -0.5, 0.5))
 
     def reset(self, x):
         pass
@@ -134,7 +154,8 @@ class FactorizedEntropy(nn.Module):
         fx = self._layers(x)
 
         H_K = F.softplus(self._H)
-        fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels))
+        fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b,
+                                    groups=self._channels))
 
         return fx
 
@@ -161,13 +182,24 @@ class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=False):
         super(DownsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias, padding_mode='reflect')]
+        model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
+                           padding=1,
+                           dilation=1,
+                           groups=channels_in if groups else 1,
+                           bias=bias,
+                           padding_mode='reflect')]
 
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
         model.append(nn.LeakyReLU(inplace=False))
-        model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias, padding_mode='reflect'))
+        model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3,
+                               stride=2,
+                               padding=1,
+                               dilation=1,
+                               groups=channels_in if groups else 1,
+                               bias=bias,
+                               padding_mode='reflect'))
 
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -236,13 +268,25 @@ class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=True):
         super(UpsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1, channels_in if groups else 1, bias=bias, padding_mode='reflect')]
+        model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
+                           padding=1,
+                           dilation=1,
+                           groups=channels_in if groups else 1,
+                           bias=bias,
+                           padding_mode='reflect')]
 
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
         model.append(nn.LeakyReLU(inplace=False))
-        model.append(nn.ConvTranspose2d(channels_in, channels_out, 3, 2, 1, 1, channels_in if groups else 1, bias=bias))
+        model.append(nn.ConvTranspose2d(channels_in, channels_out,
+                                        kernel_size=3,
+                                        stride=2,
+                                        padding=1,
+                                        output_padding=1,
+                                        dilation=1,
+                                        groups=channels_in if groups else 1,
+                                        bias=bias))
 
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -284,8 +328,13 @@ class ResidualUpsamplingUnit(nn.Module):
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
         model = [nn.LeakyReLU(inplace=False)]
-        model.append(nn.ConvTranspose2d(channels_in, channels_out, 3, 2, 1, 1,
-                                        channels_in if groups else 1,
+        model.append(nn.ConvTranspose2d(channels_in, channels_out,
+                                        kernel_size=3,
+                                        stride=2,
+                                        padding=1,
+                                        output_padding=1,
+                                        dilation=1,
+                                        groups=channels_in if groups else 1,
                                         bias=bias))
 
         if batch_norm:
@@ -361,8 +410,8 @@ class Analyzer(nn.Module):
                                     bias=bias,
                                     padding_mode='reflect'))
 
-        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
-                                      inplace=False))
+        # down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+        #                               inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
 
@@ -398,11 +447,11 @@ class Synthesizer(nn.Module):
         up_track = [nn.Conv2d(channels_bn,
                               channels_net
                               * channels_expansion**compression_level,
-                              3,
-                              1,
-                              1,
-                              1,
-                              channels_bn if groups else 1,
+                              kernel_size=3,
+                              stride=1,
+                              padding=1,
+                              dilation=1,
+                              groups=channels_bn if groups else 1,
                               bias=bias,
                               padding_mode='reflect')]
         up_track += [upsampling_op(channels_in=channels_net
@@ -421,16 +470,15 @@ class Synthesizer(nn.Module):
         self.color_layers = nn.ModuleList(
             [nn.Sequential(
                  nn.Conv2d(channels_net * channels_expansion**i, channels_org,
-                           3,
-                           1,
-                           1,
-                           1,
-                           channels_org if groups else 1,
+                           kernel_size=3,
+                           stride=1,
+                           padding=1,
+                           dilation=1,
+                           groups=channels_org if groups else 1,
                            bias=bias,
                            padding_mode='reflect'),
-                 nn.Hardtanh(min_val=0.0, max_val=1.0, inplace=False)
-                 # nn.Hardsigmoid(inplace=False)
-                 )
+                nn.Hardtanh(min_val=0.0, max_val=1.0, inplace=False)
+                )
              for i in reversed(range(compression_level))])
 
         self.rec_level = compression_level
@@ -549,8 +597,6 @@ class AutoEncoder(nn.Module):
 
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
-        # p_y = torch.prod(p_y, dim=1) + 1e-10
-
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -569,7 +615,6 @@ class AutoEncoder(nn.Module):
         x_r_ms = self.synthesis.forward_steps(y_q)
 
         return x_r_ms, y, p_y
-
 
 
 class MaskedAutoEncoder(nn.Module):
@@ -628,11 +673,9 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.embedding(x)
         fx = self.masking(fx)
         fx = self.pos_enc(fx)
-        
+
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
-        # p_y = torch.prod(p_y, dim=1) + 1e-10
-
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -647,46 +690,8 @@ class MaskedAutoEncoder(nn.Module):
 
         y_q, y = self.analysis(fx)
         p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
-        # p_y = torch.prod(p_y, dim=1) + 1e-10
 
         # Get the reconstruction at multiple scales
         x_r_ms = self.synthesis.forward_steps(y_q)
 
         return x_r_ms, y, p_y
-
-
-if __name__ == '__main__':
-    import matplotlib.pyplot as plt
-    from PIL import Image
-    from torchvision.transforms import ToTensor, Normalize, Compose
-
-    print('Testing random crop masking')
-
-    im = Image.open(r'C:\Users\cervaf\Documents\Datasets\Kodak\kodim21.png')
-    transform = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
-    x = transform(im).unsqueeze(0)
-
-    checkpoint = torch.load(r'C:\Users\cervaf\Documents\Logging\tested\autoencoder\best_ver0.5.4_74691.pth', map_location='cpu')
-
-    masker = MaskedAutoEncoder(n_masks=20, masks_size=64, **checkpoint['args'])
-
-    x_m, _, _ = masker(x)
-
-    print('Masked tensor', x_m.size())
-
-    plt.subplot(2, 2, 1)
-    plt.imshow(x[0].permute(1, 2, 0)*0.5 + 0.5)
-    plt.subplot(2, 2, 2)
-    plt.imshow(x_m[0].detach().permute(1, 2, 0)*0.5 + 0.5)
-
-    masker.eval()
-    x_m, _, _ = masker(x)
-
-    print('Masked tensor', x_m.size())
-
-    plt.subplot(2, 2, 3)
-    plt.imshow(x[0].permute(1, 2, 0)*0.5 + 0.5)
-    plt.subplot(2, 2, 4)
-    plt.imshow(x_m[0].detach().permute(1, 2, 0)*0.5 + 0.5)
-    plt.show()

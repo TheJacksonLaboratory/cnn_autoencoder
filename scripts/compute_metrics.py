@@ -5,7 +5,6 @@ import numpy as np
 
 from tqdm import tqdm
 from time import perf_counter
-
 from PIL import Image
 from skimage.color import deltaE_cie76, rgb2lab
 from skimage.metrics import (mean_squared_error,
@@ -127,12 +126,14 @@ if __name__ == '__main__':
 
     in_filenames = ['.'.join(fn.split('.')[:-1]) for fn in os.listdir(args.src_dir) if fn.lower().endswith(format_dict[args.src_format])]
 
-    all_metrics = {'time': []}
+    all_metrics = {'codec': args.dst_format, 'quality': args.comp_quality,
+                   'time': []}
 
     if 'JPEG' in args.dst_format:
         quality_opts = {'quality': args.comp_quality}
     elif 'PNG' in args.dst_format:
-        quality_opts = {'compress_level': 9 - args.comp_quality, 'optimize': False}
+        quality_opts = {'compress_level': 9 - args.comp_quality // 10,
+                        'optimize': False}
 
     q = tqdm(total=len(in_filenames))
     for in_fn in in_filenames:
@@ -179,6 +180,6 @@ if __name__ == '__main__':
     torch.save(
         all_metrics,
         os.path.join(args.log_dir,
-                    'metrics_stats_%s_%03d%s.pth' % (args.dst_format,
-                                                     args.comp_quality,
-                                                     args.log_identifier)))
+                     'metrics_stats_%s_%03d%s.pth' % (args.dst_format,
+                                                      args.comp_quality,
+                                                      args.log_identifier)))

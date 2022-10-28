@@ -21,7 +21,7 @@ import utils
 SEG_VERSION = '0.1.1'
 
 
-seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
+seg_model_types = {"UNetNoBridge": models.UNet,
                    "UNet": models.UNet,
                    "DecoderUNet": models.DecoderUNet}
 

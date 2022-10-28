@@ -1,9 +1,15 @@
 import logging
 from functools import partial
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+from sklearn.metrics import (accuracy_score,
+                             recall_score,
+                             precision_score,
+                             f1_score)
 
 import models
 import utils
@@ -16,7 +22,7 @@ scheduler_options = {
     "ReduceOnPlateau": partial(optim.lr_scheduler.ReduceLROnPlateau,
                                mode='min',
                                patience=2)}
-seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
+seg_model_types = {"UNetNoBridge": models.UNet,
                    "UNet": models.UNet,
                    "DecoderUNet": models.DecoderUNet}
 
@@ -46,7 +52,8 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
 
     seg_model.eval()
     sum_loss = 0
-
+    if args.print_log:
+        q = tqdm(total=len(data), desc='Validating', position=1, leave=None)
     with torch.no_grad():
         for i, (x, t) in enumerate(data):
             y = forward_fun(x)
@@ -56,9 +63,28 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f})'.format(i, len(data), loss.item(), sum_loss / (i+1)))
+            if args.print_log:
+                t_flat = t.numpy().flatten()
+                y_flat = y.detach().numpy().flatten() > 0.5
+                acc = accuracy_score(t_flat, y_flat)
+                recall = recall_score(t_flat, y_flat, zero_division=0)
+                prec = precision_score(t_flat, y_flat)
+                f1 = f1_score(t_flat, y_flat)
+                q.set_description('Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                    loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
+                q.update()
+            elif i % max(1, int(0.1 * len(data))) == 0:
+                t_flat = t.numpy().flatten()
+                y_flat = y.detach().numpy().flatten() > 0.5
+                acc = accuracy_score(t_flat, y_flat)
+                recall = recall_score(t_flat, y_flat, zero_division=0)
+                prec = precision_score(t_flat, y_flat)
+                f1 = f1_score(t_flat, y_flat)
+                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                    i, len(data), loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
 
+    if args.print_log:
+        q.close()
     mean_loss = sum_loss / len(data)
 
     return mean_loss
@@ -105,6 +131,9 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
     valid_loss_history = []
 
     step = 0
+    if args.print_log:
+        q = tqdm(total=stopping_criteria['early_stopping']._max_iterations,
+                 desc="Training", position=0)
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
@@ -128,11 +157,28 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
             # End of training step
 
             # Log the training performance every 10% of the training set
-            if i % max(1, int(0.1 * len(train_data))) == 0:
-                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f})'.format(step, i, len(train_data), loss.item(), sum_loss / (i+1)))
+            if args.print_log:
+                t_flat = t.numpy().flatten()
+                y_flat = y.detach().numpy().flatten() > 0.5
+                acc = accuracy_score(t_flat, y_flat)
+                recall = recall_score(t_flat, y_flat, zero_division=0)
+                prec = precision_score(t_flat, y_flat)
+                f1 = f1_score(t_flat, y_flat)
+                q.set_description('Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                    loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
+                q.update()
+            elif i % max(1, int(0.1 * len(train_data))) == 0:
+                t_flat = t.numpy().flatten()
+                y_flat = y.detach().numpy().flatten() > 0.5
+                acc = accuracy_score(t_flat, y_flat)
+                recall = recall_score(t_flat, y_flat, zero_division=0)
+                prec = precision_score(t_flat, y_flat)
+                f1 = f1_score(t_flat, y_flat)
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f})'.format(
+                    step, i, len(train_data), loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
 
             # Checkpoint step
-            keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc.check(), stopping_criteria), True)
+            keep_training = reduce(lambda sc1, sc2: sc1 & sc2, map(lambda sc: sc[1].check(), stopping_criteria.items()), True)
 
             if not keep_training or step % args.checkpoint_steps == 0:
                 train_loss = sum_loss / (i+1)
@@ -156,9 +202,9 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 # Save the current training state in a checkpoint file
                 best_valid_loss = utils.checkpoint(step, seg_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
 
-                stopping_criteria[0].update(iteration=step, metric=valid_loss)
+                stopping_criteria['early_stopping'].update(iteration=step, metric=valid_loss)
             else:
-                stopping_criteria[0].update(iteration=step)
+                stopping_criteria['early_stopping'].update(iteration=step)
 
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: Interrupting training ****')
@@ -166,6 +212,9 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
 
     else:
         completed = True
+
+    if args.print_log:
+        q.close()
 
     # Return True if the training finished sucessfully
     return completed
@@ -190,7 +239,10 @@ def setup_criteria(args):
     """
 
     # Early stopping criterion:
-    stopping_criteria = [models.EarlyStoppingPatience(max_iterations=args.steps, **args.__dict__)]
+    stopping_criteria = {
+        'early_stopping': models.EarlyStoppingPatience(
+            max_iterations=args.steps, **args.__dict__)
+    }
 
     # Loss function
     if args.criterion == 'CE':
@@ -303,11 +355,8 @@ def main(args):
     logger.info(criterion)
 
     logger.info('\nStopping criterion:')
-    logger.info(stopping_criteria[0])
-
-    if len(stopping_criteria) > 1:
-        logger.info('\nAdditinal stopping criterions:')
-        logger.info(stopping_criteria[1])
+    for k in stopping_criteria.keys():
+        logger.info(stopping_criteria[k])
 
     logger.info('\nOptimization parameters:')
     logger.info(optimizer)
