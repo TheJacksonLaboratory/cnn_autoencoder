@@ -20,7 +20,7 @@ import models
 import utils
 import segment
 
-seg_model_types = {"UNetNoBridge": models.UNetNoBridge,
+seg_model_types = {"UNetNoBridge": models.UNet,
                    "UNet": models.UNet,
                    "DecoderUNet": models.DecoderUNet}
 

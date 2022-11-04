@@ -168,23 +168,6 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 # representation, update the respective stopping criterion
                 if 'penalty' in stopping_criteria.keys():
                     if args.print_log:
-                        param_nan = False
-                        for param_name, param in cae_model.named_parameters():
-                            if (param.grad is not None
-                               and (math.isnan(param.data.detach().norm(2))
-                                    or math.isnan(param.grad.data.detach().norm(2)))):
-                                print('Paramater set to nan\n', param_name, param.data.detach().min(), param.data.detach().max(), param.data.detach().std())
-                                print('Paramater gradient\n', param_name, param.grad.detach().data.min(), param.grad.detach().data.max(), param.grad.detach().data.std())
-                                param_nan = True
-
-                        if param_nan:
-                            print('Org', x.detach().min(), x.detach().max(), x.detach().std())
-                            print('Rec', x_r.detach().min(), x_r.detach().max(), x_r.detach().std())
-                            print('Comp', y.detach().min(), y.detach().max(), y.detach().std())
-                            print('Prob', p_y.detach().min(), p_y.detach().max(), p_y.detach().std())
-                            print('Loss', step_loss, extra_info, torch.sum(-torch.log2(p_y.detach())))
-                            sys.exit()
-
                         if q_penalty is None:
                             q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, position=2, leave=None)
                         q_penalty.set_description('Sub-iter loss=%0.4f, energy=%0.4f' % (step_loss, extra_info))
