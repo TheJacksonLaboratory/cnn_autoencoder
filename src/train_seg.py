@@ -65,7 +65,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
 
             if args.print_log:
                 t_flat = t.numpy().flatten()
-                y_flat = y.detach().numpy().flatten() > 0.5
+                y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
                 prec = precision_score(t_flat, y_flat)
@@ -75,7 +75,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
                 q.update()
             elif i % max(1, int(0.1 * len(data))) == 0:
                 t_flat = t.numpy().flatten()
-                y_flat = y.detach().numpy().flatten() > 0.5
+                y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
                 prec = precision_score(t_flat, y_flat)
@@ -159,7 +159,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
             # Log the training performance every 10% of the training set
             if args.print_log:
                 t_flat = t.numpy().flatten()
-                y_flat = y.detach().numpy().flatten() > 0.5
+                y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
                 prec = precision_score(t_flat, y_flat)
@@ -169,7 +169,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 q.update()
             elif i % max(1, int(0.1 * len(train_data))) == 0:
                 t_flat = t.numpy().flatten()
-                y_flat = y.detach().numpy().flatten() > 0.5
+                y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
                 prec = precision_score(t_flat, y_flat)

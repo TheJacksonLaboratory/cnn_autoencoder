@@ -131,9 +131,8 @@ def get_zarr_transform(data_mode='testing', normalize=True,
         if compressed_input:
             prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
         else:
-            pass
-            # prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5),
-            #                                             std=(0.5, 0.5, 0.5)))
+            prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5),
+                                                        std=(0.5, 0.5, 0.5)))
 
     prep_trans = transforms.Compose(prep_trans_list)
 
@@ -176,9 +175,8 @@ def get_imagenet_transform(mode='training', normalize=True, patch_size=128):
     prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
 
     if normalize:
-        pass
-        # prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
-        # prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
+        prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
     return transforms.Compose(prep_trans_list)
 

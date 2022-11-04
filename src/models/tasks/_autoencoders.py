@@ -410,8 +410,8 @@ class Analyzer(nn.Module):
                                     bias=bias,
                                     padding_mode='reflect'))
 
-        # down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
-        #                               inplace=False))
+        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+                                      inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
 
@@ -457,7 +457,7 @@ class Synthesizer(nn.Module):
         up_track += [upsampling_op(channels_in=channels_net
                                    * channels_expansion**(i+1),
                                    channels_out=channels_net
-                                   * channels_expansion**i, 
+                                   * channels_expansion**i,
                                    groups=groups,
                                    batch_norm=batch_norm,
                                    dropout=dropout,
@@ -476,8 +476,7 @@ class Synthesizer(nn.Module):
                            dilation=1,
                            groups=channels_org if groups else 1,
                            bias=bias,
-                           padding_mode='reflect'),
-                nn.Hardtanh(min_val=0.0, max_val=1.0, inplace=False)
+                           padding_mode='reflect')
                 )
              for i in reversed(range(compression_level))])
 

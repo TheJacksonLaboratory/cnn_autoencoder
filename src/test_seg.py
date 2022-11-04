@@ -209,6 +209,8 @@ def test(forward_function, data, args):
         y = y.cpu().numpy().squeeze()
         t = t.cpu().numpy().squeeze()
 
+        print('Y stats', y.min(), y.max(), y.mean(), y.std())
+
         # Compute a threshold according to the prediction values
         seg_threshold = threshold_otsu(image=y)
 
