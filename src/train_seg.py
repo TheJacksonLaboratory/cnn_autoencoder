@@ -68,8 +68,8 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
-                prec = precision_score(t_flat, y_flat)
-                f1 = f1_score(t_flat, y_flat)
+                prec = precision_score(t_flat, y_flat, zero_division=0)
+                f1 = f1_score(t_flat, y_flat, zero_division=0)
                 q.set_description('Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
                     loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
@@ -78,8 +78,8 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
-                prec = precision_score(t_flat, y_flat)
-                f1 = f1_score(t_flat, y_flat)
+                prec = precision_score(t_flat, y_flat, zero_division=0)
+                f1 = f1_score(t_flat, y_flat, zero_division=0)
                 logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
                     i, len(data), loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
 
@@ -162,8 +162,8 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
-                prec = precision_score(t_flat, y_flat)
-                f1 = f1_score(t_flat, y_flat)
+                prec = precision_score(t_flat, y_flat, zero_division=0)
+                f1 = f1_score(t_flat, y_flat, zero_division=0)
                 q.set_description('Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
                     loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
@@ -172,8 +172,8 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
-                prec = precision_score(t_flat, y_flat)
-                f1 = f1_score(t_flat, y_flat)
+                prec = precision_score(t_flat, y_flat, zero_division=0)
+                f1 = f1_score(t_flat, y_flat, zero_division=0)
                 logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f})'.format(
                     step, i, len(train_data), loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
 
@@ -247,7 +247,8 @@ def setup_criteria(args):
     # Loss function
     if args.criterion == 'CE':
         if args.classes == 1:
-            criterion = nn.BCEWithLogitsLoss(reduction='none')
+            criterion = nn.BCEWithLogitsLoss(reduction='none',
+                                             pos_weight=torch.FloatTensor([args.pos_weight]))
         else:
             criterion = models.CrossEnropy2D()
 

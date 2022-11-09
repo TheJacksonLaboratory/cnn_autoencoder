@@ -324,9 +324,9 @@ class BottleNeck(nn.Module):
                                 * channels_expansion
                                 ** (compression_level - 1),
                                 channels_bn,
-                                kernel_size=3,
+                                kernel_size=1,
                                 stride=1,
-                                padding=1,
+                                padding=0,
                                 dilation=1,
                                 groups=(channels_net
                                         * channels_expansion
@@ -343,9 +343,9 @@ class BottleNeck(nn.Module):
         if dropout > 0.0:
             bottleneck.append(nn.Dropout2d(dropout))
 
-        bottleneck.append(nn.Conv2d(channels_bn, channels_bn, kernel_size=3,
+        bottleneck.append(nn.Conv2d(channels_bn, channels_bn, kernel_size=1,
                                     stride=1,
-                                    padding=1,
+                                    padding=0,
                                     dilation=1,
                                     groups=channels_bn if groups else 1,
                                     bias=bias,
@@ -431,16 +431,21 @@ class DecoderUNet(nn.Module):
                  autoencoder_channels_expansion=1,
                  use_bridge=False,
                  trainable_bridge=False,
+                 trainable_embedding=False,
                  **kwargs):
         super(DecoderUNet, self).__init__()
-        self.bottleneck_embedding = BottleNeck(autoencoder_channels_bn,
-                                               channels_bn,
-                                               compression_level,
-                                               1,
-                                               groups,
-                                               batch_norm,
-                                               dropout,
-                                               bias)
+        if trainable_embedding:
+            self.bottleneck_embedding = BottleNeck(autoencoder_channels_bn,
+                                                channels_bn,
+                                                compression_level,
+                                                1,
+                                                groups,
+                                                batch_norm,
+                                                dropout,
+                                                bias)
+        else:
+            self.bottleneck_embedding = nn.Identity()
+
         self.synthesis = Synthesizer(classes, channels_net, channels_bn,
                                      compression_level,
                                      channels_expansion,

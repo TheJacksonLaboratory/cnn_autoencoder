@@ -178,6 +178,8 @@ def add_model_args(parser, task, mode='training'):
         model_choices = SEG_MODELS
         if mode in ['training']:
             parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
+            parser.add_argument('-pos', '--pos-weight', type=float, dest='pos_weight', help='Weight of the positive class (in case of binary classification/segmentation)', default=1.0)
+            parser.add_argument('-trb', '--trainable-bridge', action='store_true', dest='trainable_bridge', help='Use trainable bridge layers')
 
     elif task == 'projection':
         model_choices = PROJ_MODELS
