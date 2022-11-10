@@ -251,6 +251,8 @@ def setup_criteria(args):
                                              pos_weight=torch.FloatTensor([args.pos_weight]))
         else:
             criterion = models.CrossEnropy2D()
+    elif args.criterion == 'CEW':
+        criterion = models.CrossEnropyDistance(**args.__dict__)
 
     else:
         raise ValueError('Criterion \'%s\' not supported' % args.criterion)

@@ -202,6 +202,8 @@ def add_criteria_args(parser, task, mode='training'):
         parser.add_argument('-dl', '--distl', type=float, nargs='+', dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
     elif task in ['classifier', 'segmentation']:
         criteria_choices = SEG_CRITERIONS
+        parser.add_argument('-ceww', '--cew-weight', type=float, dest='cew_weight', help=argparse.SUPPRESS, default=10.0)
+        parser.add_argument('-cews', '--cew-sigma', type=float, dest='cew_sigma', help=argparse.SUPPRESS, default=128.0)
     else:
         raise ValueError('Task %s not supported' % task)
 

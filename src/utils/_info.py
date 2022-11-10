@@ -16,7 +16,7 @@ CAE_CRITERIONS = ['RD',
                   'RMS-SSIM_MS_PA',
                   'RMS-SSIM_MS_PB']
 
-SEG_CRITERIONS = ['CE']
+SEG_CRITERIONS = ['CE', 'CEW']
 
 OPTIMIZERS = ['Adam', 'SGD']
 SCHEDULERS = ['None', 'ReduceOnPlateau', 'StepLR']

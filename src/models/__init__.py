@@ -13,7 +13,8 @@ from ._criterions import (RateDistortion,
                           StoppingCriterion,
                           EarlyStoppingPatience,
                           EarlyStoppingTarget,
-                          CrossEnropy2D)
+                          CrossEnropy2D,
+                          CrossEnropyDistance)
 
 from .tasks import (ColorEmbedding,
                     Analyzer,
