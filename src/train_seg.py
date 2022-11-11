@@ -63,8 +63,8 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            if args.print_log:
-                t_flat = t.numpy().flatten()
+            if i % 10 == 0 and args.print_log:
+                t_flat = t[:, -1, ...].numpy().flatten()
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
@@ -74,7 +74,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
                     loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
             elif i % max(1, int(0.1 * len(data))) == 0:
-                t_flat = t.numpy().flatten()
+                t_flat = t[:, -1, ...].numpy().flatten()
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
@@ -157,8 +157,8 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
             # End of training step
 
             # Log the training performance every 10% of the training set
-            if args.print_log:
-                t_flat = t.numpy().flatten()
+            if i % 10 == 0 and args.print_log:
+                t_flat = t[:, -1, ...].numpy().flatten()
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)
@@ -168,7 +168,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                     loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
             elif i % max(1, int(0.1 * len(train_data))) == 0:
-                t_flat = t.numpy().flatten()
+                t_flat = t[:, -1, ...].numpy().flatten()
                 y_flat = y.detach().cpu().numpy().flatten() > 0.5
                 acc = accuracy_score(t_flat, y_flat)
                 recall = recall_score(t_flat, y_flat, zero_division=0)

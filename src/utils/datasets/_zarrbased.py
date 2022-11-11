@@ -110,7 +110,7 @@ def image_to_zarr(arr_src, patch_size, source_format, data_group,
         if (compressed_input
            and comp_group in arr_src.keys()
            and 'compression_metadata' in arr_src[comp_group].attrs.keys()):
-            comp_metadata = arr_src['compressed'].attrs['compression_metadata']
+            comp_metadata = arr_src[comp_group].attrs['compression_metadata']
             compressed_channels = comp_metadata['compressed_channels']
             org_H = comp_metadata['height']
             org_W = comp_metadata['width']
@@ -336,7 +336,7 @@ def compute_grid(index, imgs_shapes, imgs_sizes, patch_size, padding, stride,
     return i, tl_y, tl_x
 
 
-def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
+def get_patch(z, roi, shape, tl_y, tl_x, patch_size, padding, stride,
               compression_level=0,
               data_axes="XYZCT"):
     """Get a squared region from an array z (numpy or zarr).
@@ -345,6 +345,8 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
     ----------
     z : dask.array.core.Array, numpy.array or zarr.array
         A full array from where to take a patch
+    roi : iterable of slices
+        The active ROI that is used from the array `z`
     shape : tuple of ints
         Shape of the original array. For compressed representation of images,
         the shape of the uncompressed image.
@@ -370,7 +372,7 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
     tl_x *= stride[1]
 
     a_ch, a_H, a_W = [data_axes.index(a) for a in 'CYX']
-    c = z.shape[a_ch]
+    c = (roi[a_ch].stop - roi[a_ch].start) // roi[a_ch].step
     H = shape[0]
     W = shape[1]
 
@@ -392,10 +394,10 @@ def get_patch(z, shape, tl_y, tl_x, patch_size, padding, stride,
     br_y = min(br_y_padding, H) // 2 ** compression_level
     br_x = min(br_x_padding, W) // 2 ** compression_level
 
-    slices = [slice(tl_x, br_x, 1),
-              slice(tl_y, br_y, 1),
+    slices = [slice(roi[a_W].start + tl_x, roi[a_W].start + br_x, 1),
+              slice(roi[a_H].start + tl_y, roi[a_H].start + br_y, 1),
               slice(None),
-              slice(0, c, 1) if c > 1 else slice(None),
+              roi[a_ch],
               slice(None)]
 
     slices = tuple([slices['XYZCT'.index(a)] for a in data_axes])
@@ -723,8 +725,7 @@ class ZarrDataset(Dataset):
                                      self._padding,
                                      self._stride)
         id, roi = self._rois_list[i]
-        patch = get_patch(self.z_list[id].get_orthogonal_selection(roi),
-                          self.imgs_shapes[id],
+        patch = get_patch(self.z_list[id], roi, self.imgs_shapes[id],
                           tl_y,
                           tl_x,
                           self._patch_size,
@@ -787,8 +788,7 @@ class LabeledZarrDataset(ZarrDataset):
                                      self._padding,
                                      self._stride)
         id, roi = self._rois_list[i]
-        patch = get_patch(self.z_list[id].get_orthogonal_selection(roi),
-                          self.imgs_shapes[id],
+        patch = get_patch(self.z_list[id], roi, self.imgs_shapes[id],
                           tl_y,
                           tl_x,
                           self._patch_size,
@@ -801,8 +801,7 @@ class LabeledZarrDataset(ZarrDataset):
             patch = self._transform(patch.transpose(1, 2, 0))
 
         id, roi = self._lab_rois_list[i]
-        target = get_patch(self._lab_list[id].get_orthogonal_selection(roi),
-                           self.imgs_shapes[id],
+        target = get_patch(self._lab_list[id], roi, self.imgs_shapes[id],
                            tl_y,
                            tl_x,
                            self._patch_size,

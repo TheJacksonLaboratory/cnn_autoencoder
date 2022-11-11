@@ -353,50 +353,12 @@ class CrossEnropy2D(nn.Module):
 
 
 class CrossEnropyDistance(nn.Module):
-    def __init__(self, cew_weight=10.0, cew_sigma=128.0, **kwargs):
+    def __init__(self, **kwargs):
         super(CrossEnropyDistance, self).__init__()
-        self._w_0 = cew_weight
-        self._sigma = cew_sigma
 
     def forward(self, y, t):
-        t_dist = []
-        for t_b in t:
-            t_lab, num_labs = label(t_b[0].numpy(), return_num=True,
-                                    connectivity=1)
-            if num_labs > 2:
-                all_dists = []
-                for lab in range(1, num_labs+1):
-                    curr_cc = np.ones_like(t_lab, dtype=bool)
-                    curr_cc[t_lab == lab] = False
-                    dist = distance_transform_edt(curr_cc)
-                    all_dists.append(dist)
-                all_dists = np.stack(all_dists, axis=0)
-
-            elif num_labs == 1:
-                curr_cc = np.ones_like(t_lab, dtype=bool)
-                curr_cc[t_lab == 1] = False
-                dist = distance_transform_edt(curr_cc)
-                all_dists = [dist,
-                             np.zeros_like(t_lab)]
-            else:
-                all_dists = [np.zeros((t.shape[2], t.shape[3]))] * 2
-
-            all_dists = np.stack(all_dists, axis=0)
-            all_dists.sort(axis=0)
-            t_dist.append(all_dists[:2])
-
-        # Compute the weight class map.
-        w_map = ((t.shape[2] * t.shape[3])
-                 / (t.sum(axis=(1, 2, 3)).reshape(-1, 1, 1, 1) + 1)) * t + 1
-
-        # Compute the distance-based weight map
-        t_dist = np.stack(t_dist)[:, :, np.newaxis, ...]
-        w = w_map + self._w_0 * np.exp(-(t_dist[:, 0] + t_dist[:, 1])**2
-                                       / (2 * self._sigma ** 2))
-        w = w.to(device=y.device, dtype=torch.float)
-
         # Weight the cross-entropy according to the weight map.
-        cew = w * F.binary_cross_entropy_with_logits(y, t, reduction='none')
+        cew = t[:, :1] * F.binary_cross_entropy_with_logits(y, t[:, 1:], reduction='none')
 
         return cew
 
