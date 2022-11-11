@@ -27,8 +27,8 @@ seg_model_types = {"UNetNoBridge": models.UNet,
                    "DecoderUNet": models.DecoderUNet}
 
 
-def valid(seg_model, data, criterion, logger, forward_fun=None, args=None):
-    """ Validation step.
+def valid(seg_model, data, criterion, logger, args, forward_fun=None):
+    """Validation step.
     Evaluates the performance of the network in its current state using the full set of validation elements.
 
     Parameters
@@ -41,6 +41,8 @@ def valid(seg_model, data, criterion, logger, forward_fun=None, args=None):
         The loss criterion to evaluate the network's performance
     logger: logger
         Current logger used to track thre model performance during training
+    args : Namespace
+        The input arguments passed at running time
     forward_fun: function
         Function used to perform the feed-forward step
 
@@ -64,15 +66,14 @@ def valid(seg_model, data, criterion, logger, forward_fun=None, args=None):
             sum_loss += loss.item()
 
             if args.print_log:
-                if i % 10 == 0:
-                    t_flat = t[:, -1, ...].numpy().flatten()
-                    y_flat = y.detach().cpu().numpy().flatten() > 0.5
-                    acc = accuracy_score(t_flat, y_flat)
-                    recall = recall_score(t_flat, y_flat, zero_division=0)
-                    prec = precision_score(t_flat, y_flat, zero_division=0)
-                    f1 = f1_score(t_flat, y_flat, zero_division=0)
-                    q.set_description('Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
-                        loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
+                t_flat = t[:, -1, ...].numpy().flatten()
+                y_flat = y.detach().cpu().numpy().flatten() > 0.5
+                acc = accuracy_score(t_flat, y_flat)
+                recall = recall_score(t_flat, y_flat, zero_division=0)
+                prec = precision_score(t_flat, y_flat, zero_division=0)
+                f1 = f1_score(t_flat, y_flat, zero_division=0)
+                q.set_description('Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                    loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
             elif i % max(1, int(0.1 * len(data))) == 0:
                 t_flat = t[:, -1, ...].numpy().flatten()
@@ -92,7 +93,7 @@ def valid(seg_model, data, criterion, logger, forward_fun=None, args=None):
 
 
 def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args, forward_fun=None):
-    """ Training loop by steps.
+    """Training loop by steps.
     This loop involves validation and network training checkpoint creation.
 
     Parameters
@@ -166,7 +167,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                     recall = recall_score(t_flat, y_flat, zero_division=0)
                     prec = precision_score(t_flat, y_flat, zero_division=0)
                     f1 = f1_score(t_flat, y_flat, zero_division=0)
-                    q.set_description('Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                    q.set_description('Training Loss {:0.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:0.4f}).'.format(
                         loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
             elif i % max(1, int(0.1 * len(train_data))) == 0:
@@ -176,7 +177,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 recall = recall_score(t_flat, y_flat, zero_division=0)
                 prec = precision_score(t_flat, y_flat, zero_division=0)
                 f1 = f1_score(t_flat, y_flat, zero_division=0)
-                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f})'.format(
+                logger.debug('\t[Step {:06d} {:04d}/{:04d}] Training Loss {:0.4f} ({:0.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:0.4f})'.format(
                     step, i, len(train_data), loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
 
             # Checkpoint step
@@ -186,7 +187,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(seg_model, valid_data, criterion, logger, forward_fun=forward_fun, args=args)
+                valid_loss = valid(seg_model, valid_data, criterion, logger, args, forward_fun=forward_fun)
 
                 seg_model.train()
 
@@ -194,7 +195,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
-                logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
+                logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:0.4f}, best validation loss {:0.4f}, learning rate {:e}, stopping criteria: {}'.format(
                     step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
                 )
 
@@ -223,7 +224,8 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
 
 
 def setup_criteria(args):
-    """ Setup a loss function for the neural network optimization, and training stopping criteria.
+    """Setup a loss function for the neural network optimization, and training
+    stopping criteria.
 
     Parameters
     ----------
@@ -267,7 +269,8 @@ def setup_criteria(args):
 
 
 def setup_optim(seg_model, args):
-    """ Setup a loss function for the neural network optimization, and training stopping criteria.
+    """Setup a loss function for the neural network optimization, and training
+    stopping criteria.
 
     Parameters
     ----------
@@ -285,7 +288,9 @@ def setup_optim(seg_model, args):
     """
 
     # By now, only the ADAM optimizer is used
-    optimizer = optim.Adam(params=seg_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(params=seg_model.parameters(),
+                           lr=args.learning_rate,
+                           weight_decay=args.weight_decay)
 
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
@@ -299,7 +304,7 @@ def setup_optim(seg_model, args):
 
 
 def resume_checkpoint(seg_model, optimizer, scheduler, checkpoint, gpu=True):
-    """ Resume training from a previous checkpoint
+    """Resume training from a previous checkpoint
 
     Parameters
     ----------
@@ -329,7 +334,7 @@ def resume_checkpoint(seg_model, optimizer, scheduler, checkpoint, gpu=True):
 
 
 def main(args):
-    """ Set up the training environment
+    """Set up the training environment
 
     Parameters
     ----------
@@ -371,7 +376,11 @@ def main(args):
 
     train_data, valid_data = utils.get_data(args)
 
-    train(seg_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args, forward_fun)
+    train(seg_model, train_data, valid_data, criterion, stopping_criteria,
+          optimizer,
+          scheduler,
+          args,
+          forward_fun)
 
 
 if __name__ == '__main__':

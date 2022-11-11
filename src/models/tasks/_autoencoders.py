@@ -442,7 +442,6 @@ class Synthesizer(nn.Module):
                  dropout=0.0,
                  bias=False,
                  use_residual=False,
-                 activation_layer=None,
                  **kwargs):
         super(Synthesizer, self).__init__()
 
@@ -469,8 +468,7 @@ class Synthesizer(nn.Module):
                                    groups=groups,
                                    batch_norm=batch_norm,
                                    dropout=dropout,
-                                   bias=bias,
-                                   activation_layer=activation_layer)
+                                   bias=bias)
                      for i in reversed(range(compression_level))]
 
         # Final color reconvertion
