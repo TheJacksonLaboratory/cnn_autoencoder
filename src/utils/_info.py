@@ -1,4 +1,4 @@
-VER = '0.5.6'
+VER = '0.5.7'
 SEG_VER = '0.5.6'
 
 DATASETS = ['MNIST', 'ImageNet', 'ImageNet.S3', 'Zarr', 'Histology']
@@ -23,6 +23,7 @@ SCHEDULERS = ['None', 'ReduceOnPlateau', 'StepLR']
 
 SEG_MODELS = ['DecoderUNet', 'UNet', 'UNetNoBridge']
 CAE_MODELS = ['MaskedAutoEncoder', 'AutoEncoder']
+
 PROJ_MODELS = ['KCCA']
 FE_MODELS = ['FactorizedEntropy', 'FactorizedEntropyLaplace']
 CLASS_MODELS = ['InceptionV3', 'MobileNet', 'ResNet', 'ViT']

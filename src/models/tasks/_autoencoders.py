@@ -1,10 +1,10 @@
-import logging 
-
 import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from ._GDN import GDN
 
 
 def initialize_weights(m):
@@ -161,7 +161,8 @@ class FactorizedEntropy(nn.Module):
 
 
 class FactorizedEntropyLaplace(nn.Module):
-    """ Univariate non-parametric density model to approximate the factorized entropy prior using a laplace distribution
+    """Univariate non-parametric density model to approximate the factorized
+    entropy prior using a laplace distribution
     """
     def __init__(self, **kwargs):
         super(FactorizedEntropyLaplace, self).__init__()
@@ -179,7 +180,10 @@ class FactorizedEntropyLaplace(nn.Module):
 
 
 class DownsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=False):
+    def __init__(self, channels_in, channels_out, groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=False):
         super(DownsamplingUnit, self).__init__()
 
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
@@ -192,7 +196,7 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(nn.LeakyReLU(inplace=False))
+        model.append(GDN(channels_in))
         model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3,
                                stride=2,
                                padding=1,
@@ -204,7 +208,7 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(nn.LeakyReLU(inplace=False))
+        model.append(GDN(channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -231,7 +235,7 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        res_model.append(nn.LeakyReLU(inplace=False))
+        res_model.append(GDN(channels_in))
         res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
                                    channels_in if groups else 1,
                                    bias=bias,
@@ -240,7 +244,7 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [nn.LeakyReLU(inplace=False)]
+        model = [GDN(channels_in)]
         model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1,
                                channels_in if groups else 1,
                                bias=bias,
@@ -249,7 +253,7 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(nn.LeakyReLU(inplace=False))
+        model.append(GDN(channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -265,7 +269,10 @@ class ResidualDownsamplingUnit(nn.Module):
 
 
 class UpsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False, batch_norm=False, dropout=0.0, bias=True):
+    def __init__(self, channels_in, channels_out, groups=False,
+                 batch_norm=False,
+                 dropout=0.0,
+                 bias=True):
         super(UpsamplingUnit, self).__init__()
 
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
@@ -278,7 +285,7 @@ class UpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(nn.LeakyReLU(inplace=False))
+        model.append(GDN(channels_in))
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=3,
                                         stride=2,
@@ -291,7 +298,7 @@ class UpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(nn.LeakyReLU(inplace=False))
+        model.append(GDN(channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -318,7 +325,7 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        res_model.append(nn.LeakyReLU(inplace=False))
+        res_model.append(GDN(channels_in))
         res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
                                    channels_in if groups else 1,
                                    bias=bias,
@@ -327,7 +334,7 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [nn.LeakyReLU(inplace=False)]
+        model = [GDN(channels_in)]
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=3,
                                         stride=2,
@@ -340,7 +347,7 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(nn.LeakyReLU(inplace=False))
+        model.append(GDN(channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -435,6 +442,7 @@ class Synthesizer(nn.Module):
                  dropout=0.0,
                  bias=False,
                  use_residual=False,
+                 activation_layer=None,
                  **kwargs):
         super(Synthesizer, self).__init__()
 
@@ -461,7 +469,8 @@ class Synthesizer(nn.Module):
                                    groups=groups,
                                    batch_norm=batch_norm,
                                    dropout=dropout,
-                                   bias=bias)
+                                   bias=bias,
+                                   activation_layer=activation_layer)
                      for i in reversed(range(compression_level))]
 
         # Final color reconvertion

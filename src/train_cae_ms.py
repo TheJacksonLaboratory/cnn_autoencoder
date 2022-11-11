@@ -1,11 +1,10 @@
 import logging
-import sys
+from functools import partial
 
 import torch
 import torch.nn as nn
 from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
-import math
 
 import models
 import utils
@@ -23,7 +22,6 @@ scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
 
 model_options = {"AutoEncoder": models.AutoEncoder,
                  "MaskedAutoEncoder": models.MaskedAutoEncoder}
-
 
 def forward_step_base(x, cae_model):
     x_r, y, p_y = cae_model(x)
