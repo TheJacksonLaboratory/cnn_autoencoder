@@ -27,7 +27,7 @@ seg_model_types = {"UNetNoBridge": models.UNet,
                    "DecoderUNet": models.DecoderUNet}
 
 
-def valid(seg_model, data, criterion, logger, forward_fun=None):
+def valid(seg_model, data, criterion, logger, forward_fun=None, args=None):
     """ Validation step.
     Evaluates the performance of the network in its current state using the full set of validation elements.
 
@@ -63,15 +63,16 @@ def valid(seg_model, data, criterion, logger, forward_fun=None):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            if i % 10 == 0 and args.print_log:
-                t_flat = t[:, -1, ...].numpy().flatten()
-                y_flat = y.detach().cpu().numpy().flatten() > 0.5
-                acc = accuracy_score(t_flat, y_flat)
-                recall = recall_score(t_flat, y_flat, zero_division=0)
-                prec = precision_score(t_flat, y_flat, zero_division=0)
-                f1 = f1_score(t_flat, y_flat, zero_division=0)
-                q.set_description('Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
-                    loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
+            if args.print_log:
+                if i % 10 == 0:
+                    t_flat = t[:, -1, ...].numpy().flatten()
+                    y_flat = y.detach().cpu().numpy().flatten() > 0.5
+                    acc = accuracy_score(t_flat, y_flat)
+                    recall = recall_score(t_flat, y_flat, zero_division=0)
+                    prec = precision_score(t_flat, y_flat, zero_division=0)
+                    f1 = f1_score(t_flat, y_flat, zero_division=0)
+                    q.set_description('Validation Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                        loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
             elif i % max(1, int(0.1 * len(data))) == 0:
                 t_flat = t[:, -1, ...].numpy().flatten()
@@ -157,15 +158,16 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
             # End of training step
 
             # Log the training performance every 10% of the training set
-            if i % 10 == 0 and args.print_log:
-                t_flat = t[:, -1, ...].numpy().flatten()
-                y_flat = y.detach().cpu().numpy().flatten() > 0.5
-                acc = accuracy_score(t_flat, y_flat)
-                recall = recall_score(t_flat, y_flat, zero_division=0)
-                prec = precision_score(t_flat, y_flat, zero_division=0)
-                f1 = f1_score(t_flat, y_flat, zero_division=0)
-                q.set_description('Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
-                    loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
+            if args.print_log:
+                if i % 100 == 0:
+                    t_flat = t[:, -1, ...].numpy().flatten()
+                    y_flat = y.detach().cpu().numpy().flatten() > 0.5
+                    acc = accuracy_score(t_flat, y_flat)
+                    recall = recall_score(t_flat, y_flat, zero_division=0)
+                    prec = precision_score(t_flat, y_flat, zero_division=0)
+                    f1 = f1_score(t_flat, y_flat, zero_division=0)
+                    q.set_description('Training Loss {:.4f} ({:.4f}: acc={:0.4f}, prec={:0.4f}, recall={:0.4f}, f1={:.4f}).'.format(
+                        loss.item(), sum_loss / (i+1), acc, prec, recall, f1))
                 q.update()
             elif i % max(1, int(0.1 * len(train_data))) == 0:
                 t_flat = t[:, -1, ...].numpy().flatten()
@@ -184,7 +186,7 @@ def train(seg_model, train_data, valid_data, criterion, stopping_criteria, optim
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(seg_model, valid_data, criterion, logger, forward_fun=forward_fun)
+                valid_loss = valid(seg_model, valid_data, criterion, logger, forward_fun=forward_fun, args=args)
 
                 seg_model.train()
 
