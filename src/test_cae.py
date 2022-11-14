@@ -109,10 +109,10 @@ def test_image(comp_model, decomp_model, input_filename,
                data_axes='TCZYX',
                seed=None,
                temp_output_filename="./temp.zarr",
-               min_range=min_range,
-               max_range=max_range,
-               range_offset=range_offset,
-               range_scale=range_scale):
+               min_range=0.0,
+               max_range=1.0,
+               range_offset=0.0,
+               range_scale=1.0):
 
     e_time = perf_counter()
     compress.compress_image(comp_model, input_filename, temp_output_filename,
