@@ -25,7 +25,11 @@ DECOMP_VERSION = '0.1.3'
 
 
 @dask.delayed
-def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False):
+def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
+               min_range=0.0,
+               max_range=1.0,
+               range_offset=0.0,
+               range_scale=1.0):
     y_q_t = transform(y_q.squeeze()).unsqueeze(0)
     with torch.set_grad_enabled(decomp_model.training):
         x_rec = decomp_model(y_q_t)
@@ -54,7 +58,9 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False):
         p_h = h - 2 * cl_offset
         p_w = w - 2 * cl_offset
 
-        x.clip_(0, 1)
+        x.clip_(min_range, max_range)
+        x.add_(range_offset)
+        x.mul_(range_scale)
         x.mul_(255)
         x.round_()
         x = x.to(torch.uint8).unsqueeze(2).numpy()
@@ -82,7 +88,11 @@ def decompress_image(decomp_model, input_filename, output_filename,
                      data_group='0/0',
                      data_axes='TCZYX',
                      seed=None,
-                     decomp_label='reconstruction'):
+                     decomp_label='reconstruction',
+                     min_range=0.0,
+                     max_range=1.0,
+                     range_offset=0.0,
+                     range_scale=1.0):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
     fn, rois = utils.parse_roi(input_filename, '.zarr')
     src_group = zarr.open(fn, mode='r')
@@ -206,7 +216,11 @@ def decompress_image(decomp_model, input_filename, output_filename,
             decomp_model,
             transform,
             max_offset,
-            compute_pyramids),
+            compute_pyramids,
+            min_range,
+            max_range,
+            range_offset,
+            range_scale),
         shape=(1, in_channels, 1, max_patch_size, rec_patch_size),
         meta=np.empty((), dtype=np.uint8))
         for ij in range(np_W * np_H)]
@@ -336,7 +350,6 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
         for color_layer in decomp_model.color_layers:
             color_layer[0].weight.data.copy_(state['decoder']['synthesis_track.4.weight'])
 
-
     decomp_model = nn.DataParallel(decomp_model)
     if use_gpu:
         decomp_model.cuda()
@@ -354,6 +367,17 @@ def decompress(args):
 
     # Open checkpoint from trained model state
     state = utils.load_state(args)
+
+    if state['args']['version'] in ['0.5.5']:
+        min_range = -1.0
+        max_range = 1.0
+        range_offset = 0.5
+        range_scale = 0.5
+    else:
+        min_range = 0.0
+        max_range = 1.0
+        range_offset = 0.0
+        range_scale = 1.0
 
     decomp_model = setup_network(state, rec_level=args.reconstruction_level,
                                  compute_pyramids=args.compute_pyramids,
@@ -397,7 +421,11 @@ def decompress(args):
                 data_axes=args.data_axes,
                 data_group=args.data_group,
                 seed=state['args']['seed'],
-                decomp_label=args.task_label_identifier)
+                decomp_label=args.task_label_identifier,
+                min_range=min_range,
+                max_range=max_range,
+                range_offset=range_offset,
+                range_scale=range_scale)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 
