@@ -433,7 +433,8 @@ def setup_optim(cae_model, args):
     return optimizer, scheduler
 
 
-def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
+def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
+                      resume_optimizer=False):
     """Resume training from a previous checkpoint
 
     Parameters
@@ -447,23 +448,33 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True):
     checkpoint : str
         Path to a previous training checkpoint
     gpu : bool
-        Wether use GPUs to train the neural network or not    
+        Wether use GPUs to train the neural network or not
+    resume_optimizer : bool
+        Wether use the optimizer from the checkpoint or not. This only works
+        for resume training rather than starting from pre-trained models
     """
 
     if not gpu:
-        checkpoint_state = torch.load(checkpoint, map_location=torch.device('cpu'))
+        checkpoint_state = torch.load(checkpoint,
+                                      map_location=torch.device('cpu'))
     else:
         checkpoint_state = torch.load(checkpoint)
 
     cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
     cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
-    cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'])
+    cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'],
+                                               strict=False)
+    if checkpoint_state['args']['version'] == '0.5.5':
+        for color_layer in cae_model.module.synthesis.color_layers:
+            color_layer[0].weight.data.copy_(
+                checkpoint_state['decoder']['synthesis_track.4.weight'])
     cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
 
-    optimizer.load_state_dict(checkpoint_state['optimizer'])
+    if resume_optimizer:
+        optimizer.load_state_dict(checkpoint_state['optimizer'])
 
-    if scheduler is not None and checkpoint_state['scheduler'] is not None:
-        scheduler.load_state_dict(checkpoint_state['scheduler'])
+        if scheduler is not None and checkpoint_state['scheduler'] is not None:
+            scheduler.load_state_dict(checkpoint_state['scheduler'])
 
 
 def main(args):
