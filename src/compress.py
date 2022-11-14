@@ -232,6 +232,9 @@ def setup_network(state, use_gpu=False):
     comp_model : torch.nn.Module
         The compressor model
     """
+    if state['args']['version'] in ['0.5.5', '0.5.6']:
+        state['args']['act_layer_type'] = 'LeakyReLU'
+
     embedding = models.ColorEmbedding(**state['args'])
     comp_model = models.Analyzer(**state['args'])
 

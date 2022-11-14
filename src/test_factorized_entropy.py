@@ -9,7 +9,7 @@ from models import FactorizedEntropy, FactorizedEntropyLaplace
 
 model_types = {
     'FactorizedEntropy': FactorizedEntropy,
-    'Laplacian': FactorizedEntropyLaplace    
+    'Laplacian': FactorizedEntropyLaplace,
 }
 
 
@@ -39,7 +39,7 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
             x_new.append(torch.randn([s, 1, 1, 1]) * var + mean)
         x_new = torch.cat(x_new, dim=0)
         x.append(x_new)
-    
+
     x = torch.cat(x, dim=1)
     x.clip_(0, 255)
     x = x - x.mean(dim=0).unsqueeze(dim=0)
@@ -50,11 +50,16 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
     # Use a Factorized entropy model to approximate the real distribution
     fact_entropy = model_types[args.model_type](channels_bn=channels, K=4, r=3)
     print(fact_entropy)
+    n_pars = 0
     for par in fact_entropy.parameters():
+        n_pars += 1
         print('\t', par.size())
 
     # Optimize the model parameters through stochastic gradient descent
-    optimizer = optim.SGD(params=fact_entropy.parameters(), lr=1e-3)
+    if n_pars:
+        optimizer = optim.SGD(params=fact_entropy.parameters(), lr=1e-3)
+    else:
+        optimizer = None
 
     # Generate a grid to show the approximated distribution every 10 epochs
     sample_idx = np.tile(np.random.permutation(size).reshape(-1, batch),(epochs, 1))
@@ -64,19 +69,20 @@ def test_factorized_entropy(size=1000, epochs=100, batch=10, channels=1, modes=2
     mean_loss = 0
 
     for s, s_i in enumerate(sample_idx):
+        if optimizer is not None:
+            optimizer.zero_grad()
 
-        optimizer.zero_grad()
-        
         fact_entropy.reset(x[s_i])
 
         p = fact_entropy(x[s_i] + 0.5) - fact_entropy(x[s_i] - 0.5) + 1e-10        
 
         loss = torch.mean(torch.sum(-torch.log2(p), dim=1))
 
-        loss.backward()
-        mean_loss += loss.item()
+        if optimizer is not None:
+            loss.backward()
+            optimizer.step()
 
-        optimizer.step()
+        mean_loss += loss.item()
 
         if s % (size // batch) == 0:
             # Plot the current approximation of the real distribution
@@ -106,7 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('-b', '--batch', type=int, dest='batch', help='Batch size', default=10)
     parser.add_argument('-c', '--channels', type=int, dest='channels', help='Number of channels for the compressed representation', default=3)
     parser.add_argument('-m', '--modes', type=int, dest='modes', help='Number of modes for the mix of gaussian distributions for each channel', default=2)
-    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Model to approximate the entropy model of the latent layer', choices=model_types.keys(), default=model_types.keys()[0])
+    parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Model to approximate the entropy model of the latent layer', choices=model_types.keys(), default=list(model_types.keys())[0])
 
     args = parser.parse_args()
 

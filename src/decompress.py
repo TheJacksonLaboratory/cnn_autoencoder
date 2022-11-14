@@ -320,7 +320,11 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
     channels_bn : int
         The number of channels in the compressed representation
     """
+    if state['args']['version'] in ['0.5.5', '0.5.6']:
+        state['args']['act_layer_type'] = 'LeakyReLU'
+
     compression_level = state['args']['compression_level']
+
     if compute_pyramids or rec_level < compression_level:
         decomp_model = models.SynthesizerInflate(rec_level=rec_level,
                                                  **state['args'])
@@ -331,6 +335,7 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
     if state['args']['version'] == '0.5.5':
         for color_layer in decomp_model.color_layers:
             color_layer[0].weight.data.copy_(state['decoder']['synthesis_track.4.weight'])
+
 
     decomp_model = nn.DataParallel(decomp_model)
     if use_gpu:

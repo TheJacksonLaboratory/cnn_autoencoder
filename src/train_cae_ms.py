@@ -23,6 +23,7 @@ scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
 model_options = {"AutoEncoder": models.AutoEncoder,
                  "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
+
 def forward_step_base(x, cae_model):
     x_r, y, p_y = cae_model(x)
     return x_r, y, p_y
