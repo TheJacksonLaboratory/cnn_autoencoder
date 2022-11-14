@@ -205,11 +205,6 @@ class DownsamplingUnit(nn.Module):
                  act_layer_type=None):
         super(DownsamplingUnit, self).__init__()
 
-        if act_layer_type is None:
-            act_layer_type = 'LeakyReLU'
-        
-        act_layer = _define_act_layer(act_layer_type, channels_in)
-
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
                            padding=1,
                            dilation=1,
@@ -220,7 +215,7 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(act_layer())
+        model.append(_define_act_layer(act_layer_type, channels_in))
         model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3,
                                stride=2,
                                padding=1,
@@ -232,7 +227,7 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(act_layer())
+        model.append(_define_act_layer(act_layer_type, channels_in))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
