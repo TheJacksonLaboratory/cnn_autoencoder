@@ -289,6 +289,9 @@ def setup_network(state_args, pretrained_model=None, autoencoder_model=None,
         # version of the feed-forward step.
         checkpoint_state = torch.load(autoencoder_model,
                                       map_location=None if use_gpu else 'cpu')
+        if checkpoint_state['args']['version'] in ['0.5.5', '0.5.6']:
+            checkpoint_state['args']['act_layer_type'] = 'LeakyReLU'
+
         dec_model = models.SynthesizerInflate(rec_level=-1, color=False,
                                               **checkpoint_state['args'])
         dec_model.load_state_dict(checkpoint_state['decoder'], strict=False)

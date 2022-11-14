@@ -11,6 +11,7 @@ from ._info import (DATASETS,
                     FE_MODELS,
                     CLASS_MODELS,
                     CAE_CRITERIONS,
+                    CAE_ACT_LAYERS,
                     SEG_CRITERIONS,
                     OPTIMIZERS,
                     SCHEDULERS,
@@ -80,6 +81,8 @@ def add_data_args(parser, task, mode='training'):
 
     if mode in ['trainig', 'test']:
         parser.add_argument('-md', '--mode-data', type=str, dest='data_mode', help='Mode of the dataset used to compute the metrics', choices=['train', 'va', 'test', 'all'], default='all')
+
+    parser.add_argument('-nor', '--normalize', action='store_true', dest='normalize', help='Normalize input to range [-1, 1]')
 
     if mode == 'training':
         parser.add_argument('-aed', '--elastic-def', action='store_true', dest='elastic_deformation', help='Use elastic deformation to augment the original data')
@@ -164,6 +167,7 @@ def add_model_args(parser, task, mode='training'):
             parser.add_argument('-nm', '--n-masks', type=int, dest='n_masks', help='Number of mask patches for the masked autoencoder training', default=5)
             parser.add_argument('-ms', '--masks-size', type=int, dest='masks_size', help='Standard size of the patched masks for the masked autoencoder training', default=4)
             parser.add_argument('-res', '--residual', action='store_true', dest='use_residual', help='Use residual blocks')
+            parser.add_argument('-act', '--activation', type=str, dest='act_layer_type', help='Type of activation layer used across all the architecture', choices=CAE_ACT_LAYERS, default=CAE_ACT_LAYERS[0])
 
     elif task == 'classifier':
         model_choices = CLASS_MODELS

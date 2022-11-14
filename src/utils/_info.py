@@ -16,6 +16,11 @@ CAE_CRITERIONS = ['RD',
                   'RMS-SSIM_MS_PA',
                   'RMS-SSIM_MS_PB']
 
+CAE_ACT_LAYERS = ['LeakyReLU',
+                  'ReLU',
+                  'GDN',
+                  'Identiy']
+
 SEG_CRITERIONS = ['CE', 'CEW']
 
 OPTIMIZERS = ['Adam', 'SGD']

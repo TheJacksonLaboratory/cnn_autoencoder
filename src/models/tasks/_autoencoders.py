@@ -7,6 +7,24 @@ import torch.nn.functional as F
 from ._GDN import GDN
 
 
+def _define_act_layer(act_layer_type, channels_in=None):
+    if act_layer_type is None:
+        act_layer_type = 'Identity'
+
+    if act_layer_type == 'Identity':
+        act_layer = nn.Identity()
+    elif act_layer_type == 'LeakyReLU':
+        act_layer = nn.LeakyReLU(inplace=False)
+    elif act_layer_type == 'ReLU':
+        act_layer = nn.ReLU(inplace=False)
+    elif act_layer_type == 'GDN':
+        act_layer = GDN(ch=channels_in)
+    else:
+        raise ValueError(f'Activation layer {act_layer_type} not supported')
+
+    return act_layer
+
+
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
         nn.init.xavier_uniform_(m.weight.data, gain=math.sqrt(2 / 1.01))
@@ -183,8 +201,14 @@ class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False,
                  batch_norm=False,
                  dropout=0.0,
-                 bias=False):
+                 bias=False,
+                 act_layer_type=None):
         super(DownsamplingUnit, self).__init__()
+
+        if act_layer_type is None:
+            act_layer_type = 'LeakyReLU'
+        
+        act_layer = _define_act_layer(act_layer_type, channels_in)
 
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
                            padding=1,
@@ -196,7 +220,7 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(GDN(channels_in))
+        model.append(act_layer())
         model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3,
                                stride=2,
                                padding=1,
@@ -208,7 +232,7 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(GDN(channels_out))
+        model.append(act_layer())
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -224,7 +248,8 @@ class ResidualDownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False,
                  batch_norm=False,
                  dropout=0.0,
-                 bias=False):
+                 bias=False,
+                 act_layer_type=None):
         super(ResidualDownsamplingUnit, self).__init__()
 
         res_model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
@@ -235,7 +260,7 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        res_model.append(GDN(channels_in))
+        res_model.append(_define_act_layer(act_layer_type, channels_in))
         res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
                                    channels_in if groups else 1,
                                    bias=bias,
@@ -244,7 +269,7 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [GDN(channels_in)]
+        model = [_define_act_layer(act_layer_type, channels_in)]
         model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1,
                                channels_in if groups else 1,
                                bias=bias,
@@ -253,7 +278,7 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(GDN(channels_out))
+        model.append(_define_act_layer(act_layer_type, channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -272,7 +297,8 @@ class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False,
                  batch_norm=False,
                  dropout=0.0,
-                 bias=True):
+                 bias=True,
+                 act_layer_type=None):
         super(UpsamplingUnit, self).__init__()
 
         model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
@@ -285,7 +311,7 @@ class UpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(GDN(channels_in))
+        model.append(_define_act_layer(act_layer_type, channels_in))
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=3,
                                         stride=2,
@@ -298,7 +324,7 @@ class UpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(GDN(channels_out))
+        model.append(_define_act_layer(act_layer_type, channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -314,7 +340,8 @@ class ResidualUpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, groups=False,
                  batch_norm=False,
                  dropout=0.0,
-                 bias=True):
+                 bias=True,
+                 act_layer_type=None):
         super(ResidualUpsamplingUnit, self).__init__()
 
         res_model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
@@ -325,7 +352,7 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        res_model.append(GDN(channels_in))
+        res_model.append(_define_act_layer(act_layer_type, channels_in))
         res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
                                    channels_in if groups else 1,
                                    bias=bias,
@@ -334,7 +361,7 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [GDN(channels_in)]
+        model = [_define_act_layer(act_layer_type, channels_in)]
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=3,
                                         stride=2,
@@ -347,7 +374,7 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(GDN(channels_out))
+        model.append(_define_act_layer(act_layer_type, channels_out))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -387,6 +414,7 @@ class Analyzer(nn.Module):
                  dropout=0.0,
                  bias=False,
                  use_residual=False,
+                 act_layer_type=None,
                  **kwargs):
         super(Analyzer, self).__init__()
 
@@ -402,7 +430,8 @@ class Analyzer(nn.Module):
                                       groups=groups,
                                       batch_norm=batch_norm,
                                       dropout=dropout,
-                                      bias=bias)
+                                      bias=bias,
+                                      act_layer_type=act_layer_type)
                       for i in range(compression_level)]
 
         # Final convolution in the analysis track
@@ -442,6 +471,7 @@ class Synthesizer(nn.Module):
                  dropout=0.0,
                  bias=False,
                  use_residual=False,
+                 act_layer_type=None,
                  **kwargs):
         super(Synthesizer, self).__init__()
 
@@ -468,7 +498,8 @@ class Synthesizer(nn.Module):
                                    groups=groups,
                                    batch_norm=batch_norm,
                                    dropout=dropout,
-                                   bias=bias)
+                                   bias=bias,
+                                   act_layer_type=act_layer_type)
                      for i in reversed(range(compression_level))]
 
         # Final color reconvertion
@@ -561,6 +592,7 @@ class AutoEncoder(nn.Module):
                  dropout=0.0,
                  bias=False,
                  use_residual=False,
+                 act_layer_type=None,
                  K=4,
                  r=3,
                  **kwargs):
@@ -580,7 +612,8 @@ class AutoEncoder(nn.Module):
                                  batch_norm=batch_norm,
                                  dropout=dropout,
                                  bias=bias,
-                                 use_residual=use_residual)
+                                 use_residual=use_residual,
+                                 act_layer_type=act_layer_type)
 
         self.synthesis = Synthesizer(channels_org=channels_org,
                                      channels_net=channels_net,
@@ -591,7 +624,8 @@ class AutoEncoder(nn.Module):
                                      batch_norm=batch_norm,
                                      dropout=dropout,
                                      bias=bias,
-                                     use_residual=use_residual)
+                                     use_residual=use_residual,
+                                     act_layer_type=act_layer_type)
 
         self.fact_entropy = FactorizedEntropy(channels_bn, K=K, r=r)
 
@@ -634,6 +668,7 @@ class MaskedAutoEncoder(nn.Module):
                  dropout=0.0,
                  bias=False,
                  use_residual=False,
+                 act_layer_type=None,
                  K=4,
                  r=3,
                  n_masks=1,
@@ -659,7 +694,9 @@ class MaskedAutoEncoder(nn.Module):
                                  batch_norm=batch_norm,
                                  dropout=dropout,
                                  bias=bias,
-                                 use_residual=use_residual)
+                                 use_residual=use_residual,
+                                 act_layer_type=act_layer_type)
+
         self.synthesis = Synthesizer(channels_org=channels_org,
                                      channels_net=channels_net,
                                      channels_bn=channels_bn,
@@ -669,7 +706,9 @@ class MaskedAutoEncoder(nn.Module):
                                      batch_norm=batch_norm,
                                      dropout=dropout,
                                      bias=bias,
-                                     use_residual=use_residual)
+                                     use_residual=use_residual,
+                                     act_layer_type=act_layer_type)
+
         self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
 
     def forward(self, x, synthesize_only=False):

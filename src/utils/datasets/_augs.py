@@ -104,7 +104,7 @@ class MergeLabels(object):
         return merged_labels
 
 
-def get_zarr_transform(data_mode='testing', normalize=True,
+def get_zarr_transform(data_mode='testing', normalize=False,
                        compressed_input=False,
                        rotation=False,
                        elastic_deformation=False,
@@ -126,16 +126,15 @@ def get_zarr_transform(data_mode='testing', normalize=True,
     if add_noise:
         prep_trans_list.append(AddGaussianNoise(0., 0.001))
 
-    prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
+    if data_mode == 'training':
+        prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
 
-    if normalize:
-        # The ToTensor transforms the input into the range [0, 1]. However, if
-        # the input is compressed, it is required in the range [-127.5, 127.5].
-        if compressed_input:
-            prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
-        else:
-            prep_trans_list.append(transforms.Normalize(mean=(0.5, 0.5, 0.5),
-                                                        std=(0.5, 0.5, 0.5)))
+    # The ToTensor transforms the input into the range [0, 1]. However, if
+    # the input is compressed, it is required in the range [-127.5, 127.5].
+    if compressed_input:
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
+    elif normalize:
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
     prep_trans = transforms.Compose(prep_trans_list)
 
@@ -166,19 +165,18 @@ def get_zarr_transform(data_mode='testing', normalize=True,
     return prep_trans, input_target_trans, target_trans
 
 
-def get_imagenet_transform(data_mode='training', normalize=True, patch_size=128):
+def get_imagenet_transform(data_mode='training', normalize=False, patch_size=128):
     prep_trans_list = [
          transforms.PILToTensor(),
          transforms.ConvertImageDtype(torch.float32)
         ]
 
-    if data_mode == 'training':
+    if 'train' in data_mode:
         prep_trans_list.append(AddGaussianNoise(0., 0.01))
-
-    prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
+        prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size),
+                                                     pad_if_needed=True))
 
     if normalize:
-        prep_trans_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
     return transforms.Compose(prep_trans_list)

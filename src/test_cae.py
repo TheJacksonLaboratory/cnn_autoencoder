@@ -17,9 +17,6 @@ import utils
 import compress
 import decompress
 
-model_options = {"AutoEncoder": models.AutoEncoder,
-                 "MaskedAutoEncoder": models.MaskedAutoEncoder}
-
 
 def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
     convert_x_time = perf_counter()
