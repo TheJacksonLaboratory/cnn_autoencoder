@@ -162,7 +162,6 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
         component = data_group
 
     with ProgressBar():
-        dask.config.set(scheduler='synchronous')
         y.to_zarr(output_filename, component=component, overwrite=True,
                   compressor=compressor)
 

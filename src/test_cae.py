@@ -108,7 +108,11 @@ def test_image(comp_model, decomp_model, input_filename,
                data_group='0/0',
                data_axes='TCZYX',
                seed=None,
-               temp_output_filename="./temp.zarr"):
+               temp_output_filename="./temp.zarr",
+               min_range=min_range,
+               max_range=max_range,
+               range_offset=range_offset,
+               range_scale=range_scale):
 
     e_time = perf_counter()
     compress.compress_image(comp_model, input_filename, temp_output_filename,
@@ -133,7 +137,11 @@ def test_image(comp_model, decomp_model, input_filename,
                                 data_group='compressed',
                                 data_axes='TCZYX',
                                 seed=seed,
-                                decomp_label='decompressed')
+                                decomp_label='decompressed',
+                                min_range=min_range,
+                                max_range=max_range,
+                                range_offset=range_offset,
+                                range_scale=range_scale)
     e_time = perf_counter() - e_time
 
     arr, arr_shape, _ = utils.image_to_zarr(input_filename.split(';')[0],
@@ -196,6 +204,18 @@ def test_cae(args):
     logger = logging.getLogger(args.mode + '_log')
 
     state = utils.load_state(args)
+
+    if state['args']['version'] in ['0.5.5']:
+        min_range = -1.0
+        max_range = 1.0
+        range_offset = 1.0
+        range_scale = 0.5
+    else:
+        min_range = 0.0
+        max_range = 1.0
+        range_offset = 0.0
+        range_scale = 1.0
+
     comp_model = compress.setup_network(state, args.use_gpu)
     decomp_model = decompress.setup_network(state, rec_level=-1,
                                             compute_pyramids=False,
@@ -237,7 +257,11 @@ def test_cae(args):
                                  data_axes=args.data_axes,
                                  data_group=args.data_group,
                                  seed=state['args']['seed'],
-                                 temp_output_filename=args.output_dir)
+                                 temp_output_filename=args.output_dir,
+                                 min_range=min_range,
+                                 max_range=max_range,
+                                 range_offset=range_offset,
+                                 range_scale=range_scale)
 
         avg_metrics = ''
         for m_k in all_metrics_stats.keys():

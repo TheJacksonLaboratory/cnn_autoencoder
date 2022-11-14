@@ -371,7 +371,7 @@ def decompress(args):
     if state['args']['version'] in ['0.5.5']:
         min_range = -1.0
         max_range = 1.0
-        range_offset = 0.5
+        range_offset = 1.0
         range_scale = 0.5
     else:
         min_range = 0.0
