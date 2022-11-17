@@ -11,12 +11,23 @@ import torch.nn.functional as F
 
 
 class RateDistortion(nn.Module):
-    def __init__(self, distorsion_lambda=0.01, **kwargs):
+    def __init__(self, distorsion_lambda=0.01, normalize=False, **kwargs):
         super(RateDistortion, self).__init__()
         if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
             self._distorsion_lambda = distorsion_lambda[0]
         else:
             self._distorsion_lambda = distorsion_lambda
+
+        if normalize:
+            self._min_range = -1.0
+            self._max_range = 1.0
+            self._range_scale = 0.5
+            self._range_offset = 0.5
+        else:
+            self._min_range = 0.0
+            self._max_range = 1.0
+            self._range_scale = 1.0
+            self._range_offset = 0.0
 
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         dist, rate = self.compute_distortion(x, y, x_r, p_y, net)
@@ -24,7 +35,12 @@ class RateDistortion(nn.Module):
 
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
-        dist = F.mse_loss(x_r, x.to(x_r.device))
+        dist = F.mse_loss(
+            255.0 * (self._range_scale * torch.clip(x_r, self._min_range,
+                                                    self._max_range)
+                     + self._range_offset),
+            255.0 * (self._range_sclae * x.to(x_r.device)
+                     + self._range_offset))
 
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
@@ -33,7 +49,8 @@ class RateDistortion(nn.Module):
 
 
 class RateDistortionPyramid(nn.Module):
-    def __init__(self, distorsion_lambda=0.01, **kwargs):
+    def __init__(self, distorsion_lambda=0.01, normalize=False,
+                 **kwargs):
         super(RateDistortionPyramid, self).__init__()
         if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
             self._distorsion_lambda = distorsion_lambda[0]
@@ -48,6 +65,17 @@ class RateDistortionPyramid(nn.Module):
                [1, 4, 6, 4, 1]
                ]]], requires_grad=False) / 256.0
 
+        if normalize:
+            self._min_range = -1.0
+            self._max_range = 1.0
+            self._range_scale = 0.5
+            self._range_offset = 0.5
+        else:
+            self._min_range = 0.0
+            self._max_range = 1.0
+            self._range_scale = 1.0
+            self._range_offset = 0.0
+
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         if isinstance(self._distorsion_lambda, float):
             distorsion_lambda = [self._distorsion_lambda] * len(x_r)
@@ -55,7 +83,8 @@ class RateDistortionPyramid(nn.Module):
             distorsion_lambda = self._distorsion_lambda
 
         dist, rate = self.compute_distortion(x, y, x_r, p_y, net)
-        dist = reduce(lambda d1, d2: d1+d2, map(lambda dl: dl[0] * dl[1], zip(dist, distorsion_lambda)), 0)
+        dist = reduce(lambda d1, d2: d1+d2, map(lambda dl: dl[0] * dl[1],
+                      zip(dist, distorsion_lambda)), 0)
 
         return dist + rate, None
 
@@ -64,10 +93,20 @@ class RateDistortionPyramid(nn.Module):
         dist = []
         x_org = x.clone().to(x_r[0].device)
         for x_r_s in x_r:
-            dist.append(F.mse_loss(x_r_s, x_org))
+            dist.append(F.mse_loss(
+                255.0 * (self._range_scale * torch.clip(x_r_s, self._min_range,
+                                                        self._max_range)
+                         + self._range_offset),
+                255.0 * (self._range_scale * x_org + self._range_offset)))
+
             with torch.no_grad():
-                x_org = F.conv2d(x_org, self._pyramid_downsample_kernel.repeat(x.size(1), 1, 1, 1).to(x_r_s.device), padding=2, groups=x.size(1))
-                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear', align_corners=False)
+                x_org = F.conv2d(x_org,
+                                 self._pyramid_downsample_kernel.repeat(
+                                    x.size(1), 1, 1, 1).to(x_r_s.device),
+                                 padding=2,
+                                 groups=x.size(1))
+                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear',
+                                      align_corners=False)
 
         # Rate of compression:
         rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
@@ -75,7 +114,8 @@ class RateDistortionPyramid(nn.Module):
 
 
 class MultiScaleSSIM(nn.Module):
-    def __init__(self, patch_size, distorsion_lambda=0.01, **kwargs):
+    def __init__(self, patch_size, distorsion_lambda=0.01, normalize=False,
+                 **kwargs):
         super(MultiScaleSSIM, self).__init__()
         if isinstance(distorsion_lambda, list):
             distorsion_lambda = distorsion_lambda[0]
@@ -93,14 +133,30 @@ class MultiScaleSSIM(nn.Module):
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
             normalize='relu')
 
+        if normalize:
+            self._min_range = -1.0
+            self._max_range = 1.0
+            self._range_scale = 0.5
+            self._range_offset = 0.5
+        else:
+            self._min_range = 0.0
+            self._max_range = 1.0
+            self._range_scale = 1.0
+            self._range_offset = 0.0
+
     def forward(self, x=None, y=None, x_r=None, p_y=None, net=None):
         ms_ssim, rate = self.compute_distortion(x, y, x_r, p_y, net)
         return self._distorsion_lambda * ms_ssim + rate, None
 
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
-        ms_ssim = 1. - self.msssim.to(x_r.device)(255.0 * self.padding(x_r),
-                                                  255.0 * self.padding(x.to(x_r.device)))
+        ms_ssim = 1. - self.msssim.to(x_r.device)(
+            255.0 * (self._range_scale * torch.clip(self.padding(x_r),
+                                                    self._min_range,
+                                                    self._max_range)
+                     + self._range_offset),
+            255.0 * (self._range_scale * self.padding(x.to(x_r.device))
+                     + self._range_offset))
 
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))
@@ -110,7 +166,8 @@ class MultiScaleSSIM(nn.Module):
 
 
 class MultiScaleSSIMPyramid(nn.Module):
-    def __init__(self, patch_size, distorsion_lambda=0.01, **kwargs):
+    def __init__(self, patch_size, distorsion_lambda=0.01, normalize=False,
+                 **kwargs):
         super(MultiScaleSSIMPyramid, self).__init__()
         if not isinstance(distorsion_lambda, list):
             distorsion_lambda = [distorsion_lambda]
@@ -134,6 +191,17 @@ class MultiScaleSSIMPyramid(nn.Module):
                     data_range=255,
                     betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
                     normalize='relu'))
+
+        if normalize:
+            self._min_range = -1.0
+            self._max_range = 1.0
+            self._range_scale = 0.5
+            self._range_offset = 0.5
+        else:
+            self._min_range = 0.0
+            self._max_range = 1.0
+            self._range_scale = 1.0
+            self._range_offset = 0.0
 
         self._distorsion_lambda = distorsion_lambda
 
@@ -165,8 +233,13 @@ class MultiScaleSSIMPyramid(nn.Module):
         for x_r_s, pad_fn, msssim_s in zip(x_r[:-1],
                                            self.padding[:-1],
                                            self.msssim_pyr[:-1]):
-            ms_ssim_pyr.append(1. - msssim_s.to(x_r_s.device)(255.0 * pad_fn(x_r_s),
-                                                              255.0 * pad_fn(x_org)))
+            ms_ssim_pyr.append(1. - msssim_s.to(x_r_s.device)(
+                255.0 * (self._range_scale
+                         * torch.clip(pad_fn(x_r_s), self._min_range,
+                                      self._max_range)
+                         + self._range_offset),
+                255.0 * (self._range_scale * pad_fn(x_org)
+                         + self._range_offset)))
             with torch.no_grad():
                 x_org = F.conv2d(
                     x_org,
@@ -194,7 +267,8 @@ class PenaltyA(nn.Module):
         super(PenaltyA, self).__init__()
 
     def compute_penalty(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        # Compute A, the approximation to the variance introduced during the analysis track
+        # Compute A, the approximation to the variance introduced during the
+        # analysis track
         with torch.no_grad():
             x_mean = torch.mean(x, dim=1)
             x_var = torch.var(x_mean, dim=(1, 2)).unsqueeze(dim=1) + 1e-10
@@ -216,7 +290,8 @@ class PenaltyB(nn.Module):
         super(PenaltyB, self).__init__()
 
     def compute_penalty(self, x=None, y=None, x_r=None, p_y=None, net=None):
-        # Compute B, the approximation to the variance introduced during the quntization and synthesis track
+        # Compute B, the approximation to the variance introduced during the
+        # quantization and synthesis track
         _, K, H, W = y.size()
 
         with torch.no_grad():

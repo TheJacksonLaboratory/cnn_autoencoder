@@ -1,5 +1,4 @@
 import logging
-from functools import partial
 
 import torch
 import torch.nn as nn
@@ -420,7 +419,9 @@ def setup_optim(cae_model, args):
 
     # By now, only the ADAM optimizer is used
     optim_algo = optimization_algorithms[args.optim_algo]
-    optimizer = optim_algo(params=cae_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = optim_algo(params=cae_model.parameters(),
+                           lr=args.learning_rate,
+                           weight_decay=args.weight_decay)
 
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':

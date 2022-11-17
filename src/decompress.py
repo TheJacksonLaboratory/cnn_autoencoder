@@ -59,8 +59,8 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
         p_w = w - 2 * cl_offset
 
         x.clip_(min_range, max_range)
-        x.add_(range_offset)
         x.mul_(range_scale)
+        x.add_(range_offset)
         x.mul_(255)
         x.round_()
         x = x.to(torch.uint8).unsqueeze(2).numpy()
@@ -368,16 +368,16 @@ def decompress(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    if state['args']['version'] in ['0.5.5']:
+    if state['args']['normalize']:
         min_range = -1.0
         max_range = 1.0
-        range_offset = 1.0
         range_scale = 0.5
+        range_offset = 0.5
     else:
         min_range = 0.0
         max_range = 1.0
-        range_offset = 0.0
         range_scale = 1.0
+        range_offset = 0.0
 
     decomp_model = setup_network(state, rec_level=args.reconstruction_level,
                                  compute_pyramids=args.compute_pyramids,
