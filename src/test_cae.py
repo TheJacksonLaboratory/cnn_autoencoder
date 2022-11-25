@@ -205,20 +205,16 @@ def test_cae(args):
 
     state = utils.load_state(args)
 
-    min_range = -1.0
-    max_range = 1.0
-    range_offset = 1.0
-    range_scale = 0.5
-    # if state['args']['version'] in ['0.5.5']:
-    #     min_range = -1.0
-    #     max_range = 1.0
-    #     range_offset = 1.0
-    #     range_scale = 0.5
-    # else:
-    #     min_range = 0.0
-    #     max_range = 1.0
-    #     range_offset = 0.0
-    #     range_scale = 1.0
+    if state['args']['normalize']:
+        min_range = -1.0
+        max_range = 1.0
+        range_scale = 0.5
+        range_offset = 0.5
+    else:
+        min_range = 0.0
+        max_range = 1.0
+        range_scale = 1.0
+        range_offset = 0.0
 
     comp_model = compress.setup_network(state, args.use_gpu)
     decomp_model = decompress.setup_network(state, rec_level=-1,

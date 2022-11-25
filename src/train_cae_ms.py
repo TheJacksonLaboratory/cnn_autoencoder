@@ -158,7 +158,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 loss.backward()
 
                 # Clip the gradients to prevent from exploding gradients problems
-                nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=50.0)
+                nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=1.0)
                 optimizer.step()
                 step_loss = loss.item()
 

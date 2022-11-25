@@ -43,7 +43,8 @@ class RateDistortion(nn.Module):
                      + self._range_offset))
 
         # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        rate = (torch.sum(-torch.log2(p_y))
+                / (x.size(0) * x.size(2) * x.size(3)))
 
         return dist, rate
 
@@ -109,7 +110,8 @@ class RateDistortionPyramid(nn.Module):
                                       align_corners=False)
 
         # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        rate = (torch.sum(-torch.log2(p_y))
+                / (x.size(0) * x.size(2) * x.size(3)))
         return dist, rate
 
 
@@ -257,7 +259,8 @@ class MultiScaleSSIMPyramid(nn.Module):
                                                     self.padding[-1](x_org)))
 
         # Rate of compression:
-        rate = torch.sum(-torch.log2(p_y)) / (x.size(0) * x.size(2) * x.size(3))
+        rate = (torch.sum(-torch.log2(p_y))
+                / (x.size(0) * x.size(2) * x.size(3)))
 
         return ms_ssim_pyr, rate
 

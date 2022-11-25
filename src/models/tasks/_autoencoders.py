@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from ._GDN import GDN
 
 
-def _define_act_layer(act_layer_type, channels_in=None):
+def _define_act_layer(act_layer_type, channels_in=None, track='analysis'):
     if act_layer_type is None:
         act_layer_type = 'Identity'
 
@@ -18,7 +18,7 @@ def _define_act_layer(act_layer_type, channels_in=None):
     elif act_layer_type == 'ReLU':
         act_layer = nn.ReLU(inplace=False)
     elif act_layer_type == 'GDN':
-        act_layer = GDN(ch=channels_in)
+        act_layer = GDN(ch=channels_in, inverse=track=='synthesis')
     else:
         raise ValueError(f'Activation layer {act_layer_type} not supported')
 
@@ -109,13 +109,13 @@ class FactorizedEntropyLayer(nn.Module):
         self._channels = channels_bn
 
         weights_scale = 10.0 ** (1 / (K + 1))
-        weights_scale = 1 / weights_scale / K
+        weights_scale = np.log(np.expm1(1 / weights_scale / r))
 
         # The non-parametric density model is initialized with random normal
         # distributed weights.
         self._H = nn.Parameter(
-            nn.init.normal_(
-                torch.empty(channels_bn * r, d, 1, 1), weights_scale, 0.01))
+            nn.init.constant_(
+                torch.empty(channels_bn * r, d, 1, 1), weights_scale))
         self._b = nn.Parameter(
             nn.init.uniform_(torch.empty(channels_bn * r), -0.5, 0.5))
         self._a = nn.Parameter(torch.zeros(1, channels_bn * r, 1, 1))
@@ -152,16 +152,15 @@ class FactorizedEntropy(nn.Module):
         # The non-parametric density model is initialized with random normal
         # distributed weights.
         weights_scale = 10.0 ** (1 / (K + 1))
-        weights_scale = 1 / weights_scale / K
+        weights_scale = np.log(np.expm1(1 / weights_scale / r[-1]))
 
         self._layers = nn.Sequential(
             *[FactorizedEntropyLayer(channels_bn=channels_bn, K=K, d=d_k,
                                      r=r_k)
               for d_k, r_k in zip(d[:-1], r[:-1])])
         self._H = nn.Parameter(
-            nn.init.normal_(
-                torch.empty(channels_bn * r[-1], d[-1], 1, 1),
-                weights_scale, 0.01))
+            nn.init.constant_(torch.empty(channels_bn * r[-1], d[-1], 1, 1),
+                              weights_scale))
         self._b = nn.Parameter(
             nn.init.uniform_(torch.empty(channels_bn * r[-1]), -0.5, 0.5))
 
@@ -205,17 +204,22 @@ class DownsamplingUnit(nn.Module):
                  act_layer_type=None):
         super(DownsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
-                           padding=1,
-                           dilation=1,
-                           groups=channels_in if groups else 1,
-                           bias=bias,
-                           padding_mode='reflect')]
+        model = []
+        if act_layer_type not in ['GDN']:
+            model.append(nn.Conv2d(channels_in, channels_in, kernel_size=3,
+                                   stride=1,
+                                   padding=1,
+                                   dilation=1,
+                                   groups=channels_in if groups else 1,
+                                   bias=bias,
+                                   padding_mode='reflect'))
 
-        if batch_norm:
-            model.append(nn.BatchNorm2d(channels_in, affine=True))
+            if batch_norm:
+                model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_in))
+            model.append(_define_act_layer(act_layer_type, channels_in,
+                                           track='analysis'))
+
         model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3,
                                stride=2,
                                padding=1,
@@ -227,7 +231,8 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_in))
+        model.append(_define_act_layer(act_layer_type, channels_in,
+                                       track='analysis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -247,15 +252,20 @@ class ResidualDownsamplingUnit(nn.Module):
                  act_layer_type=None):
         super(ResidualDownsamplingUnit, self).__init__()
 
-        res_model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
-                               channels_in if groups else 1,
-                               bias=bias,
-                               padding_mode='reflect')]
+        res_model = []
 
-        if batch_norm:
-            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+        if act_layer_type not in ['GDN']:
+            res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
+                                       channels_in if groups else 1,
+                                       bias=bias,
+                                       padding_mode='reflect'))
 
-        res_model.append(_define_act_layer(act_layer_type, channels_in))
+            if batch_norm:
+                res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+            res_model.append(_define_act_layer(act_layer_type, channels_in,
+                                               track='analysis'))
+
         res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
                                    channels_in if groups else 1,
                                    bias=bias,
@@ -264,7 +274,8 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [_define_act_layer(act_layer_type, channels_in)]
+        model = [_define_act_layer(act_layer_type, channels_in,
+                                   track='analysis')]
         model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1,
                                channels_in if groups else 1,
                                bias=bias,
@@ -273,7 +284,8 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_out))
+        model.append(_define_act_layer(act_layer_type, channels_out,
+                                       track='analysis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -296,17 +308,23 @@ class UpsamplingUnit(nn.Module):
                  act_layer_type=None):
         super(UpsamplingUnit, self).__init__()
 
-        model = [nn.Conv2d(channels_in, channels_in, kernel_size=3, stride=1,
-                           padding=1,
-                           dilation=1,
-                           groups=channels_in if groups else 1,
-                           bias=bias,
-                           padding_mode='reflect')]
+        model = []
 
-        if batch_norm:
-            model.append(nn.BatchNorm2d(channels_in, affine=True))
+        if act_layer_type not in ['GDN']:
+            model.append(nn.Conv2d(channels_in, channels_in, kernel_size=3,\
+                                   stride=1,
+                                   padding=1,
+                                   dilation=1,
+                                   groups=channels_in if groups else 1,
+                                   bias=bias,
+                                   padding_mode='reflect'))
 
-        model.append(_define_act_layer(act_layer_type, channels_in))
+            if batch_norm:
+                model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+            model.append(_define_act_layer(act_layer_type, channels_in,
+                                        track='synthesis'))
+
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=3,
                                         stride=2,
@@ -319,7 +337,8 @@ class UpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_out))
+        model.append(_define_act_layer(act_layer_type, channels_out,
+                                       track='synthesis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -339,15 +358,20 @@ class ResidualUpsamplingUnit(nn.Module):
                  act_layer_type=None):
         super(ResidualUpsamplingUnit, self).__init__()
 
-        res_model = [nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
-                               channels_in if groups else 1,
-                               bias=bias,
-                               padding_mode='reflect')]
+        res_model = []
 
-        if batch_norm:
-            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+        if act_layer_type not in ['GDN']:
+            res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
+                                       channels_in if groups else 1,
+                                       bias=bias,
+                                       padding_mode='reflect'))
 
-        res_model.append(_define_act_layer(act_layer_type, channels_in))
+            if batch_norm:
+                res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+            res_model.append(_define_act_layer(act_layer_type, channels_in,
+                                               track='synthesis'))
+
         res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
                                    channels_in if groups else 1,
                                    bias=bias,
@@ -356,7 +380,8 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [_define_act_layer(act_layer_type, channels_in)]
+        model = [_define_act_layer(act_layer_type, channels_in,
+                                   track='synthesis')]
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=3,
                                         stride=2,
@@ -369,7 +394,8 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_out))
+        model.append(_define_act_layer(act_layer_type, channels_out,
+                                       track='synthesis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))

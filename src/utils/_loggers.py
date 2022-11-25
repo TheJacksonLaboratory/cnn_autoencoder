@@ -160,6 +160,7 @@ def load_state(args):
         save_fn = args.trained_model
 
     if not os.path.exists(save_fn):
+        raise ValueError('The checkpoint %s does not exist' % save_fn)
         return None
 
     if not torch.cuda.is_available() or not args.gpu:
