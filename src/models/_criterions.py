@@ -1,9 +1,5 @@
 from functools import reduce
 
-import numpy as np
-from scipy.ndimage import distance_transform_edt
-from skimage.measure import label
-
 import torchmetrics
 import torch
 import torch.nn as nn
@@ -35,12 +31,9 @@ class RateDistortion(nn.Module):
 
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
-        dist = F.mse_loss(
-            255.0 * (self._range_scale * torch.clip(x_r, self._min_range,
-                                                    self._max_range)
-                     + self._range_offset),
-            255.0 * (self._range_sclae * x.to(x_r.device)
-                     + self._range_offset))
+        dist = 255.0 ** 2 * F.mse_loss(
+            self._range_scale * x_r + self._range_offset,
+            self._range_scale * x.to(x_r.device) + self._range_offset)
 
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))
@@ -53,10 +46,10 @@ class RateDistortionPyramid(nn.Module):
     def __init__(self, distorsion_lambda=0.01, normalize=False,
                  **kwargs):
         super(RateDistortionPyramid, self).__init__()
-        if isinstance(distorsion_lambda, list) and len(distorsion_lambda) == 1:
-            self._distorsion_lambda = distorsion_lambda[0]
-        else:
-            self._distorsion_lambda = distorsion_lambda
+        if not isinstance(distorsion_lambda, list):
+            distorsion_lambda = [distorsion_lambda]
+
+        self._distorsion_lambda = distorsion_lambda
 
         self._pyramid_downsample_kernel = torch.tensor(
             [[[[1, 4, 6, 4, 1],
@@ -93,21 +86,21 @@ class RateDistortionPyramid(nn.Module):
         # Distortion
         dist = []
         x_org = x.clone().to(x_r[0].device)
-        for x_r_s in x_r:
-            dist.append(F.mse_loss(
-                255.0 * (self._range_scale * torch.clip(x_r_s, self._min_range,
-                                                        self._max_range)
-                         + self._range_offset),
-                255.0 * (self._range_scale * x_org + self._range_offset)))
+        for s, x_r_s in enumerate(x_r):
+            dist.append(255.0 **2 * F.mse_loss(
+                self._range_scale * x_r_s + self._range_offset,
+                self._range_scale * x_org + self._range_offset))
 
-            with torch.no_grad():
-                x_org = F.conv2d(x_org,
-                                 self._pyramid_downsample_kernel.repeat(
-                                    x.size(1), 1, 1, 1).to(x_r_s.device),
-                                 padding=2,
-                                 groups=x.size(1))
-                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear',
-                                      align_corners=False)
+            if s < len(x_r) - 1:
+                with torch.no_grad():
+                    x_org = F.conv2d(x_org,
+                                     self._pyramid_downsample_kernel.repeat(
+                                        x.size(1), 1, 1, 1).to(x_r_s.device),
+                                     padding=2,
+                                     groups=x.size(1))
+                    x_org = F.interpolate(x_org, scale_factor=0.5,
+                                          mode='bilinear',
+                                          align_corners=False)
 
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))
@@ -153,12 +146,9 @@ class MultiScaleSSIM(nn.Module):
     def compute_distortion(self, x=None, y=None, x_r=None, p_y=None, net=None):
         # Distortion
         ms_ssim = 1. - self.msssim.to(x_r.device)(
-            255.0 * (self._range_scale * torch.clip(self.padding(x_r),
-                                                    self._min_range,
-                                                    self._max_range)
-                     + self._range_offset),
-            255.0 * (self._range_scale * self.padding(x.to(x_r.device))
-                     + self._range_offset))
+            self._range_scale * self.padding(x_r) + self._range_offset,
+            self._range_scale * self.padding(x.to(x_r.device))
+            + self._range_offset)
 
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))
@@ -232,31 +222,25 @@ class MultiScaleSSIMPyramid(nn.Module):
         # Distortion
         ms_ssim_pyr = []
         x_org = x.clone().to(x_r[0].device)
-        for x_r_s, pad_fn, msssim_s in zip(x_r[:-1],
-                                           self.padding[:-1],
-                                           self.msssim_pyr[:-1]):
+        for s, (x_r_s, pad_fn, msssim_s) in enumerate(zip(x_r, self.padding,
+                                                          self.msssim_pyr)):
             ms_ssim_pyr.append(1. - msssim_s.to(x_r_s.device)(
-                255.0 * (self._range_scale
-                         * torch.clip(pad_fn(x_r_s), self._min_range,
-                                      self._max_range)
-                         + self._range_offset),
-                255.0 * (self._range_scale * pad_fn(x_org)
-                         + self._range_offset)))
-            with torch.no_grad():
-                x_org = F.conv2d(
-                    x_org,
-                    self._pyramid_downsample_kernel.repeat(x.size(1),
-                                                           1,
-                                                           1,
-                                                           1).to(x_r_s.device),
-                    padding=2,
-                    groups=x.size(1))
-                x_org = F.interpolate(x_org, scale_factor=0.5, mode='bilinear',
-                                      align_corners=False)
-
-        self.msssim_pyr[-1] = self.msssim_pyr[-1].to(x_r[0].device)
-        ms_ssim_pyr.append(1. - self.msssim_pyr[-1](self.padding[-1](x_r[-1]),
-                                                    self.padding[-1](x_org)))
+                self._range_scale * pad_fn(x_r_s) + self._range_offset,
+                self._range_scale * pad_fn(x_org) + self._range_offset))
+            if s < len(x_r) - 1:
+                with torch.no_grad():
+                    x_org = F.conv2d(
+                        x_org,
+                        self._pyramid_downsample_kernel.repeat(
+                            x.size(1),
+                            1,
+                            1,
+                            1).to(x_r_s.device),
+                        padding=2,
+                        groups=x.size(1))
+                    x_org = F.interpolate(x_org, scale_factor=0.5,
+                                          mode='bilinear',
+                                          align_corners=False)
 
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))

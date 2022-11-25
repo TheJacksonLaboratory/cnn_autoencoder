@@ -467,8 +467,8 @@ class Analyzer(nn.Module):
                                     bias=bias,
                                     padding_mode='reflect'))
 
-        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
-                                      inplace=False))
+        # down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+        #                               inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
 
