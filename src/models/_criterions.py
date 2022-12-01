@@ -1,4 +1,5 @@
 from functools import reduce
+import math
 
 import torchmetrics
 import torch
@@ -6,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class DistortionLossBase(object):
+class DistortionLossBase:
     def __init__(self, distortion_lambda=0.1, normalize=False, **kwargs):
         if not isinstance(distortion_lambda, list):
             distortion_lambda = [distortion_lambda]
@@ -70,39 +71,71 @@ class RateDistortionMixin:
     def __init__(self, **kargs):
         super().__init__(**kargs)
 
-    def __call__(self, x, x_r, p_y, **kwargs):
-        return self.loss_distortion_rate(x, x_r, p_y), None
-
-    def loss_distortion_rate(self, x, x_r, p_y, **kwargs):
-        dist = self.compute_weighted_dist(x, x_r)
+    def __call__(self, **kwargs):
+        dist = self.compute_weighted_dist(**kwargs)
         dist = reduce(lambda d1, d2: d1 + d2, dist)
-        rate = self.compute_rate(x, p_y)
-        return dist + rate
+
+        rate = self.compute_rate(**kwargs)
+
+        dist_rate = dist + rate
+
+        entropy_loss = self.compute_entropy_loss(**kwargs)
+
+        return dict(dist_rate_loss=dist_rate,
+                    entropy_loss=entropy_loss)
 
 
 class RateDistortionPenaltyMixin:
-    def __init__(self, penalty_beta=0.001, **kargs):
+    def __init__(self, **kargs):
         super().__init__(**kargs)
-        self._penalty_beta = penalty_beta
 
     def __call__(self, **kwargs):
-        dist = self.compute_weighted_dist(x, x_r)
+        dist = self.compute_weighted_dist(**kwargs)
         dist = reduce(lambda d1, d2: d1 + d2, dist)
-        rate = self.compute_rate(x, p_y)
+
+        rate = self.compute_rate(**kwargs)
+
         penalty, energy = self.compute_penalty(**kwargs)
-        dist_rate_penalty = dist + rate + self._penalty_beta * penalty
-        return dist_rate_penalty, energy
+
+        dist_rate_penalty = dist + rate + penalty
+
+        entropy_loss = self.compute_entropy_loss(**kwargs)
+
+        return dict(dist_rate_loss=dist_rate_penalty,
+                    energy=energy,
+                    entropy_loss=entropy_loss)
 
 
-class RateLoss(object):
-    def __init__(self, **kwargs):
+class RateLoss:
+    def __init__(self, tail_mass=1e-9, **kwargs):
         super().__init__(**kwargs)
+        self._target_mass = torch.FloatTensor([-math.log(2/tail_mass - 1),
+                                               0,
+                                               math.log(2/tail_mass - 1)])
 
     def compute_rate(self, x, p_y, **kwargs):
         # Rate of compression:
         rate = (torch.sum(-torch.log2(p_y))
                 / (x.size(0) * x.size(2) * x.size(3)))
         return rate
+
+    def compute_entropy_loss(self, entropy_model, **kwargs):
+        is_training = entropy_model.training
+        for par_name, par in entropy_model.named_parameters():
+            if 'tails' not in par_name:
+                par.requires_grad = False
+
+        if hasattr(entropy_model, 'module'):
+            p_seq = (entropy_model(entropy_model.module.tails + 0.5)
+                     - entropy_model(entropy_model.module.tails - 0.5))
+        else:
+            p_seq = (entropy_model(entropy_model.tails + 0.5)
+                     - entropy_model(entropy_model.tails - 0.5))
+
+        for par in entropy_model.parameters():
+            par.requires_grad = is_training
+
+        return torch.abs(p_seq - self._target_mass).sum()
 
 
 class DistortionLoss(DistortionLossBase):
@@ -165,9 +198,10 @@ class MSSSIMPyramidLoss(PyramidLossMixin, DistortionLossBase):
                                for s in range(len(self._distortion_lambda))]
 
 
-class PenaltyA(object):
-    def __init__(self, **kwargs):
-        pass
+class PenaltyA:
+    def __init__(self, penalty_beta=0.001, **kwargs):
+        super().__init__(**kwargs)
+        self._penalty_beta = penalty_beta
 
     def compute_penalty(self, x, y, **kwargs):
         # Compute A, the approximation to the variance introduced during the
@@ -179,18 +213,19 @@ class PenaltyA(object):
         A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
         A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
 
-        # Compute the maximum energy consentrated among the layers
-        with torch.no_grad():
-            max_energy = A.max(dim=1)[0]
 
         P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
 
-        return torch.mean(P_A), torch.mean(max_energy)
+        # Compute the maximum energy consentrated among the layers
+        max_energy = A.detach().max(dim=1)[0]
+
+        return self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
 
 
-class PenaltyB(object):
-    def __init__(self, **kwargs):
-        pass
+class PenaltyB:
+    def __init__(self, penalty_beta=0.001, **kwargs):
+        super().__init__(**kwargs)
+        self._penalty_beta = penalty_beta
 
     def compute_penalty(self, x, y, net, **kwargs):
         # Compute B, the approximation to the variance introduced during the
@@ -220,26 +255,26 @@ class PenaltyB(object):
                            stride=K).squeeze()
         P_B = B[max_energy_channel]
 
-        return P_B.mean(), P_B.detach()
+        return self._penalty_beta * P_B.mean(), P_B.detach().mean()
 
 
-class RateMSELoss(RateDistortionMixin,
-                  RateLoss,
-                  DistortionLoss):
+class RateMSE(RateDistortionMixin,
+              RateLoss,
+              DistortionLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
-class MultiscaleRateMSELoss(RateDistortionMixin,
-                            RateLoss,
-                            DistortionPyramidLoss):
+class MultiscaleRateMSE(RateDistortionMixin,
+                        RateLoss,
+                        DistortionPyramidLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
-class RateMSSSIMLoss(RateDistortionMixin,
-                     RateLoss,
-                     MSSSIMLoss):
+class RateMSSSIM(RateDistortionMixin,
+                 RateLoss,
+                 MSSSIMLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -253,71 +288,71 @@ class MultiscaleRateMSSSIM(RateDistortionMixin,
 
 class RateMSEPenaltyA(RateDistortionPenaltyMixin,
                       RateLoss,
-                      DistortionLoss,
-                      PenaltyA):
+                      PenaltyA,
+                      DistortionLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class MultiscaleRateMSEPenaltyA(RateDistortionPenaltyMixin,
                                 RateLoss,
-                                DistortionPyramidLoss,
-                                PenaltyA):
+                                PenaltyA,
+                                DistortionPyramidLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class RateMSSSIMPenaltyA(RateDistortionPenaltyMixin,                         
                          RateLoss,
-                         MSSSIMLoss,
-                         PenaltyA):
+                         PenaltyA,
+                         MSSSIMLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class MultiscaleRateMSSSIMPenaltyA(RateDistortionPenaltyMixin,
                                    RateLoss,
-                                   MSSSIMPyramidLoss,
-                                   PenaltyA):
+                                   PenaltyA,
+                                   MSSSIMPyramidLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class RateMSEPenaltyB(RateDistortionPenaltyMixin,
                       RateLoss,
-                      DistortionLoss,
-                      PenaltyB):
+                      PenaltyB,
+                      DistortionLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class MultiscaleRateMSEPenaltyB(RateDistortionPenaltyMixin,
                                 RateLoss,
-                                DistortionPyramidLoss,
-                                PenaltyB):
+                                PenaltyB,
+                                DistortionPyramidLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class RateMSSSIMPenaltyB(RateDistortionPenaltyMixin,                         
                          RateLoss,
-                         MSSSIMLoss,
-                         PenaltyB):
+                         PenaltyB,
+                         MSSSIMLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 
 class MultiscaleRateMSSSIMPenaltyB(RateDistortionPenaltyMixin,
                                    RateLoss,
-                                   MSSSIMPyramidLoss,
-                                   PenaltyB):
+                                   PenaltyB,
+                                   MSSSIMPyramidLoss):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
 LOSS_LIST = {
-    "RateMSELoss": RateMSELoss,
-    "MultiscaleRateMSELoss": MultiscaleRateMSELoss,
-    "RateMSSSIMLoss": RateMSSSIMLoss,
+    "RateMSE": RateMSE,
+    "MultiscaleRateMSE": MultiscaleRateMSE,
+    "RateMSSSIM": RateMSSSIM,
     "MultiscaleRateMSSSIM": MultiscaleRateMSSSIM,
     "RateMSEPenaltyA": RateMSEPenaltyA,
     "MultiscaleRateMSEPenaltyA": MultiscaleRateMSEPenaltyA,
@@ -459,6 +494,7 @@ class EarlyStoppingTarget(StoppingCriterion):
 
 
 if __name__ == "__main__":
+    from tasks._autoencoders import FactorizedEntropy
     class SynthsisTest(nn.Module):
         def __init__(self):
             super().__init__()
@@ -482,6 +518,8 @@ if __name__ == "__main__":
 
     synthesis = SynthsisTest()
 
+    fact_entropy = FactorizedEntropy(48)
+
     for l_k in LOSS_LIST.keys():
         loss_fun = LOSS_LIST[l_k](patch_size=3,
                                   channels_org=3,
@@ -492,5 +530,7 @@ if __name__ == "__main__":
 
         if 'Multiscale' in l_k:
             x_r = [x_r, x_r[:, :, ::2, ::2], x_r[:, :, ::4, ::4]]
-        loss, _ = loss_fun(x=x, y=y, x_r=x_r, p_y=p_y, net=synthesis)
-        print("Loss function %s value: %f" % (l_k, loss))
+        loss_dict = loss_fun(x=x, y=y, x_r=x_r, p_y=p_y, net=synthesis, entropy_model=fact_entropy)
+        print("Loss function %s" %  l_k)
+        for k, l in loss_dict.items():
+            print('\t', k, l)

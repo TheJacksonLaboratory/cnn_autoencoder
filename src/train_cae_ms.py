@@ -70,7 +70,8 @@ def valid(forward_fun, cae_model, data, criterion, args):
             loss = torch.mean(loss)
             sum_loss += loss.item()
 
-            dist, rate = criterion.compute_distortion(x=x, x_r=x_r, p_y=p_y)
+            dist = criterion.compute_dist(x=x, x_r=x_r)
+            rate = criterion.compute_rate(x=x, p_y=p_y)
             if not isinstance(dist, list):
                 dist = [dist]
 
@@ -89,7 +90,7 @@ def valid(forward_fun, cae_model, data, criterion, args):
     return mean_loss
 
 
-def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args):
+def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, aux_optimizer, scheduler, args):
     """Training loop by steps.
     This loop involves validation and network training checkpoint creation.
 
@@ -109,6 +110,8 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
         Stopping criteria tracker for different problem statements
     optimizer : torch.optim.Optimizer
         The parameter's optimizer method
+    aux_optimizer : torch.optim.Optimizer
+        The entropy model symbols range optimizer method
     scheduler : torch.optim.lr_scheduler or None
         If provided, a learning rate scheduler for the optimizer
     args : Namespace
@@ -151,10 +154,14 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 if args.gpu:
                     synthesizer.cuda()
 
-                loss, extra_info = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
-                if extra_info is not None:
-                    extra_info = torch.mean(extra_info)
-                loss = torch.mean(loss)
+                entropy_model = DataParallel(cae_model.module.fact_entropy)
+                if args.gpu:
+                    entropy_model.cuda()
+
+                loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model, entropy_model=entropy_model)
+                if 'energy' in loss_dict:
+                    extra_info = torch.mean(loss_dict['energy'])
+                loss = torch.mean(loss_dict['dist_rate_loss'])
                 loss.backward()
 
                 # Clip the gradients to prevent from exploding gradients problems
@@ -162,13 +169,18 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 optimizer.step()
                 step_loss = loss.item()
 
+                aux_optimizer.zero_grad()
+                aux_loss = torch.mean(loss_dict['entropy_loss'])
+                aux_loss.backward()
+                aux_optimizer.step()
+
                 # When training with penalty on the energy of the compression
                 # representation, update the respective stopping criterion
                 if 'penalty' in stopping_criteria.keys():
                     if args.print_log:
                         if q_penalty is None:
                             q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, position=2, leave=None)
-                        q_penalty.set_description('Sub-iter loss=%0.4f, energy=%0.4f' % (step_loss, extra_info))
+                        q_penalty.set_description('Sub-iter loss=%0.4f, energy=%0.4f, aux=%0.4f' % (step_loss, extra_info, aux_loss.item()))
                         q_penalty.update()
                     stopping_criteria['penalty'].update(iteration=step,
                                                         metric=extra_info.item())
@@ -187,14 +199,16 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 scheduler.step()
             # End of training step
 
-            dist, rate = criterion.compute_distortion(x=x, y=y, x_r=x_r, p_y=p_y)
+            with torch.no_grad():
+                dist = criterion.compute_dist(x=x, x_r=x_r)
+                rate = criterion.compute_rate(x=x, p_y=p_y)
             if not isinstance(dist, list):
                 dist = [dist]
                 x_r = [x_r]
 
             if args.print_log:
-                q.set_description('Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quant bn [{:.4f}, {:.4f}], rec [{:.4f}, {:.4f}]'.format(
-                    step_loss, sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+                q.set_description('Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}, aux={:.4f}). Quant bn [{:.4f}, {:.4f}], rec [{:.4f}, {:.4f}]'.format(
+                    step_loss, sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), aux_loss.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
                 q.update()
 
             else:
@@ -290,105 +304,46 @@ def setup_criteria(args):
         A list of stopping criteria. The first element is always set to stop the training after a fixed number of iterations.
         Depending on the criterion used, additional stopping criteria is set.        
     """
+    args_dict = args.__dict__
 
     # Early stopping criterion:
     stopping_criteria = {
         'early_stopping': models.EarlyStoppingPatience(
             max_iterations=args.steps,
-            **args.__dict__)
+            **args_dict)
     }
 
+    criterion_name = ''
+
+    args_dict['max_iterations'] = 100
+    args_dict['target'] = args_dict['energy_limit']
+    if 'PA' in args_dict['criterion']:
+        args_dict['comparison'] = 'le'
+        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args_dict)
+        criterion_name = 'PenaltyA'
+
+    elif 'PB' in args_dict['criterion']:
+        args_dict['comparison'] = 'ge'
+        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args_dict)
+        criterion_name = 'PenaltyB'
+
+    if 'RD' in args_dict['criterion']:
+        criterion_name = 'RateMSE' + criterion_name
+    elif 'RMS-SSIM' in args_dict['criterion']:
+        criterion_name = 'RateMSSSIM' + criterion_name
+
     # Loss function
-    if args.criterion == 'RD_PA':
-        forward_fun = forward_step_base
-        criterion = models.RateDistortionPenaltyA(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RD_PB':
-        forward_fun = forward_step_base
-        criterion = models.RateDistortionPenaltyB(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_PA':
-        forward_fun = forward_step_base
-        criterion = models.RateMSSSIMPenaltyA(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_PB':
-        forward_fun = forward_step_base
-        criterion = models.RateMSSSIMPenaltyB(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RD':
-        forward_fun = forward_step_base
-        criterion = models.RateDistortion(**args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM':
-        forward_fun = forward_step_base
-        criterion = models.MultiScaleSSIM(**args.__dict__)
-
-    elif args.criterion == 'RD_MS_PA':
+    if 'Multiscale' in args_dict['criterion']:
         forward_fun = forward_step_pyramid
-        criterion = models.RateDistortionPyramidPenaltyA(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RD_MS_PB':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateDistortionPyramidPenaltyB(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_MS_PA':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateMSSSIMPyramidPenaltyA(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='le',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_MS_PB':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateMSSSIMPyramidPenaltyB(**args.__dict__)
-        stopping_criteria['penalty'] = \
-            models.EarlyStoppingTarget(comparison='ge',
-                                       max_iterations=100,
-                                       target=args.energy_limit,
-                                       **args.__dict__)
-
-    elif args.criterion == 'RD_MS':
-        forward_fun = forward_step_pyramid
-        criterion = models.RateDistortionPyramid(**args.__dict__)
-
-    elif args.criterion == 'RMS-SSIM_MS':
-        forward_fun = forward_step_pyramid
-        criterion = models.MultiScaleSSIMPyramid(**args.__dict__)
-
+        criterion_name = 'Multiscale' + criterion_name
     else:
-        raise ValueError('Criterion \'%s\' not supported' % args.criterion)
+        forward_fun = forward_step_base
+
+    if criterion_name not in models.LOSS_LIST:
+        raise ValueError(
+            'Criterion \'%s\' not supported' % args_dict['criterion'])
+
+    criterion = models.LOSS_LIST[criterion_name](**args_dict)
 
     # criterion = nn.DataParallel(criterion)
     # if args.gpu:
@@ -412,26 +367,43 @@ def setup_optim(cae_model, args):
     Returns
     -------
     optimizer : torch.optim.Optimizer
-        The neurla network optimizer method
+        The optimizer for the neural network
+    aux_optimizer : torch.optim.Optimizer
+        The optimizer for the entropy model range of symbols
     scheduler : torch.optim.lr_scheduler
         The learning rate scheduler for the optimizer
     """
 
     # By now, only the ADAM optimizer is used
     optim_algo = optimization_algorithms[args.optim_algo]
-    optimizer = optim_algo(params=cae_model.parameters(),
+
+    net_pars = []
+    aux_pars = []
+    for par_name, par in cae_model.named_parameters():
+        if 'tails' in par_name:
+            aux_pars.append(par)
+        else:
+            net_pars.append(par)
+
+    optimizer = optim_algo(params=net_pars,
                            lr=args.learning_rate,
                            weight_decay=args.weight_decay)
+
+    aux_optimizer = optim_algo(params=aux_pars,
+                               lr=args.aux_learning_rate,
+                               weight_decay=args.aux_weight_decay)
 
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
     elif args.scheduler_type in scheduler_options.keys():
-        scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer, mode='min', patience=2)
+        scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer,
+                                                           mode='min',
+                                                           patience=2)
     else:
         raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler_type)
 
-    return optimizer, scheduler
+    return optimizer, aux_optimizer, scheduler
 
 
 def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
@@ -490,7 +462,7 @@ def main(args):
 
     cae_model = setup_network(args)
     forward_fun, criterion, stopping_criteria = setup_criteria(args)
-    optimizer, scheduler = setup_optim(cae_model, args)
+    optimizer, aux_optimizer, scheduler = setup_optim(cae_model, args)
 
     if args.resume is not None:
         resume_checkpoint(cae_model, optimizer, scheduler, args.resume, gpu=args.gpu)
@@ -515,7 +487,7 @@ def main(args):
 
     train_data, valid_data = utils.get_data(args)
 
-    train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, scheduler, args)
+    train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, aux_optimizer, scheduler, args)
 
 
 if __name__ == '__main__':

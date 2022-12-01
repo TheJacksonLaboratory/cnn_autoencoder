@@ -140,7 +140,7 @@ class FactorizedEntropy(nn.Module):
         This function computes the function c(x) from Balle et al. VARIATIONAL IMAGE COMPRESSION WITH A SCALE HYPERPRIOR. ICLR 2018
         Function c(x) can be used to model the probability of a random variable that has been comvolved with a uniform distribution.
     """
-    def __init__(self, channels_bn, K=4, r=3, **kwargs):
+    def __init__(self, channels_bn, K=4, r=3, tails_val=10, **kwargs):
         super(FactorizedEntropy, self).__init__()
         self._channels = channels_bn
         self._K = K
@@ -164,15 +164,21 @@ class FactorizedEntropy(nn.Module):
         self._b = nn.Parameter(
             nn.init.uniform_(torch.empty(channels_bn * r[-1]), -0.5, 0.5))
 
+        # Force the range of the symbols value to be between the given tail
+        # values.
+        self.tails = nn.Parameter(torch.zeros(1, channels_bn, 3, 1))
+        self.tails.data[0, :, 0, 0] = -tails_val
+        self.tails.data[0, :, 2, 0] = tails_val
+
     def reset(self, x):
         pass
 
     def forward(self, x):
+        # Compute the logits of the factorized entropy model
         fx = self._layers(x)
 
         H_K = F.softplus(self._H)
-        fx = torch.sigmoid(F.conv2d(fx, weight=H_K, bias=self._b,
-                                    groups=self._channels))
+        fx = F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels)
 
         return fx
 
@@ -692,7 +698,8 @@ class AutoEncoder(nn.Module):
         fx = self.embedding(x)
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
+        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -704,8 +711,8 @@ class AutoEncoder(nn.Module):
         fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
-        # p_y = torch.prod(p_y, dim=1) + 1e-10
+        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
 
         # Get the reconstruction at multiple scales
         x_r_ms = self.synthesis.forward_steps(y_q)
@@ -780,7 +787,8 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.pos_enc(fx)
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
+        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -794,7 +802,8 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.pos_enc(fx)
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-10
+        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
 
         # Get the reconstruction at multiple scales
         x_r_ms = self.synthesis.forward_steps(y_q)

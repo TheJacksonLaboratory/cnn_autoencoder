@@ -47,12 +47,18 @@ def override_config_file(parser):
     return args
 
 
-def add_logging_args(parser):
-    parser.add_argument('-rs', '--seed', type=int, dest='seed', help='Seed for random number generators', default=-1)
+def add_logging_args(parser, task, mode='training'):
+    logging_args = [
+        (['all'], ['all'], ('-rs', '--seed'), dict(dest='seed', type=int, help='Seed for random number generators', default=-1)),
+        (['all'], ['all'], ('-pl', '--printlog'), dict(dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters)', default=False)),
+        (['all'], ['all'], ('-ld', '--logdir'), dict(dest='log_dir', type=str, help='Directory where all logging and model checkpoints are stored', default='.')),
+        (['all'], ['all'], ('-li', '--logid'), dict(dest='log_identifier', type=str, help='Identifier added to the log file', default='')),
+    ]
 
-    parser.add_argument('-pl', '--printlog', dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters).', default=False)
-    parser.add_argument('-ld', '--logdir', type=str, dest='log_dir', help='Directory where all logging and model checkpoints are stored', default='.')
-    parser.add_argument('-li', '--logid', type=str, dest='log_identifier', help='Identifier added to the log file', default='')
+    for par_task, par_mode, par_flags, par_details in logging_args:
+        if ((task in par_task or 'all' in par_task)
+          and (mode in par_mode or 'all' in par_mode)):
+            parser.add_argument(*par_flags, **par_details)
 
 
 def add_data_args(parser, task, mode='training'):
@@ -130,9 +136,11 @@ def add_config_args(parser, task, mode='training'):
         return
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
+    parser.add_argument('-alr', '--auxlrate', type=float, dest='aux_learning_rate', help='Auxiliar optimizer initial learning rate', default=1e-3)
     parser.add_argument('-opt', '--optimizer', type=str, dest='optim_algo', help='Optimization algorithm', default='Adam', choices=OPTIMIZERS)
     parser.add_argument('-sch', '--scheduler', type=str, dest='scheduler_type', help='Learning rate scheduler for the optimizer method', default='None', choices=SCHEDULERS)
     parser.add_argument('-wd', '--wdecay', type=float, dest='weight_decay', help='Optimizer weight decay (L2 regularizer)', default=0)
+    parser.add_argument('-awd', '--auxwdecay', type=float, dest='aux_weight_decay', help='Auxiliar optimizer weight decay (L2 regularizer)', default=0)
 
     parser.add_argument('-s', '--steps', type=int, dest='steps', help='Number of training steps', default=1e5)
     parser.add_argument('-cs', '--checksteps', type=int, dest='checkpoint_steps', help='Create a checkpoint every this number of steps', default=1e3)
@@ -232,7 +240,7 @@ def get_args(task, mode, add_model=True, add_criteria=True, add_config=True, add
         add_data_args(parser, task, mode)
 
     if add_logging:
-        add_logging_args(parser)
+        add_logging_args(parser, task, mode)
 
     if parser_only:
         return parser

@@ -4,17 +4,17 @@ SEG_VER = '0.5.6'
 DATASETS = ['MNIST', 'ImageNet', 'ImageNet.S3', 'Zarr', 'Histology']
 
 CAE_CRITERIONS = ['RD',
-                  'RD_MS',
+                  'MultiscaleRD',
                   'RD_PA',
                   'RD_PB',
-                  'RD_MS_PA',
-                  'RD_MS_PB',
+                  'MultiscaleRD_PA',
+                  'MultiscaleRD_PB',
                   'RMS-SSIM',
-                  'RMS-SSIM_MS',
+                  'MultiscaleRMS-SSIM',
                   'RMS-SSIM_PA',
                   'RMS-SSIM_PB',
-                  'RMS-SSIM_MS_PA',
-                  'RMS-SSIM_MS_PB']
+                  'MultiscaleRMS-SSIM_PA',
+                  'MultiscaleRMS-SSIM_PB']
 
 CAE_ACT_LAYERS = ['LeakyReLU',
                   'ReLU',
