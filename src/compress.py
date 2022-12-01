@@ -261,7 +261,7 @@ def compress(args):
     state = utils.load_state(args)
 
     comp_model = setup_network(state, args.gpu)
-    transform, _, _ = utils.get_zarr_transform(normalize=True)
+    transform, _, _ = utils.get_zarr_transform(normalize=args.normalize)
 
     # Get the compression level from the model checkpoint
     compression_level = state['args']['compression_level']

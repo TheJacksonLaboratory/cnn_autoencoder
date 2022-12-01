@@ -197,7 +197,7 @@ class FactorizedEntropyLaplace(nn.Module):
 
 
 class DownsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False,
+    def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
                  dropout=0.0,
                  bias=False,
@@ -206,9 +206,10 @@ class DownsamplingUnit(nn.Module):
 
         model = []
         if act_layer_type not in ['GDN']:
-            model.append(nn.Conv2d(channels_in, channels_in, kernel_size=3,
+            model.append(nn.Conv2d(channels_in, channels_in,
+                                   kernel_size=kernel_size,
                                    stride=1,
-                                   padding=1,
+                                   padding=kernel_size//2,
                                    dilation=1,
                                    groups=channels_in if groups else 1,
                                    bias=bias,
@@ -220,9 +221,10 @@ class DownsamplingUnit(nn.Module):
             model.append(_define_act_layer(act_layer_type, channels_in,
                                            track='analysis'))
 
-        model.append(nn.Conv2d(channels_in, channels_out, kernel_size=3,
+        model.append(nn.Conv2d(channels_in, channels_out, 
+                               kernel_size=kernel_size,
                                stride=2,
-                               padding=1,
+                               padding=kernel_size//2,
                                dilation=1,
                                groups=channels_in if groups else 1,
                                bias=bias,
@@ -245,7 +247,7 @@ class DownsamplingUnit(nn.Module):
 
 
 class ResidualDownsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False,
+    def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
                  dropout=0.0,
                  bias=False,
@@ -255,8 +257,12 @@ class ResidualDownsamplingUnit(nn.Module):
         res_model = []
 
         if act_layer_type not in ['GDN']:
-            res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
-                                       channels_in if groups else 1,
+            res_model.append(nn.Conv2d(channels_in, channels_in, 
+                                       kernel_size=kernel_size,
+                                       stride=1,
+                                       pading=kernel_size//2,
+                                       dilation=1,
+                                       groups=channels_in if groups else 1,
                                        bias=bias,
                                        padding_mode='reflect'))
 
@@ -266,8 +272,12 @@ class ResidualDownsamplingUnit(nn.Module):
             res_model.append(_define_act_layer(act_layer_type, channels_in,
                                                track='analysis'))
 
-        res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
-                                   channels_in if groups else 1,
+        res_model.append(nn.Conv2d(channels_in, channels_in, 
+                                   kernel_size=kernel_size,
+                                   stride=1,
+                                   padding=kernel_size//2,
+                                   dilation=1,
+                                   groups=channels_in if groups else 1,
                                    bias=bias,
                                    padding_mode='reflect'))
 
@@ -276,8 +286,12 @@ class ResidualDownsamplingUnit(nn.Module):
 
         model = [_define_act_layer(act_layer_type, channels_in,
                                    track='analysis')]
-        model.append(nn.Conv2d(channels_in, channels_out, 3, 2, 1, 1,
-                               channels_in if groups else 1,
+        model.append(nn.Conv2d(channels_in, channels_out, 
+                               kernel_size=kernel_size,
+                               stride=2,
+                               padding=kernel_size//2,
+                               dilation=1,
+                               groups=channels_in if groups else 1,
                                bias=bias,
                                padding_mode='reflect'))
 
@@ -301,7 +315,7 @@ class ResidualDownsamplingUnit(nn.Module):
 
 
 class UpsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False,
+    def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
                  dropout=0.0,
                  bias=True,
@@ -311,9 +325,10 @@ class UpsamplingUnit(nn.Module):
         model = []
 
         if act_layer_type not in ['GDN']:
-            model.append(nn.Conv2d(channels_in, channels_in, kernel_size=3,\
+            model.append(nn.Conv2d(channels_in, channels_in,
+                                   kernel_size=kernel_size,
                                    stride=1,
-                                   padding=1,
+                                   padding=kernel_size//2,
                                    dilation=1,
                                    groups=channels_in if groups else 1,
                                    bias=bias,
@@ -326,9 +341,9 @@ class UpsamplingUnit(nn.Module):
                                         track='synthesis'))
 
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
-                                        kernel_size=3,
+                                        kernel_size=kernel_size,
                                         stride=2,
-                                        padding=1,
+                                        padding=kernel_size//2,
                                         output_padding=1,
                                         dilation=1,
                                         groups=channels_in if groups else 1,
@@ -351,7 +366,7 @@ class UpsamplingUnit(nn.Module):
 
 
 class ResidualUpsamplingUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, groups=False,
+    def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
                  dropout=0.0,
                  bias=True,
@@ -361,8 +376,12 @@ class ResidualUpsamplingUnit(nn.Module):
         res_model = []
 
         if act_layer_type not in ['GDN']:
-            res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
-                                       channels_in if groups else 1,
+            res_model.append(nn.Conv2d(channels_in, channels_in,
+                                       kernel_size=kernel_size,
+                                       stride=1,
+                                       padding=kernel_size//2,
+                                       dilation=1,
+                                       groups=channels_in if groups else 1,
                                        bias=bias,
                                        padding_mode='reflect'))
 
@@ -372,8 +391,12 @@ class ResidualUpsamplingUnit(nn.Module):
             res_model.append(_define_act_layer(act_layer_type, channels_in,
                                                track='synthesis'))
 
-        res_model.append(nn.Conv2d(channels_in, channels_in, 3, 1, 1, 1,
-                                   channels_in if groups else 1,
+        res_model.append(nn.Conv2d(channels_in, channels_in,
+                                   kernel_size=kernel_size,
+                                   stride=1,
+                                   padding=kernel_size//2,
+                                   dilation=1,
+                                   groups=channels_in if groups else 1,
                                    bias=bias,
                                    padding_mode='reflect'))
 
@@ -383,9 +406,9 @@ class ResidualUpsamplingUnit(nn.Module):
         model = [_define_act_layer(act_layer_type, channels_in,
                                    track='synthesis')]
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
-                                        kernel_size=3,
+                                        kernel_size=kernel_size,
                                         stride=2,
-                                        padding=1,
+                                        padding=kernel_size//2,
                                         output_padding=1,
                                         dilation=1,
                                         groups=channels_in if groups else 1,
@@ -411,12 +434,16 @@ class ResidualUpsamplingUnit(nn.Module):
 
 
 class ColorEmbedding(nn.Module):
-    def __init__(self, channels_org=3, channels_net=8, groups=False,
+    def __init__(self, channels_org, channels_net, kernel_size=3, groups=False,
                  bias=False,
                  **kwargs):
         super(ColorEmbedding, self).__init__()
-        self.embedding = nn.Conv2d(channels_org, channels_net, 3, 1, 1, 1,
-                                   channels_org if groups else 1,
+        self.embedding = nn.Conv2d(channels_org, channels_net,
+                                   kernel_size=kernel_size,
+                                   stride=1,
+                                   padding=kernel_size//2,
+                                   dilation=1,
+                                   groups=channels_org if groups else 1,
                                    bias=bias,
                                    padding_mode='reflect')
 
@@ -430,6 +457,7 @@ class ColorEmbedding(nn.Module):
 class Analyzer(nn.Module):
     def __init__(self, channels_net=8, channels_bn=16, compression_level=3,
                  channels_expansion=1,
+                 kernel_size=3,
                  groups=False,
                  batch_norm=False,
                  dropout=0.0,
@@ -448,6 +476,7 @@ class Analyzer(nn.Module):
                                       * channels_expansion ** i,
                                       channels_out=channels_net
                                       * channels_expansion ** (i+1),
+                                      kernel_size=kernel_size,
                                       groups=groups,
                                       batch_norm=batch_norm,
                                       dropout=dropout,
@@ -459,11 +488,11 @@ class Analyzer(nn.Module):
         down_track.append(nn.Conv2d(channels_net
                                     * channels_expansion**compression_level,
                                     channels_bn,
-                                    3,
-                                    1,
-                                    1,
-                                    1,
-                                    channels_bn if groups else 1,
+                                    kernel_size=kernel_size,
+                                    stride=1,
+                                    padding=kernel_size//2,
+                                    dilation=1,
+                                    groups=channels_bn if groups else 1,
                                     bias=bias,
                                     padding_mode='reflect'))
 
@@ -487,6 +516,7 @@ class Synthesizer(nn.Module):
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
                  compression_level=3,
                  channels_expansion=1,
+                 kernel_size=3,
                  groups=False,
                  batch_norm=False,
                  dropout=0.0,
@@ -505,9 +535,9 @@ class Synthesizer(nn.Module):
         up_track = [nn.Conv2d(channels_bn,
                               channels_net
                               * channels_expansion**compression_level,
-                              kernel_size=3,
+                              kernel_size=kernel_size,
                               stride=1,
-                              padding=1,
+                              padding=kernel_size//2,
                               dilation=1,
                               groups=channels_bn if groups else 1,
                               bias=bias,
@@ -516,6 +546,7 @@ class Synthesizer(nn.Module):
                                    * channels_expansion**(i+1),
                                    channels_out=channels_net
                                    * channels_expansion**i,
+                                   kernel_size=kernel_size,
                                    groups=groups,
                                    batch_norm=batch_norm,
                                    dropout=dropout,
@@ -529,9 +560,9 @@ class Synthesizer(nn.Module):
         self.color_layers = nn.ModuleList(
             [nn.Sequential(
                  nn.Conv2d(channels_net * channels_expansion**i, channels_org,
-                           kernel_size=3,
+                           kernel_size=kernel_size,
                            stride=1,
-                           padding=1,
+                           padding=kernel_size//2,
                            dilation=1,
                            groups=channels_org if groups else 1,
                            bias=bias,
@@ -608,6 +639,7 @@ class AutoEncoder(nn.Module):
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
                  compression_level=3,
                  channels_expansion=1,
+                 kernel_size=3,
                  groups=False,
                  batch_norm=False,
                  dropout=0.0,
@@ -622,6 +654,7 @@ class AutoEncoder(nn.Module):
         # Initial color embedding
         self.embedding = ColorEmbedding(channels_org=channels_org,
                                         channels_net=channels_net,
+                                        kernel_size=kernel_size,
                                         groups=groups,
                                         bias=bias)
 
@@ -629,6 +662,7 @@ class AutoEncoder(nn.Module):
                                  channels_bn=channels_bn,
                                  compression_level=compression_level,
                                  channels_expansion=channels_expansion,
+                                 kernel_size=kernel_size,
                                  groups=groups,
                                  batch_norm=batch_norm,
                                  dropout=dropout,
@@ -641,6 +675,7 @@ class AutoEncoder(nn.Module):
                                      channels_bn=channels_bn,
                                      compression_level=compression_level,
                                      channels_expansion=channels_expansion,
+                                     kernel_size=kernel_size,
                                      groups=groups,
                                      batch_norm=batch_norm,
                                      dropout=dropout,
@@ -684,6 +719,7 @@ class MaskedAutoEncoder(nn.Module):
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
                  compression_level=3,
                  channels_expansion=1,
+                 kernel_size=3,
                  groups=False,
                  batch_norm=False,
                  dropout=0.0,
@@ -700,6 +736,7 @@ class MaskedAutoEncoder(nn.Module):
         # Initial color embedding
         self.embedding = ColorEmbedding(channels_org=channels_org,
                                         channels_net=channels_net,
+                                        kernel_size=kernel_size,
                                         groups=groups,
                                         bias=bias)
 
@@ -711,6 +748,7 @@ class MaskedAutoEncoder(nn.Module):
                                  channels_bn=channels_bn,
                                  compression_level=compression_level,
                                  channels_expansion=channels_expansion,
+                                 kernel_size=kernel_size,
                                  groups=groups,
                                  batch_norm=batch_norm,
                                  dropout=dropout,
@@ -723,6 +761,7 @@ class MaskedAutoEncoder(nn.Module):
                                      channels_bn=channels_bn,
                                      compression_level=compression_level,
                                      channels_expansion=channels_expansion,
+                                     kernel_size=kernel_size,
                                      groups=groups,
                                      batch_norm=batch_norm,
                                      dropout=dropout,
