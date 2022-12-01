@@ -126,16 +126,14 @@ class RateLoss:
                 par.requires_grad = False
 
         if hasattr(entropy_model, 'module'):
-            p_seq = (entropy_model(entropy_model.module.tails + 0.5)
-                     - entropy_model(entropy_model.module.tails - 0.5))
+            q_seq = entropy_model(entropy_model.module.tails)
         else:
-            p_seq = (entropy_model(entropy_model.tails + 0.5)
-                     - entropy_model(entropy_model.tails - 0.5))
+            q_seq = entropy_model(entropy_model.tails)
 
         for par in entropy_model.parameters():
             par.requires_grad = is_training
 
-        return torch.abs(p_seq - self._target_mass).sum()
+        return torch.abs(q_seq - self._target_mass.to(q_seq.device)).sum()
 
 
 class DistortionLoss(DistortionLossBase):
