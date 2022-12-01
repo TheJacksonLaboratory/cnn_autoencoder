@@ -143,7 +143,7 @@ class DistortionLoss(DistortionLossBase):
     def compute_dist(self, x, x_r, **kwargs):
         dist = 255.0 ** 2 * F.mse_loss(self._range_scale * x_r
                                        + self._range_offset,
-                                       self._range_scale * x
+                                       self._range_scale * x.to(x_r.device)
                                        + self._range_offset)
         return dist
 
