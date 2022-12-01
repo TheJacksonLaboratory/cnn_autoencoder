@@ -211,7 +211,7 @@ def add_criteria_args(parser, task, mode='training'):
     if task == 'autoencoder':
         criteria_choices = CAE_CRITERIONS
         parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
-        parser.add_argument('-dl', '--distl', type=float, nargs='+', dest='distorsion_lambda', help='Distorsion penalty parameter (lambda)', default=0.01)
+        parser.add_argument('-dl', '--distl', type=float, nargs='+', dest='distortion_lambda', help='Distortion penalty parameter (lambda)', default=0.01)
     elif task in ['classifier', 'segmentation']:
         criteria_choices = SEG_CRITERIONS
         parser.add_argument('-ceww', '--cew-weight', type=float, dest='cew_weight', help=argparse.SUPPRESS, default=10.0)
