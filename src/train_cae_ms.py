@@ -187,6 +187,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
             while True:
                 # Start of training step
                 optimizer.zero_grad()
+                aux_optimizer.zero_grad()
 
                 x_r, y, p_y = forward_fun(x, cae_model)
 
@@ -211,7 +212,6 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 optimizer.step()
                 step_loss = loss.item()
 
-                aux_optimizer.zero_grad()
                 aux_loss = torch.mean(loss_dict['entropy_loss'])
                 aux_loss.backward()
                 aux_optimizer.step()
