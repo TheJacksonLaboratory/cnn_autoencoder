@@ -109,9 +109,9 @@ class RateDistortionPenaltyMixin:
 class RateLoss:
     def __init__(self, tail_mass=1e-9, **kwargs):
         super().__init__(**kwargs)
-        self._target_mass = torch.FloatTensor([-math.log(2/tail_mass - 1),
-                                               0,
-                                               math.log(2/tail_mass - 1)])
+        self._target_mass = torch.FloatTensor([[[[-math.log(2/tail_mass - 1)],
+                                               [0],
+                                               [math.log(2/tail_mass - 1)]]]])
 
     def compute_rate(self, x, p_y, **kwargs):
         # Rate of compression:

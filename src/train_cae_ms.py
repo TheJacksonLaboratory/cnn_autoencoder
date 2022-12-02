@@ -89,7 +89,7 @@ def valid(forward_fun, cae_model, data, criterion, args):
             if args.print_log:
                 q.set_description(
                     'Validation Loss {:.4f} (dist=[{}], rate={:.2f}, '
-                    'aux={:.2f}, energy={:.2f}). Quant bn [{:.2f}, {:.2f}] '
+                    'aux={:.2f}, energy={:.3f}). Quant bn [{:.2f}, {:.2f}] '
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         sum_loss / (i+1),
@@ -106,7 +106,7 @@ def valid(forward_fun, cae_model, data, criterion, args):
             elif i % max(1, int(0.1 * len(data))) == 0:
                 logger.debug(
                     '\t[{:04d}/{:04d}] Validation Loss {:.4f} (dist=[{}], '
-                    'rate={:.2f}, aux={:.2f}, energy={:.2f}). '
+                    'rate={:.2f}, aux={:.2f}, energy={:.3f}). '
                     'Quant bn [{:.2f}, {:.2f}] '
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
@@ -277,7 +277,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
             if args.print_log:
                 q.set_description(
                     'Training Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f},'
-                    ' energy={:2f}). Quant bn [{:.2f}, {:.2f}] '
+                    ' energy={:3f}). Quant bn [{:.2f}, {:.2f}] '
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         sum_loss / (i+1),
@@ -298,7 +298,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                     logger.debug(
                         '\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} '
                         '(dist=[{}], rate={:.2f}, aux={:.2f}'
-                        'energy={:2f} ). Quant bn [{:.2f}, {:.2f}] '
+                        'energy={:3f} ). Quant bn [{:.2f}, {:.2f}] '
                         '({:.2f}, {:.2f}, {:.2f}), '
                         'rec [{:.2f}, {:.2f}]'.format(
                             step, i,
