@@ -143,6 +143,7 @@ def add_config_args(parser, task, mode='training'):
     parser.add_argument('-awd', '--auxwdecay', type=float, dest='aux_weight_decay', help='Auxiliar optimizer weight decay (L2 regularizer)', default=0)
 
     parser.add_argument('-s', '--steps', type=int, dest='steps', help='Number of training steps', default=1e5)
+    parser.add_argument('-ss', '--sub-steps', type=int, dest='sub_iter_steps', help='Number of steps for sub iteration (on penalty based training)', default=100)
     parser.add_argument('-cs', '--checksteps', type=int, dest='checkpoint_steps', help='Create a checkpoint every this number of steps', default=1e3)
     parser.add_argument('-esp', '--earlypatience', type=int, dest='early_patience', help='Early stopping patience, i.e. number of consecutive bad evaluations before stop training', default=5)
     parser.add_argument('-esw', '--earlywarmup', type=int, dest='early_warmup', help='Early stopping warmup steps, i.e. number of steps to perform before starting to count bad evaluations', default=10000)

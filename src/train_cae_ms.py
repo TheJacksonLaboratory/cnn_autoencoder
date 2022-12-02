@@ -429,7 +429,7 @@ def setup_criteria(args):
 
     criterion_name = ''
 
-    args_dict['max_iterations'] = 2
+    args_dict['max_iterations'] = args.sub_iter_steps
     args_dict['target'] = args_dict['energy_limit']
     if 'PA' in args_dict['criterion']:
         args_dict['comparison'] = 'le'
@@ -458,10 +458,6 @@ def setup_criteria(args):
             'Criterion \'%s\' not supported' % args_dict['criterion'])
 
     criterion = models.LOSS_LIST[criterion_name](**args_dict)
-
-    # criterion = nn.DataParallel(criterion)
-    # if args.gpu:
-    #    criterion = criterion.cuda()
 
     return forward_fun, criterion, stopping_criteria
 
