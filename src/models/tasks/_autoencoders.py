@@ -699,7 +699,7 @@ class AutoEncoder(nn.Module):
 
         y_q, y = self.analysis(fx)
         p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -712,7 +712,7 @@ class AutoEncoder(nn.Module):
 
         y_q, y = self.analysis(fx)
         p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
 
         # Get the reconstruction at multiple scales
         x_r_ms = self.synthesis.forward_steps(y_q)
@@ -788,7 +788,7 @@ class MaskedAutoEncoder(nn.Module):
 
         y_q, y = self.analysis(fx)
         p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
@@ -803,7 +803,7 @@ class MaskedAutoEncoder(nn.Module):
 
         y_q, y = self.analysis(fx)
         p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)) + 1e-10)
+               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
 
         # Get the reconstruction at multiple scales
         x_r_ms = self.synthesis.forward_steps(y_q)

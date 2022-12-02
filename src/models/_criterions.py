@@ -244,7 +244,7 @@ class PenaltyB:
             [torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1)
              for k in range(K)], dim=0)
 
-        fake_rec = net(fake_codes, synthesize_only=True)
+        fake_rec = net(fake_codes)
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / torch.sum(B)
 

@@ -66,9 +66,20 @@ def valid(forward_fun, cae_model, data, criterion, args):
         for i, (x, _) in enumerate(data):
             x_r, y, p_y = forward_fun(x, cae_model)
 
-            loss, _ = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
-            loss = torch.mean(loss)
+            synthesizer = DataParallel(cae_model.module.synthesis)
+            if args.gpu:
+                synthesizer.cuda()
+
+            entropy_model = DataParallel(cae_model.module.fact_entropy)
+            if args.gpu:
+                entropy_model.cuda()
+
+            loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=synthesizer,
+                                entropy_model=entropy_model)
+            loss = torch.mean(loss_dict['dist_rate_loss'])
             sum_loss += loss.item()
+            
+            aux_loss = torch.mean(loss_dict['entropy_loss'])
 
             dist = criterion.compute_dist(x=x, x_r=x_r)
             rate = criterion.compute_rate(x=x, p_y=p_y)
@@ -76,12 +87,41 @@ def valid(forward_fun, cae_model, data, criterion, args):
                 dist = [dist]
 
             if args.print_log:
-                q.set_description('Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}).'.format(
-                    loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item()))
+                q.set_description(
+                    'Validation Loss {:.4f} (dist=[{}], rate={:.2f}, '
+                    'aux={:.2f}, energy={:.2f}). Quant bn [{:.2f}, {:.2f}] '
+                    '({:.2f}, {:.2f}, {:.2f}), '
+                    'rec [{:.2f}, {:.2f}]'.format(
+                        sum_loss / (i+1),
+                        ','.join(['%0.4f' % d.item() for d in dist]),
+                        rate.item(),
+                        aux_loss.item(),
+                        loss_dict.get('energy', 0.0),
+                        y.detach().min(),
+                        y.detach().max(),
+                        *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                        x_r[0].detach().min(),
+                        x_r[0].detach().max()))
                 q.update()
             elif i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug('\t[{:04d}/{:04d}] Validation Loss {:.4f} ({:.4f}: dist=[{}], rate:{:0.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
-                    i, len(data), loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+                logger.debug(
+                    '\t[{:04d}/{:04d}] Validation Loss {:.4f} (dist=[{}], '
+                    'rate={:.2f}, aux={:.2f}, energy={:.2f}). '
+                    'Quant bn [{:.2f}, {:.2f}] '
+                    '({:.2f}, {:.2f}, {:.2f}), '
+                    'rec [{:.2f}, {:.2f}]'.format(
+                        i,
+                        len(data),
+                        sum_loss / (i+1),
+                        ','.join(['%0.4f' % d.item() for d in dist]),
+                        rate.item(),
+                        aux_loss.item(),
+                        loss_dict.get('energy', 0.0),
+                        y.detach().min(),
+                        y.detach().max(),
+                        *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                        x_r[0].detach().min(),
+                        x_r[0].detach().max()))
 
     if args.print_log:
         q.close()
@@ -158,7 +198,9 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 if args.gpu:
                     entropy_model.cuda()
 
-                loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model, entropy_model=entropy_model)
+                loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y,
+                                      net=synthesizer,
+                                      entropy_model=entropy_model)
                 if 'energy' in loss_dict:
                     extra_info = torch.mean(loss_dict['energy'])
                 loss = torch.mean(loss_dict['dist_rate_loss'])
@@ -180,7 +222,31 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                     if args.print_log:
                         if q_penalty is None:
                             q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, position=2, leave=None)
-                        q_penalty.set_description('Sub-iter loss=%0.4f, energy=%0.4f, aux=%0.4f' % (step_loss, extra_info, aux_loss.item()))
+
+                        with torch.no_grad():
+                            dist = criterion.compute_dist(x=x, x_r=x_r)
+                            rate = criterion.compute_rate(x=x, p_y=p_y)
+
+                        if not isinstance(dist, list):
+                            dist = [dist]
+
+                        q_penalty.set_description(
+                            'Sub-iter Loss {:.4f} (dist=[{}], rate={:.2f}, '
+                            'aux={:.2f}, energy={:.3f}) '
+                            'Quant bn [{:.2f}, {:.2f}] '
+                            '({:.2f}, {:.2f}, {:.2f}), '
+                            'rec [{:.2f}, {:.2f}]'.format(
+                                step_loss,
+                                ','.join(['%0.4f' % d.item() for d in dist]),
+                                rate.item(),
+                                aux_loss.item(),
+                                loss_dict.get('energy', 0.0),
+                                y.detach().min(),
+                                y.detach().max(),
+                                *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                                x_r[0].detach().min(),
+                                x_r[0].detach().max()))
+
                         q_penalty.update()
                     stopping_criteria['penalty'].update(iteration=step,
                                                         metric=extra_info.item())
@@ -197,30 +263,62 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
             if (scheduler is not None
                and 'metrics' not in signature(scheduler.step).parameters):
                 scheduler.step()
+
             # End of training step
 
             with torch.no_grad():
                 dist = criterion.compute_dist(x=x, x_r=x_r)
                 rate = criterion.compute_rate(x=x, p_y=p_y)
+
             if not isinstance(dist, list):
                 dist = [dist]
                 x_r = [x_r]
 
             if args.print_log:
-                q.set_description('Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}, aux={:.4f}). Quant bn [{:.4f}, {:.4f}], rec [{:.4f}, {:.4f}]'.format(
-                    step_loss, sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), aux_loss.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+                q.set_description(
+                    'Training Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f},'
+                    ' energy={:2f}). Quant bn [{:.2f}, {:.2f}] '
+                    '({:.2f}, {:.2f}, {:.2f}), '
+                    'rec [{:.2f}, {:.2f}]'.format(
+                        sum_loss / (i+1),
+                        ','.join(['%0.4f' % d.item() for d in dist]),
+                        rate.item(),
+                        aux_loss.item(),
+                        loss_dict.get('energy', 0.0),
+                        y.detach().min(),
+                        y.detach().max(),
+                        *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                        x_r[0].detach().min(),
+                        x_r[0].detach().max()))
                 q.update()
 
             else:
                 # Log the training performance every 10% of the training set
                 if i % max(1, int(0.01 * len(train_data))) == 0:
-                    logger.debug('\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} ({:.4f}: dist=[{}], rate={:.4f}). Quantized compressed representation in [{:.4f}, {:.4f}], reconstruction in [{:.4f}, {:.4f}]'.format(
-                    step, i, len(train_data), loss.item(), sum_loss / (i+1), ','.join(['%0.4f' % d.item() for d in dist]), rate.item(), y.detach().min(), y.detach().max(), x_r[0].detach().min(), x_r[0].detach().max()))
+                    logger.debug(
+                        '\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} '
+                        '(dist=[{}], rate={:.2f}, aux={:.2f}'
+                        'energy={:2f} ). Quant bn [{:.2f}, {:.2f}] '
+                        '({:.2f}, {:.2f}, {:.2f}), '
+                        'rec [{:.2f}, {:.2f}]'.format(
+                            step, i,
+                            sum_loss / (i+1),
+                            ','.join(['%0.4f' % d.item() for d in dist]),
+                            rate.item(),
+                            aux_loss.item(),
+                            loss_dict.get('energy', 0.0),
+                            y.detach().min(),
+                            y.detach().max(),
+                            *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                            x_r[0].detach().min(),
+                            x_r[0].detach().max()))
 
             # Checkpoint step
             keep_training = stopping_criteria['early_stopping'].check()
 
-            if not keep_training or (step >= args.early_warmup and (step-args.early_warmup) % args.checkpoint_steps == 0):
+            if (not keep_training
+              or (step >= args.early_warmup
+                  and (step-args.early_warmup) % args.checkpoint_steps == 0)):
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
@@ -228,20 +326,35 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
 
                 cae_model.train()
 
-                stopping_info = ';'.join(map(lambda k_sc: k_sc[0] + ": " + k_sc[1].__repr__(), stopping_criteria.items()))
+                stopping_info = ';'.join(map(lambda k_sc:\
+                                             k_sc[0] + ": " + k_sc[1].__repr__(),
+                                             stopping_criteria.items()))
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
                 if not args.print_log:
-                    logger.info('[Step {:06d} ({})] Training loss {:0.4f}, validation loss {:.4f}, best validation loss {:.4f}, learning rate {:e}, stopping criteria: {}'.format(
-                        step, 'training' if keep_training else 'stopping', train_loss, valid_loss, best_valid_loss, optimizer.param_groups[0]['lr'], stopping_info)
+                    logger.info(
+                        '[Step {:06d} ({})] Training loss {:0.4f}, validation '
+                        'loss {:.4f}, best validation loss {:.4f}, learning '
+                        'rate {:e}, stopping criteria: {}'.format(
+                            step, 'training' if keep_training else 'stopping',
+                            train_loss,
+                            valid_loss,
+                            best_valid_loss,
+                            optimizer.param_groups[0]['lr'],
+                            stopping_info)
                     )
 
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
 
                 # Save the current training state in a checkpoint file
-                best_valid_loss = utils.checkpoint(step, cae_model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args)
+                best_valid_loss = utils.checkpoint(step, cae_model, optimizer,
+                                                   scheduler,
+                                                   best_valid_loss,
+                                                   train_loss_history,
+                                                   valid_loss_history,
+                                                   args)
 
                 stopping_criteria['early_stopping'].update(iteration=step,
                                                            metric=valid_loss)
@@ -267,8 +380,9 @@ def setup_network(args):
     Parameters
     ----------
     args : Namespace
-        The input arguments passed at running time. All the parameters are passed directly to the model constructor.
-        This way, the constructor can take the parameters needed that have been passed by the user.
+        The input arguments passed at running time. All the parameters are
+        passed directly to the model constructor. This way, the constructor can
+        take the parameters needed that have been passed by the user.
 
     Returns
     -------
@@ -315,7 +429,7 @@ def setup_criteria(args):
 
     criterion_name = ''
 
-    args_dict['max_iterations'] = 100
+    args_dict['max_iterations'] = 2
     args_dict['target'] = args_dict['energy_limit']
     if 'PA' in args_dict['criterion']:
         args_dict['comparison'] = 'le'
@@ -456,7 +570,8 @@ def main(args):
     Parameters
     ----------
     args : dict or Namespace
-        The set of parameters passed to the different constructors to set up the convolutional autoencoder training
+        The set of parameters passed to the different constructors to set up
+        the convolutional autoencoder training.
     """
     logger = logging.getLogger(args.mode + '_log')
 
@@ -465,7 +580,8 @@ def main(args):
     optimizer, aux_optimizer, scheduler = setup_optim(cae_model, args)
 
     if args.resume is not None:
-        resume_checkpoint(cae_model, optimizer, scheduler, args.resume, gpu=args.gpu)
+        resume_checkpoint(cae_model, optimizer, scheduler, args.resume,
+                          gpu=args.gpu)
 
     # Log the training setup
     logger.info('Network architecture:')
@@ -487,7 +603,12 @@ def main(args):
 
     train_data, valid_data = utils.get_data(args)
 
-    train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, aux_optimizer, scheduler, args)
+    train(forward_fun, cae_model, train_data, valid_data, criterion,
+          stopping_criteria,
+          optimizer,
+          aux_optimizer,
+          scheduler,
+          args)
 
 
 if __name__ == '__main__':
