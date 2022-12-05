@@ -62,10 +62,8 @@ def valid(cae_model, data, criterion, args):
             
             aux_loss = torch.mean(loss_dict['entropy_loss'])
 
-            dist = criterion.compute_dist(x=x, x_r=x_r)
-            rate = criterion.compute_rate(x=x, p_y=p_y)
-            if not isinstance(dist, list):
-                dist = [dist]
+            if not isinstance(x_r, list):
+                x_r = [x_r]
 
             if args.print_log:
                 q.set_description(

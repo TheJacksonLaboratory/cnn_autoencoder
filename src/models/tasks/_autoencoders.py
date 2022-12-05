@@ -601,6 +601,7 @@ class Synthesizer(nn.Module):
         x = self.color_layers[-1](x)
         return x
 
+
 class SynthesizerInflate(Synthesizer):
     def __init__(self, rec_level=-1, color=True, **kwargs):
         super(SynthesizerInflate, self).__init__(**kwargs)

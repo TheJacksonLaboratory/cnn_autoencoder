@@ -144,7 +144,7 @@ class RateLoss:
 
             tails = net.fact_entropy.tails
 
-        q_seq = net(tails, factorized_entropy_only=True)
+        q_seq = net(x=tails, factorized_entropy_only=True)
 
         for par in fact_ent_pars:
             par.requires_grad = is_training
@@ -265,6 +265,9 @@ class PenaltyB:
              for k in range(K)], dim=0)
 
         fake_rec = net(fake_codes, synthesize_only=True)
+        if isinstance(fake_rec, list):
+            fake_rec = fake_rec[0]
+
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / torch.sum(B)
 
