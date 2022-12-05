@@ -127,27 +127,27 @@ class RateLoss:
     def compute_entropy_loss(self, net, **kwargs):
         is_training = net.training
 
+        fact_ent_pars = []
         if hasattr(net, 'module'):
             for par_name, par in net.module.fact_entropy.named_parameters():
                 if 'tails' not in par_name:
                     par.requires_grad = False
+                    fact_ent_pars.append(par)
 
-            q_seq = net(net.module.fact_entropy.tails,
-                        factorized_entropy_only=True)
-
-            for par in net.module.fact_entropy.parameters():
-                par.requires_grad = is_training
+            tails = net.module.fact_entropy.tails
 
         else:
             for par_name, par in net.fact_entropy.named_parameters():
                 if 'tails' not in par_name:
                     par.requires_grad = False
+                    fact_ent_pars.append(par)
 
-            q_seq = net(net.module.fact_entropy.tails,
-                        factorized_entropy_only=True)
+            tails = net.fact_entropy.tails
 
-            for par in net.fact_entropy.parameters():
-                par.requires_grad = is_training
+        q_seq = net(tails, factorized_entropy_only=True)
+
+        for par in fact_ent_pars:
+            par.requires_grad = is_training
 
         entropy_loss = torch.abs(q_seq
                                  - self._target_mass.to(q_seq.device)).sum()
