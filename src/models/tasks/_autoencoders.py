@@ -601,19 +601,6 @@ class Synthesizer(nn.Module):
         x = self.color_layers[-1](x)
         return x
 
-    def forward_steps(self, x):
-        fx = self.synthesis_track[0](x.to(self.synthesis_track[0].weight.device))
-
-        x_r_ms = []
-        for up_layer, color_layer in zip(self.synthesis_track[1:],
-                                         self.color_layers):
-            fx = up_layer(fx)
-            x_r = color_layer(fx)
-            x_r_ms.insert(0, x_r)
-
-        return x_r_ms
-
-
 class SynthesizerInflate(Synthesizer):
     def __init__(self, rec_level=-1, color=True, **kwargs):
         super(SynthesizerInflate, self).__init__(**kwargs)
@@ -639,8 +626,9 @@ class SynthesizerInflate(Synthesizer):
 
 
 class AutoEncoder(nn.Module):
-    """ AutoEncoder encapsulates the full compression-decompression process.
-    In this manner, the network can be trained end-to-end.
+    """ AutoEncoderBase encapsulates the full compression-decompression process.
+    In this manner, the network can be trained end-to-end, but its modules can
+    be saved and accessed separatelly
     """
     def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
                  compression_level=3,
@@ -652,6 +640,7 @@ class AutoEncoder(nn.Module):
                  bias=False,
                  use_residual=False,
                  act_layer_type=None,
+                 multiscale_analysis=False,
                  K=4,
                  r=3,
                  **kwargs):
@@ -676,28 +665,42 @@ class AutoEncoder(nn.Module):
                                  use_residual=use_residual,
                                  act_layer_type=act_layer_type)
 
-        self.synthesis = Synthesizer(channels_org=channels_org,
-                                     channels_net=channels_net,
-                                     channels_bn=channels_bn,
-                                     compression_level=compression_level,
-                                     channels_expansion=channels_expansion,
-                                     kernel_size=kernel_size,
-                                     groups=groups,
-                                     batch_norm=batch_norm,
-                                     dropout=dropout,
-                                     bias=bias,
-                                     use_residual=use_residual,
-                                     act_layer_type=act_layer_type)
+        if multiscale_analysis:
+            synthesizer_class = SynthesizerInflate
+        else:
+            synthesizer_class = Synthesizer
 
-        self.fact_entropy = FactorizedEntropy(channels_bn, K=K, r=r)
+        self.synthesis = synthesizer_class(
+            channels_org=channels_org,
+            channels_net=channels_net,
+            channels_bn=channels_bn,
+            compression_level=compression_level,
+            channels_expansion=channels_expansion,
+            kernel_size=kernel_size,
+            groups=groups,
+            batch_norm=batch_norm,
+            dropout=dropout,
+            bias=bias,
+            use_residual=use_residual,
+            act_layer_type=act_layer_type)
 
-    def forward(self, x, synthesize_only=False):
+        self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
+
+    def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
         if synthesize_only:
-            return self.synthesis(x)
+            # When running on synthesize only mode, use x as y_q
+            x_r = self.synthesis(x)
+            return x_r
+
+        elif factorized_entropy_only:
+            p_y = (torch.sigmoid(self.fact_entropy(x + 0.5))
+                   - torch.sigmoid(self.fact_entropy(x - 0.5)))
+            return p_y
 
         fx = self.embedding(x)
 
         y_q, y = self.analysis(fx)
+
         p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
                - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
 
@@ -706,23 +709,6 @@ class AutoEncoder(nn.Module):
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
-
-    def forward_steps(self, x, synthesize_only=False):
-        if synthesize_only:
-            return self.synthesis(x.to(self.synthesis.synthesis_track[0].weight.device))
-
-        fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
-
-        y_q, y = self.analysis(fx)
-        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
-
-        p_y = F.hardtanh(p_y, min_val=1e-9, max_val=1.0)
-
-        # Get the reconstruction at multiple scales
-        x_r_ms = self.synthesis.forward_steps(y_q)
-
-        return x_r_ms, y, p_y
 
 
 class MaskedAutoEncoder(nn.Module):
@@ -738,6 +724,7 @@ class MaskedAutoEncoder(nn.Module):
                  bias=False,
                  use_residual=False,
                  act_layer_type=None,
+                 multiscale_analysis=False,
                  K=4,
                  r=3,
                  n_masks=1,
@@ -745,16 +732,16 @@ class MaskedAutoEncoder(nn.Module):
                  **kwargs):
         super(MaskedAutoEncoder, self).__init__()
 
+        self.masking = RandMasking(n_masks=n_masks, masks_size=masks_size)
+        self.pos_enc = PositionalEncoding(channels_net, max_dim=1024,
+                                          dropout=dropout)
+
         # Initial color embedding
         self.embedding = ColorEmbedding(channels_org=channels_org,
                                         channels_net=channels_net,
                                         kernel_size=kernel_size,
                                         groups=groups,
                                         bias=bias)
-
-        self.masking = RandMasking(n_masks=n_masks, masks_size=masks_size)
-        self.pos_enc = PositionalEncoding(channels_net, max_dim=1024,
-                                          dropout=dropout)
 
         self.analysis = Analyzer(channels_net=channels_net,
                                  channels_bn=channels_bn,
@@ -767,19 +754,24 @@ class MaskedAutoEncoder(nn.Module):
                                  bias=bias,
                                  use_residual=use_residual,
                                  act_layer_type=act_layer_type)
+        if multiscale_analysis:
+            synthesizer_class = SynthesizerInflate
+        else:
+            synthesizer_class = Synthesizer
 
-        self.synthesis = Synthesizer(channels_org=channels_org,
-                                     channels_net=channels_net,
-                                     channels_bn=channels_bn,
-                                     compression_level=compression_level,
-                                     channels_expansion=channels_expansion,
-                                     kernel_size=kernel_size,
-                                     groups=groups,
-                                     batch_norm=batch_norm,
-                                     dropout=dropout,
-                                     bias=bias,
-                                     use_residual=use_residual,
-                                     act_layer_type=act_layer_type)
+        self.synthesis = synthesizer_class(
+            channels_org=channels_org,
+            channels_net=channels_net,
+            channels_bn=channels_bn,
+            compression_level=compression_level,
+            channels_expansion=channels_expansion,
+            kernel_size=kernel_size,
+            groups=groups,
+            batch_norm=batch_norm,
+            dropout=dropout,
+            bias=bias,
+            use_residual=use_residual,
+            act_layer_type=act_layer_type)
 
         self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
 
@@ -800,22 +792,3 @@ class MaskedAutoEncoder(nn.Module):
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
-
-    def forward_steps(self, x, synthesize_only=False):
-        if synthesize_only:
-            return self.synthesis(x.to(self.synthesis.synthesis_track[0].weight.device))
-
-        fx = self.embedding(x.to(self.synthesis.synthesis_track[0].weight.device))
-        fx = self.masking(fx)
-        fx = self.pos_enc(fx)
-
-        y_q, y = self.analysis(fx)
-        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
-
-        p_y = F.hardtanh(p_y, min_val=1e-9, max_val=1.0)
-
-        # Get the reconstruction at multiple scales
-        x_r_ms = self.synthesis.forward_steps(y_q)
-
-        return x_r_ms, y, p_y

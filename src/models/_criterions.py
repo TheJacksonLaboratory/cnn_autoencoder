@@ -23,11 +23,13 @@ class DistortionLossBase:
 
     def compute_weighted_dist(self, x, x_r, **kwargs):
         dist = self.compute_dist(x, x_r)
+
         if not isinstance(dist, list):
             dist = [dist]
 
-        dist = [d_l * d for d_l, d in zip(self._distortion_lambda, dist)]
-        return dist
+        weighted_dist = [d_l * d for d_l, d in zip(self._distortion_lambda, dist)]
+
+        return dict(weighted_dist=weighted_dist, dist=dist)
 
 
 class PyramidLossMixin:
@@ -72,17 +74,18 @@ class RateDistortionMixin:
         super().__init__(**kargs)
 
     def __call__(self, **kwargs):
-        dist = self.compute_weighted_dist(**kwargs)
-        dist = reduce(lambda d1, d2: d1 + d2, dist)
+        dist_dict = self.compute_weighted_dist(**kwargs)
+        dist_dict['dist_loss'] = reduce(lambda d1, d2: d1 + d2,
+                                        dist_dict['weighted_dist'])
 
-        rate = self.compute_rate(**kwargs)
+        dist_dict.update(self.compute_rate(**kwargs))
 
-        dist_rate = dist + rate
+        dist_dict['dist_rate_loss'] = (dist_dict['dist_loss']
+                                       + dist_dict['rate_loss'])
 
-        entropy_loss = self.compute_entropy_loss(**kwargs)
+        dist_dict.update(self.compute_entropy_loss(**kwargs))
 
-        return dict(dist_rate_loss=dist_rate,
-                    entropy_loss=entropy_loss)
+        return dist_dict
 
 
 class RateDistortionPenaltyMixin:
@@ -90,20 +93,21 @@ class RateDistortionPenaltyMixin:
         super().__init__(**kargs)
 
     def __call__(self, **kwargs):
-        dist = self.compute_weighted_dist(**kwargs)
-        dist = reduce(lambda d1, d2: d1 + d2, dist)
+        dist_dict = self.compute_weighted_dist(**kwargs)
+        dist_dict['dist_loss'] = reduce(lambda d1, d2: d1 + d2,
+                                        dist_dict['weighted_dist'])
 
-        rate = self.compute_rate(**kwargs)
+        dist_dict.update(self.compute_rate(**kwargs))
 
-        penalty, energy = self.compute_penalty(**kwargs)
+        dist_dict.update(self.compute_entropy_loss(**kwargs))
 
-        dist_rate_penalty = dist + rate + penalty
+        dist_dict.update(self.compute_penalty(**kwargs))
 
-        entropy_loss = self.compute_entropy_loss(**kwargs)
+        dist_dict['dist_rate_loss'] = (dist_dict['dist_loss']
+                                       + dist_dict['rate_loss']
+                                       + dist_dict['weighted_penalty'])
 
-        return dict(dist_rate_loss=dist_rate_penalty,
-                    energy=energy,
-                    entropy_loss=entropy_loss)
+        return dist_dict
 
 
 class RateLoss:
@@ -115,25 +119,40 @@ class RateLoss:
 
     def compute_rate(self, x, p_y, **kwargs):
         # Rate of compression:
-        rate = (torch.sum(-torch.log2(p_y))
-                / (x.size(0) * x.size(2) * x.size(3)))
-        return rate
+        rate_loss = (torch.sum(-torch.log2(p_y))
+                     / (x.size(0) * x.size(2) * x.size(3)))
 
-    def compute_entropy_loss(self, entropy_model, **kwargs):
-        is_training = entropy_model.training
-        for par_name, par in entropy_model.named_parameters():
-            if 'tails' not in par_name:
-                par.requires_grad = False
+        return {'rate_loss': rate_loss}
 
-        if hasattr(entropy_model, 'module'):
-            q_seq = entropy_model(entropy_model.module.tails)
+    def compute_entropy_loss(self, net, **kwargs):
+        is_training = net.training
+
+        if hasattr(net, 'module'):
+            for par_name, par in net.module.fact_entropy.named_parameters():
+                if 'tails' not in par_name:
+                    par.requires_grad = False
+
+            q_seq = net(net.module.fact_entropy.tails,
+                        factorized_entropy_only=True)
+
+            for par in net.module.fact_entropy.parameters():
+                par.requires_grad = is_training
+
         else:
-            q_seq = entropy_model(entropy_model.tails)
+            for par_name, par in net.fact_entropy.named_parameters():
+                if 'tails' not in par_name:
+                    par.requires_grad = False
 
-        for par in entropy_model.parameters():
-            par.requires_grad = is_training
+            q_seq = net(net.module.fact_entropy.tails,
+                        factorized_entropy_only=True)
 
-        return torch.abs(q_seq - self._target_mass.to(q_seq.device)).sum()
+            for par in net.fact_entropy.parameters():
+                par.requires_grad = is_training
+
+        entropy_loss = torch.abs(q_seq
+                                 - self._target_mass.to(q_seq.device)).sum()
+
+        return {'entropy_loss': entropy_loss}
 
 
 class DistortionLoss(DistortionLossBase):
@@ -211,13 +230,14 @@ class PenaltyA:
         A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
         A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
 
-
-        P_A = torch.sum(-A * torch.log2(A + 1e-10), dim=1)
+        P_A = torch.mean(torch.sum(-A * torch.log2(A + 1e-10), dim=1))
 
         # Compute the maximum energy consentrated among the layers
-        max_energy = A.detach().max(dim=1)[0]
+        max_energy = A.detach().max(dim=1)[0].mean()
 
-        return self._penalty_beta * torch.mean(P_A), torch.mean(max_energy)
+        return dict(weighted_penalty=self._penalty_beta * P_A,
+                    penalty=P_A,
+                    energy=max_energy)
 
 
 class PenaltyB:
@@ -244,7 +264,7 @@ class PenaltyB:
             [torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1)
              for k in range(K)], dim=0)
 
-        fake_rec = net(fake_codes)
+        fake_rec = net(fake_codes, synthesize_only=True)
         B = torch.var(fake_rec, dim=(1, 2, 3))
         B = B / torch.sum(B)
 
@@ -252,8 +272,11 @@ class PenaltyB:
                            kernel_size=K,
                            stride=K).squeeze()
         P_B = B[max_energy_channel]
-
-        return self._penalty_beta * P_B.mean(), P_B.detach().mean()
+        P_B = P_B.mean()
+ 
+        return dict(weighted_penalty=self._penalty_beta * P_B,
+                    penalty=P_B.detach(),
+                    energy=P_B.detach())
 
 
 class RateMSE(RateDistortionMixin,

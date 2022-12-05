@@ -2,7 +2,6 @@ import logging
 
 import torch
 import torch.nn as nn
-from torch.nn.parallel.data_parallel import DataParallel
 import torch.optim as optim
 
 import models
@@ -23,28 +22,18 @@ model_options = {"AutoEncoder": models.AutoEncoder,
                  "MaskedAutoEncoder": models.MaskedAutoEncoder}
 
 
-def forward_step_base(x, cae_model):
-    x_r, y, p_y = cae_model(x)
-    return x_r, y, p_y
-
-
-def forward_step_pyramid(x, cae_model):
-    x_r, y, p_y = cae_model.module.forward_steps(x)
-    return x_r, y, p_y
-
-
-def valid(forward_fun, cae_model, data, criterion, args):
+def valid(cae_model, data, criterion, args):
     """ Validation step.
-    Evaluates the performance of the network in its current state using the full set of validation elements.
+    Evaluates the performance of the network in its current state using the
+    full set of validation elements.
 
     Parameters
     ----------
-    forward_fun : function
-        The function used to make the forward pass to the input batch
     cae_model : torch.nn.Module
         The network model in the current state
     data : torch.utils.data.DataLoader or list[tuple]
-        The validation dataset. Because the target is recosntruct the input, the label associated is ignored
+        The validation dataset. Because the target is recosntruct the input,
+        the label associated is ignored
     criterion : function or torch.nn.Module
         The loss criterion to evaluate the network's performance
     args: Namespace
@@ -53,7 +42,8 @@ def valid(forward_fun, cae_model, data, criterion, args):
     Returns
     -------
     mean_loss : float
-        Mean value of the criterion function over the full set of validation elements
+        Mean value of the criterion function over the full set of validation
+        elements
     """
     logger = logging.getLogger(args.mode + '_log')
 
@@ -64,18 +54,9 @@ def valid(forward_fun, cae_model, data, criterion, args):
         q = tqdm(total=len(data), desc='Validating', position=1, leave=None)
     with torch.no_grad():
         for i, (x, _) in enumerate(data):
-            x_r, y, p_y = forward_fun(x, cae_model)
+            x_r, y, p_y = cae_model(x)
 
-            synthesizer = DataParallel(cae_model.module.synthesis)
-            if args.gpu:
-                synthesizer.cuda()
-
-            entropy_model = DataParallel(cae_model.module.fact_entropy)
-            if args.gpu:
-                entropy_model.cuda()
-
-            loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=synthesizer,
-                                entropy_model=entropy_model)
+            loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
             loss = torch.mean(loss_dict['dist_rate_loss'])
             sum_loss += loss.item()
             
@@ -93,13 +74,13 @@ def valid(forward_fun, cae_model, data, criterion, args):
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in dist]),
-                        rate.item(),
+                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
+                        loss_dict['rate_loss'].item(),
                         aux_loss.item(),
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                        *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
                 q.update()
@@ -113,13 +94,13 @@ def valid(forward_fun, cae_model, data, criterion, args):
                         i,
                         len(data),
                         sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in dist]),
-                        rate.item(),
+                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
+                        loss_dict['rate_loss'].item(),
                         aux_loss.item(),
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                        *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
 
@@ -130,18 +111,22 @@ def valid(forward_fun, cae_model, data, criterion, args):
     return mean_loss
 
 
-def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_criteria, optimizer, aux_optimizer, scheduler, args):
+def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
+          optimizer,
+          aux_optimizer,
+          scheduler,
+          args):
     """Training loop by steps.
     This loop involves validation and network training checkpoint creation.
 
     Parameters
     ----------
-    forward_fun : function
-        The function used to make the forward pass to the input batch
     cae_model : torch.nn.Module
         The model to be trained
     train_data : torch.utils.data.DataLoader or list[tuple]
-        The training data. Must contain the input and respective label; however, only the input is used because the target is reconstructing the input
+        The training data. Must contain the input and respective label;
+        however, only the input is used because the target is reconstructing
+        the input
     valid_data : torch.utils.data.DataLoader or list[tuple]
         The validation data.
     criterion : function or torch.nn.Module
@@ -189,25 +174,15 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 optimizer.zero_grad()
                 aux_optimizer.zero_grad()
 
-                x_r, y, p_y = forward_fun(x, cae_model)
-
-                synthesizer = DataParallel(cae_model.module.synthesis)
-                if args.gpu:
-                    synthesizer.cuda()
-
-                entropy_model = DataParallel(cae_model.module.fact_entropy)
-                if args.gpu:
-                    entropy_model.cuda()
+                x_r, y, p_y = cae_model(x)
 
                 loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y,
-                                      net=synthesizer,
-                                      entropy_model=entropy_model)
-                if 'energy' in loss_dict:
-                    extra_info = torch.mean(loss_dict['energy'])
+                                      net=cae_model)
                 loss = torch.mean(loss_dict['dist_rate_loss'])
                 loss.backward()
 
-                # Clip the gradients to prevent from exploding gradients problems
+                # Clip the gradients to prevent from exploding gradients
+                # problems
                 nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=1.0)
                 optimizer.step()
                 step_loss = loss.item()
@@ -216,19 +191,18 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 aux_loss.backward()
                 aux_optimizer.step()
 
+                if not isinstance(x_r, list):
+                    x_r = [x_r]
+                    
                 # When training with penalty on the energy of the compression
                 # representation, update the respective stopping criterion
                 if 'penalty' in stopping_criteria.keys():
                     if args.print_log:
                         if q_penalty is None:
-                            q_penalty = tqdm(total=stopping_criteria['penalty']._max_iterations, position=2, leave=None)
-
-                        with torch.no_grad():
-                            dist = criterion.compute_dist(x=x, x_r=x_r)
-                            rate = criterion.compute_rate(x=x, p_y=p_y)
-
-                        if not isinstance(dist, list):
-                            dist = [dist]
+                            q_penalty = tqdm(
+                                total=stopping_criteria['penalty']._max_iterations,
+                                position=2,
+                                leave=None)
 
                         q_penalty.set_description(
                             'Sub-iter Loss {:.4f} (dist=[{}], rate={:.2f}, '
@@ -237,19 +211,20 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                             '({:.2f}, {:.2f}, {:.2f}), '
                             'rec [{:.2f}, {:.2f}]'.format(
                                 step_loss,
-                                ','.join(['%0.4f' % d.item() for d in dist]),
-                                rate.item(),
-                                aux_loss.item(),
+                                ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
+                                loss_dict['rate_loss'].item(),
+                                aux_loss,
                                 loss_dict.get('energy', 0.0),
                                 y.detach().min(),
                                 y.detach().max(),
-                                *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                                *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
                                 x_r[0].detach().min(),
                                 x_r[0].detach().max()))
 
                         q_penalty.update()
+
                     stopping_criteria['penalty'].update(iteration=step,
-                                                        metric=extra_info.item())
+                                                        metric=torch.mean(loss_dict['energy']).item())
 
                     if not stopping_criteria['penalty'].check():
                         if args.print_log:
@@ -266,14 +241,6 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
 
             # End of training step
 
-            with torch.no_grad():
-                dist = criterion.compute_dist(x=x, x_r=x_r)
-                rate = criterion.compute_rate(x=x, p_y=p_y)
-
-            if not isinstance(dist, list):
-                dist = [dist]
-                x_r = [x_r]
-
             if args.print_log:
                 q.set_description(
                     'Training Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f},'
@@ -281,13 +248,13 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in dist]),
-                        rate.item(),
+                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
+                        loss_dict['rate_loss'].item(),
                         aux_loss.item(),
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                        *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
                 q.update()
@@ -301,15 +268,15 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                         'energy={:3f} ). Quant bn [{:.2f}, {:.2f}] '
                         '({:.2f}, {:.2f}, {:.2f}), '
                         'rec [{:.2f}, {:.2f}]'.format(
-                            step, i,
+                            step, i, len(train_data),
                             sum_loss / (i+1),
-                            ','.join(['%0.4f' % d.item() for d in dist]),
-                            rate.item(),
+                            ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
+                            loss_dict['rate_loss'].item(),
                             aux_loss.item(),
                             loss_dict.get('energy', 0.0),
                             y.detach().min(),
                             y.detach().max(),
-                            *entropy_model.module.tails.detach().mean(dim=(0, 1, 3)),
+                            *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
                             x_r[0].detach().min(),
                             x_r[0].detach().max()))
 
@@ -322,7 +289,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(forward_fun, cae_model, valid_data, criterion, args)
+                valid_loss = valid(cae_model, valid_data, criterion, args)
 
                 cae_model.train()
 
@@ -370,6 +337,7 @@ def train(forward_fun, cae_model, train_data, valid_data, criterion, stopping_cr
 
     if args.print_log:
         q.close()
+
     # Return True if the training finished sucessfully
     return completed
 
@@ -391,6 +359,7 @@ def setup_network(args):
     """
 
     # The autoencoder model contains all the modules
+    args.multiscale_analysis = 'Multiscale' in args.criterion
     cae_model = model_options[args.model_type](**args.__dict__)
 
     # If there are more than one GPU, DataParallel handles automatically the distribution of the work
@@ -418,48 +387,44 @@ def setup_criteria(args):
         A list of stopping criteria. The first element is always set to stop the training after a fixed number of iterations.
         Depending on the criterion used, additional stopping criteria is set.        
     """
-    args_dict = args.__dict__
 
     # Early stopping criterion:
     stopping_criteria = {
         'early_stopping': models.EarlyStoppingPatience(
             max_iterations=args.steps,
-            **args_dict)
+            **args.__dict__)
     }
 
     criterion_name = ''
 
-    args_dict['max_iterations'] = args.sub_iter_steps
-    args_dict['target'] = args_dict['energy_limit']
-    if 'PA' in args_dict['criterion']:
-        args_dict['comparison'] = 'le'
-        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args_dict)
+    args.max_iterations = args.sub_iter_steps
+    args.target = args.energy_limit
+    if 'PA' in args.criterion:
+        args.comparison = 'le'
+        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args.__dict__)
         criterion_name = 'PenaltyA'
 
-    elif 'PB' in args_dict['criterion']:
-        args_dict['comparison'] = 'ge'
-        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args_dict)
+    elif 'PB' in args.criterion:
+        args.comparison = 'ge'
+        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args.__dict__)
         criterion_name = 'PenaltyB'
 
-    if 'RD' in args_dict['criterion']:
+    if 'RD' in args.criterion:
         criterion_name = 'RateMSE' + criterion_name
-    elif 'RMS-SSIM' in args_dict['criterion']:
+    elif 'RMS-SSIM' in args.criterion:
         criterion_name = 'RateMSSSIM' + criterion_name
 
     # Loss function
-    if 'Multiscale' in args_dict['criterion']:
-        forward_fun = forward_step_pyramid
+    if 'Multiscale' in args.criterion:
         criterion_name = 'Multiscale' + criterion_name
-    else:
-        forward_fun = forward_step_base
 
     if criterion_name not in models.LOSS_LIST:
         raise ValueError(
-            'Criterion \'%s\' not supported' % args_dict['criterion'])
+            'Criterion \'%s\' not supported' % args.criterion)
 
-    criterion = models.LOSS_LIST[criterion_name](**args_dict)
+    criterion = models.LOSS_LIST[criterion_name](**args.__dict__)
 
-    return forward_fun, criterion, stopping_criteria
+    return criterion, stopping_criteria
 
 
 def setup_optim(cae_model, args):
@@ -572,7 +537,7 @@ def main(args):
     logger = logging.getLogger(args.mode + '_log')
 
     cae_model = setup_network(args)
-    forward_fun, criterion, stopping_criteria = setup_criteria(args)
+    criterion, stopping_criteria = setup_criteria(args)
     optimizer, aux_optimizer, scheduler = setup_optim(cae_model, args)
 
     if args.resume is not None:
@@ -599,8 +564,7 @@ def main(args):
 
     train_data, valid_data = utils.get_data(args)
 
-    train(forward_fun, cae_model, train_data, valid_data, criterion,
-          stopping_criteria,
+    train(cae_model, train_data, valid_data, criterion, stopping_criteria,
           optimizer,
           aux_optimizer,
           scheduler,
