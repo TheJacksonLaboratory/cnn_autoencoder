@@ -695,9 +695,8 @@ class AutoEncoder(nn.Module):
 
         elif factorized_entropy_only:
             # When running on factorized entropy only mode, use x as y_q
-            p_y = (torch.sigmoid(self.fact_entropy(x + 0.5))
-                   - torch.sigmoid(self.fact_entropy(x - 0.5)))
-            return p_y
+            log_p_y = self.fact_entropy(x)
+            return log_p_y
 
         fx = self.embedding(x)
 
