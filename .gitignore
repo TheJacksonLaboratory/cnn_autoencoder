@@ -125,4 +125,4 @@ dmypy.json
 *.json
 configs/*.json
 dask-worker-space/
-cnn_autoencoder.def
+*.def
