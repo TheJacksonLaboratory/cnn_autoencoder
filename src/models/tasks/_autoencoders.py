@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ._GDN import GDN
+from compressai.layers import GDN
+from compressai.entropy_models import EntropyBottleneck
 
 
 def _define_act_layer(act_layer_type, channels_in=None, track='analysis'):
@@ -18,7 +19,7 @@ def _define_act_layer(act_layer_type, channels_in=None, track='analysis'):
     elif act_layer_type == 'ReLU':
         act_layer = nn.ReLU(inplace=False)
     elif act_layer_type == 'GDN':
-        act_layer = GDN(ch=channels_in, inverse=track=='synthesis')
+        act_layer = GDN(in_channels=channels_in, inverse=track=='synthesis')
     else:
         raise ValueError(f'Activation layer {act_layer_type} not supported')
 
@@ -507,15 +508,15 @@ class Analyzer(nn.Module):
 
         self.analysis_track = nn.Sequential(*down_track)
 
-        self.quantizer = Quantizer()
+        # self.quantizer = Quantizer()
 
         self.apply(initialize_weights)
 
     def forward(self, x):
         y = self.analysis_track(x)
-
-        y_q = self.quantizer(y)
-        return y_q, y
+        # y_q = self.quantizer(y)
+        # return y_q, y
+        return y
 
 
 class Synthesizer(nn.Module):
@@ -685,7 +686,8 @@ class AutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
+        # self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
+        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
 
     def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
         if synthesize_only:
@@ -700,12 +702,15 @@ class AutoEncoder(nn.Module):
 
         fx = self.embedding(x)
 
-        y_q, y = self.analysis(fx)
+        # y_q, y = self.analysis(fx)
 
-        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
+        # p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
+        #        - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
 
-        p_y = F.hardtanh(p_y, min_val=1e-9, max_val=1.0)
+        # p_y = F.hardtanh(p_y, min_val=1e-9, max_val=1.0)
+
+        y = self.analysis(fx)
+        y_q, p_y = self.fact_entropy(y)
 
         x_r = self.synthesis(y_q)
 

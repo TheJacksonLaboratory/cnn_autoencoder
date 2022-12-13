@@ -78,7 +78,7 @@ def valid(cae_model, data, criterion, args):
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
+                        *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
                 q.update()
@@ -98,7 +98,7 @@ def valid(cae_model, data, criterion, args):
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
+                        *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
 
@@ -215,7 +215,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                                 loss_dict.get('energy', 0.0),
                                 y.detach().min(),
                                 y.detach().max(),
-                                *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
+                                *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
                                 x_r[0].detach().min(),
                                 x_r[0].detach().max()))
 
@@ -252,7 +252,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
+                        *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
                 q.update()
@@ -274,7 +274,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                             loss_dict.get('energy', 0.0),
                             y.detach().min(),
                             y.detach().max(),
-                            *cae_model.module.fact_entropy.tails.detach().mean(dim=(0, 1, 3)),
+                            *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
                             x_r[0].detach().min(),
                             x_r[0].detach().max()))
 
@@ -452,8 +452,9 @@ def setup_optim(cae_model, args):
 
     net_pars = []
     aux_pars = []
+
     for par_name, par in cae_model.named_parameters():
-        if 'tails' in par_name:
+        if 'quantiles' in par_name:
             aux_pars.append(par)
         else:
             net_pars.append(par)

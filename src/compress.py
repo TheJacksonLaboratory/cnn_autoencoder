@@ -18,7 +18,7 @@ import dask.array as da
 from numcodecs import Blosc
 
 import models
-
+from compressai.entropy_models import EntropyBottleneck
 import utils
 
 
@@ -235,12 +235,17 @@ def setup_network(state, use_gpu=False):
         state['args']['act_layer_type'] = 'LeakyReLU'
 
     embedding = models.ColorEmbedding(**state['args'])
-    comp_model = models.Analyzer(**state['args'])
+    analysis = models.Analyzer(**state['args'])
+    fact_ent = EntropyBottleneck(channels=state['args']['channels_bn'],
+                                 filters=tuple([state['args']['r'] * state['args']['K']))
 
     embedding.load_state_dict(state['embedding'])
-    comp_model.load_state_dict(state['encoder'])
+    analysis.load_state_dict(state['encoder'])
+    fact_ent.load_state_dict(state['fact_ent'])
 
-    comp_model = nn.Sequential(embedding, comp_model)
+    fact_ent.update(force=True)
+
+    comp_model = nn.Sequential(embedding, comp_model, fact_ent)
 
     comp_model = nn.DataParallel(comp_model)
     if use_gpu:
