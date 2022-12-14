@@ -515,7 +515,9 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
         for color_layer in cae_model.module.synthesis.color_layers:
             color_layer[0].weight.data.copy_(
                 checkpoint_state['decoder']['synthesis_track.4.weight'])
-    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
+
+    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'], strict=False)
+    cae_model.module.fact_entropy.update(force=True)
 
     if resume_optimizer:
         optimizer.load_state_dict(checkpoint_state['optimizer'])
