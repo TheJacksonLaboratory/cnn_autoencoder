@@ -245,7 +245,7 @@ def setup_network(state, use_gpu=False):
 
     fact_ent.update(force=True)
 
-    comp_model = nn.Sequential(embedding, comp_model, fact_ent)
+    comp_model = nn.Sequential(embedding, analysis, fact_ent)
 
     comp_model = nn.DataParallel(comp_model)
     if use_gpu:
