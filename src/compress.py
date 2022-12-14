@@ -237,7 +237,7 @@ def setup_network(state, use_gpu=False):
     embedding = models.ColorEmbedding(**state['args'])
     analysis = models.Analyzer(**state['args'])
     fact_ent = EntropyBottleneck(channels=state['args']['channels_bn'],
-                                 filters=tuple([state['args']['r'] * state['args']['K']]))
+                                 filters=tuple([state['args']['r']] * state['args']['K']))
 
     embedding.load_state_dict(state['embedding'])
     analysis.load_state_dict(state['encoder'])
