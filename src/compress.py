@@ -241,7 +241,7 @@ def setup_network(state, use_gpu=False):
 
     embedding.load_state_dict(state['embedding'])
     analysis.load_state_dict(state['encoder'])
-    fact_ent.load_state_dict(state['fact_ent'])
+    fact_ent.load_state_dict(state['fact_ent'], strict=False)
 
     fact_ent.update(force=True)
 
