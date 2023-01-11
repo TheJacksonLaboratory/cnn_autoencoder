@@ -686,7 +686,6 @@ class AutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        # self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
         self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
 
     def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
@@ -701,13 +700,6 @@ class AutoEncoder(nn.Module):
             return log_p_y
 
         fx = self.embedding(x)
-
-        # y_q, y = self.analysis(fx)
-
-        # p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-        #        - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
-
-        # p_y = F.hardtanh(p_y, min_val=1e-9, max_val=1.0)
 
         y = self.analysis(fx)
         y_q, p_y = self.fact_entropy(y)
@@ -779,7 +771,7 @@ class MaskedAutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        self.fact_entropy = FactorizedEntropy(channels_bn, K, r)
+        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
 
     def forward(self, x, synthesize_only=False):
         if synthesize_only:
@@ -789,12 +781,10 @@ class MaskedAutoEncoder(nn.Module):
         fx = self.masking(fx)
         fx = self.pos_enc(fx)
 
-        y_q, y = self.analysis(fx)
-        p_y = (torch.sigmoid(self.fact_entropy(y_q + 0.5))
-               - torch.sigmoid(self.fact_entropy(y_q - 0.5)))
+        y = self.analysis(fx)
 
-        p_y = F.hardtanh(p_y, min_val=1e-9, max_val=1.0)
-        
+        y_q, p_y = self.fact_entropy(y)
+
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
