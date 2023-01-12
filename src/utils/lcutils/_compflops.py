@@ -268,14 +268,7 @@ def add_flops_counter_variable_or_reset(module):
 
 
 def add_flops_counter_hook_function(module):
-    if isinstance(module, torch.nn.ConvTranspose2d):
-        if hasattr(module, '__flops_handle__'):
-            return
-
-        handle = module.register_forward_hook(conv_flops_counter_hook)
-        module.__flops_handle__ = handle
-
-    if isinstance(module, torch.nn.Conv2d):
+    if isinstance(module, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
         if hasattr(module, '__flops_handle__'):
             return
 

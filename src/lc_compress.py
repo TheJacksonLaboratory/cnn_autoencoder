@@ -1,194 +1,135 @@
-from functools import partial
-import models
+"""
+BSD 3-Clause License
+
+Copyright (c) 2020, The Regents of the University of California
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+From the examples module of the LC-Model-Compression package
+""" 
+
+
+import os
+import logging
 import utils
-from train_cae_ms import setup_network, resume_checkpoint, setup_criteria
+from train_cae_ms import setup_network, setup_criteria, resume_checkpoint
 
-import lc
-from lc.torch import ParameterTorch as Param, AsVector, AsIs
-from lc.compression_types import ConstraintL0Pruning, LowRank, RankSelection, AdaptiveQuantization
-
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-
-from tqdm import tqdm
+import argparse
+import time
+from torch.backends import cudnn
+cudnn.benchmark = True
 
 
-def compute_mse_loss(forward_fun, data):
-    """Performance evaluation.
-    Evaluates the performance of the network in its current state using the
-    full set of validation elements.
+def lc_exp_runner(exp_setup, lc_config, l_step_config, c_step_config, resume=False):
+    l_step_optimization, evaluation, create_lc_compression_task = exp_setup.lc_setup()
+    compression_tasks = create_lc_compression_task(c_step_config)
 
-    Parameters
-    ----------
-    forward_fun : function
-        The forward function applied to the input data to get its reconstructed
-        version after compressing it.
-    data : torch.utils.data.DataLoader or list[tuple]
-        The validation dataset. Because the target is reconstruct the input,
-        the label associated is ignored.
-
-    Returns
-    -------
-    mean_mse : float
-        Mean value of the MSE between the input and its reconstruction
-    mean_loss : float
-        Mean value of the criterion function over the full set of validation
-        elements
-    """
-    sum_loss = 0
-    sum_mse = 0
-    sum_rate = 0
-    total_count = 0
-
-    with torch.no_grad():
-        q = tqdm(total=len(data))
-        for i, (x, _) in enumerate(data):
-            mse, rate, loss = forward_fun(x)
-
-            # MSE and Loss values come averaged from the forward pass, so these
-            # are weighted for the final average computation.
-            sum_loss += loss * x.size(0)
-            sum_mse += mse * x.size(0)
-            sum_rate += rate * x.size(0)
-            total_count += x.size(0)
-
-            q.set_description(f'Performance evaluation. Loss: {sum_loss/total_count:0.3f} MSE: {sum_mse/total_count:0.3f} Rate: {sum_rate/total_count:0.3f}')
-            q.update()
-
-        q.close()
-
-    avg_loss = sum_loss / total_count
-    avg_mse = sum_mse / total_count
-    avg_rate = sum_rate / total_count
-
-    return avg_mse, avg_rate, avg_loss
+    lc_alg = utils.RankSelectionLcAlg(model=exp_setup.model,
+                                      compression_tasks=compression_tasks,
+                                      lc_config=lc_config,
+                                      l_step_optimization=l_step_optimization,
+                                      evaluation_func=evaluation,
+                                      l_step_config=l_step_config)
+    if resume:
+        lc_alg.run(name=exp_setup.name, tag=lc_config['tag'], restore=True)
+    else:
+        lc_alg.run(name=exp_setup.name, tag=lc_config['tag'])
 
 
-def train_test_eval_base(net, criterion, args):
-    train_loader, val_loader = utils.get_data(args)
-
-    def forward_func(x):
-        x_r, y, p_y = net(x)
-        loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=net)
-
-        loss = torch.mean(loss_dict['dist_rate_loss'])
-        mse = loss_dict['dist'][0]
-        rate = loss_dict['rate_loss']
-
-        return mse, rate, loss
-
-    mse_train, rate_train, loss_train = compute_mse_loss(forward_func, train_loader)
-    mse_val, rate_val, loss_val = compute_mse_loss(forward_func, val_loader)
-
-    print(f"Train MSE: {mse_train:0.4f}, Rate: {rate_train:0.4f}, train loss: {loss_train:0.4f}")
-    print(f"Validation MSE: {mse_val:0.2f}, Rate: {rate_val:0.4f}, validation loss: {loss_val:0.4f}")
-
-
-def load_reference_cae(args):
-    net = setup_network(args)
-    resume_checkpoint(net, None, None, args.resume, gpu=args.gpu,
-                      resume_optimizer=False)
-    return net
-
-
-def my_l_step_base(model, lc_penalty, step, criterion, args):
-    train_loader, _ = utils.get_data(args)
-    params = list(filter(lambda p: p.requires_grad, model.parameters()))
-    lr = 0.0001*(0.98**step)
-    optimizer = optim.Adam(params, lr=lr)
-
-    print(f'L-step #{step} with lr: {lr:0.5f}')
-
-    sum_loss = 0
-    sum_mse = 0
-    sum_rate = 0
-    total_count = 0
-
-    q = tqdm(total=len(train_loader))
-    for x, _ in train_loader:
-        total_count += x.size(0)
-
-        optimizer.zero_grad()
-        x = x.to('cuda' if args.gpu else 'cpu')
-        x_r, y, p_y = model(x)
-
-        loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=model)
-        loss = loss_dict['dist_rate_loss'] + lc_penalty()
-        mse = loss_dict['dist'][0]
-        rate = loss_dict['rate_loss']
-
-        sum_loss += loss.item() * x.size(0)
-        sum_mse += mse * x.size(0)
-        sum_rate += rate * x.size(0)
-
-        loss.backward()
-        optimizer.step()
-
-        q.set_description(f'L-step Loss {loss:0.4f}, MSE {sum_mse/total_count:0.4f}, Rate {sum_rate/total_count:0.4f}')
-        q.update()
-
-    q.close()
-    
-    print(f"\t  avg. train loss: {sum_loss/total_count:.6f}, MSE {sum_mse/total_count:.6f}, rate {sum_rate/total_count:.6f}")
-
-
-def run_lc_algorithm(args):
-    device = torch.device('cuda' if args.gpu else 'cpu')
-
-    mu_s = [9e-5 * (1.1 ** n) for n in range(20)]
-
-    net = load_reference_cae(args)
-    criterion, _ = setup_criteria(args)
-
-    untracked_layers = [lambda x=x: getattr(x, 'weight') for x in net.modules() if hasattr(x, 'weight') and not isinstance(x, nn.Conv2d) and not isinstance(x, nn.ConvTranspose2d)]
-    untracked_layers += [lambda x=x: getattr(x, 'bias') for x in net.modules() if hasattr(x, 'bias') and x.bias is not None and not isinstance(x, nn.Conv2d) and not isinstance(x, nn.ConvTranspose2d)]
-    untracked_pars = sum(map(lambda l: l().numel(), untracked_layers))
-
-    layers = [((lambda x=x: getattr(x, 'weight')), x) for x in net.modules() if (isinstance(x, nn.Conv2d) or isinstance(x, nn.ConvTranspose2d)) and (x.weight.ndim == 4 or x.weight.ndim == 2)]
-    n_pars = sum(map(lambda l: l[0]().numel(), layers))
-
-    net = utils.add_flops_counting_methods(net)
-    net.start_flops_count()
-    _ = net(torch.rand(1, 3, 128, 128))
-    compressed_flops = net.compute_average_flops_cost()
-    net.stop_flops_count()
-
-    compression_tasks = {}
-    for i, (w, module) in enumerate(layers):
-        compression_tasks[Param(w, device)] = (AsIs,
-                                               RankSelection(
-                                                   conv_scheme='scheme_1',
-                                                   alpha=10e-10,
-                                                   criterion='flopgs',
-                                                   normalize=True,
-                                                   module=module),
-                                               f"task_{i}")
-
-    my_l_step = partial(my_l_step_base, criterion=criterion, args=args)
-    train_test_eval = partial(train_test_eval_base, criterion=criterion, args=args)
-
-    lc_alg = lc.Algorithm(
-        model=net,                            # model to compress
-        compression_tasks=compression_tasks,  # specifications of compression
-        l_step_optimization=my_l_step,        # implementation of L-step
-        mu_schedule=mu_s,                     # schedule of mu values
-        evaluation_func=train_test_eval       # evaluation function
-    )
-    lc_alg.run()
-    
-    print('=' * 100)
-    print('Parameters count:', lc_alg.count_params())
-    compressed_model_bits = lc_alg.count_param_bits() + untracked_pars * 32
-    uncompressed_model_bits = (n_pars + untracked_pars) * 32
-    compression_ratio = uncompressed_model_bits / compressed_model_bits
-    print('Compression ratio achievied:', compression_ratio)
+def ft_exp_runner(exp_setup, ft_config, c_step_config):
+    finetuning_func = exp_setup.finetune_setup(tag_of_lc_model=ft_config['tag'], c_step_config=c_step_config)
+    finetuning_func(ft_config)
 
 
 if __name__ == "__main__":
-    args = utils.get_args(task='autoencoder', mode='training')
-
+    args = utils.get_args(task='lc-compress', mode='training')
     utils.setup_logger(args)
+    logging.shutdown()
 
-    run_lc_algorithm(args)
+    # -------8<-----
+    if args.lc_type == 'lc':
+        cae_model = setup_network(args)
+        criterion, _ = setup_criteria(args)
+        train_loader, val_loader = utils.get_data(args)
+
+        resume_checkpoint(cae_model, None, None, args.resume, gpu=args.gpu,
+                          resume_optimizer=False)
+
+        exp_setup = utils.CompressibleCAE(
+            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion)
+
+        l_step_config = {
+            'lr_decay_mode': args.lc_lr_decay_mode,
+            'lr': args.learning_rate,
+            'steps': args.steps,
+            'print_freq': args.checkpoint_steps,
+            'lr_decay': args.lc_lr_decay,
+        }
+        c_step_config = {
+            'alpha': args.lc_alpha,
+            'criterion': args.lc_criterion,
+            'conv_scheme': args.lc_conv_scheme
+        }
+        lc_config = {
+            'mu_init': args.lc_mu_init,
+            'mu_inc': args.lc_mu_inc,
+            'mu_rep': args.lc_mu_rep,
+            'steps': args.lc_steps,
+            'tag': args.lc_tag,
+            'log_dir': args.log_dir,
+        }
+        exp_setup.eval_config=l_step_config
+        lc_exp_runner(exp_setup, lc_config, l_step_config, c_step_config, resume=args.lc_resume)
+
+    elif args.lc_type == 'ft':
+        #finetuning
+        cae_model = setup_network(args)
+        criterion, _ = setup_criteria(args)
+        train_loader, val_loader = utils.get_data(args)
+
+        resume_checkpoint(cae_model, None, None, args.resume, gpu=args.gpu,
+                          resume_optimizer=False)
+
+        exp_setup = utils.CompressibleCAE(
+            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion)
+
+
+        c_step_config = {
+            'alpha': args.lc_alpha,
+            'criterion': args.lc_criterion,
+            'conv_scheme': args.lc_conv_scheme
+        }
+
+        ft_config = {
+            'lr': args.larning_rate,
+            'steps': args.steps,
+            'print_freq': args.checkpoint_steps,
+            'lr_decay': args.lc_lr_decay,
+            'tag': args.lc_tag,
+            'log_dir': args.log_dir,
+        }
+        ft_exp_runner(exp_setup, ft_config, c_step_config)

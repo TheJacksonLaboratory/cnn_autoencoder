@@ -73,7 +73,7 @@ def add_data_args(parser, task, mode='training'):
 
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
 
-    if task in ['encoder', 'decoder', 'classifier', 'segmentation', 'autoencoder']:
+    if task in ['encoder', 'decoder', 'classifier', 'segmentation', 'autoencoder', 'lc-compress']:
         parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
         parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
         parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
@@ -82,7 +82,7 @@ def add_data_args(parser, task, mode='training'):
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
         if task in ['decoder', 'segmentation']:
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
-    if task in ['autoencoder', 'encoder', 'segmentation']:
+    if task in ['autoencoder', 'encoder', 'segmentation', 'lc-compress']:
         parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
     if mode in ['trainig', 'test']:
@@ -168,7 +168,7 @@ def add_config_args(parser, task, mode='training'):
 def add_model_args(parser, task, mode='training'):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
 
-    if task == 'autoencoder':
+    if task in ['autoencoder', 'lc-compress']:
         model_choices = CAE_MODELS
         if mode in ['training']:
             parser.add_argument('-eK', '--entK', type=int, dest='K', help='Number of layers in the latent space of the factorized entropy model', default=4)
@@ -209,7 +209,7 @@ def add_criteria_args(parser, task, mode='training'):
     if mode not in ['training']:
         return
 
-    if task == 'autoencoder':
+    if task in ['autoencoder', 'lc-compress']:
         criteria_choices = CAE_CRITERIONS
         parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
         parser.add_argument('-dl', '--distl', type=float, nargs='+', dest='distortion_lambda', help='Distortion penalty parameter (lambda)', default=0.01)
@@ -221,6 +221,29 @@ def add_criteria_args(parser, task, mode='training'):
         raise ValueError('Task %s not supported' % task)
 
     parser.add_argument('-cr', '--criterion', type=str, dest='criterion', help='Training criterion for the compression evaluation', choices=criteria_choices)
+
+
+def add_lc_args(parser, task, mode='training'):
+    lc_arguments = [
+        (['lc-compress'], ['training'], ('-lctp', '--lc-type'), dict(dest='lc_type', type=str, choices=['lc', 'ft'], default='lc')),
+        (['lc-compress'], ['training'], ('-lctg', '--lc-tag'), dict(dest='lc_tag', type=str, default="tag")),
+        (['lc-compress'], ['training'], ('-lcr', '--lc-resume'), dict(dest='lc_resume', action='store_true')),
+        (['lc-compress'], ['training'], ('-lcs', '--lc-steps'), dict(dest='lc_steps', type=int, default=20)),
+        (['lc-compress'], ['training'], ('-lcmui', '--lc-mu_init'), dict(dest='lc_mu_init', type=float, default=9e-5)),
+        (['lc-compress'], ['training'], ('-lcmuc', '--lc-mu_inc'), dict(dest='lc_mu_inc', type=float, default=1.09)),
+        (['lc-compress'], ['training'], ('-lcmur', '--lc-mu_rep'), dict(dest='lc_mu_rep', type=int, default=1)),
+        (['lc-compress'], ['training'], ('-lccvs', '--lc-conv_scheme'), dict(dest='lc_conv_scheme', type=str, choices=['scheme_1', 'scheme_2'], default='scheme_1')),
+        (['lc-compress'], ['training'], ('-lcal', '--lc-alpha'), dict(dest='lc_alpha', type=float)),
+        (['lc-compress'], ['training'], ('-lccr', '--lc-criterion'), dict(dest='lc_criterion', type=str, choices=['storage', 'flops'], default='storage')),
+        (['lc-compress'], ['training'], ('-lcld', '--lc-lr_decay'), dict(dest='lc_lr_decay', default=0.98, type=float, metavar='LRD', help='learning rate decay')),
+        (['lc-compress'], ['training'], ('-lcldm', '--lc-lr_decay_mode'), dict(dest='lc_lr_decay_mode', type=str, choices=['after_l', 'restart_on_l'], default='after_l')),
+        (['lc-compress'], ['training'], ('-lcha', '--lc-half'), dict(dest='lc_half', action='store_true')),
+    ]
+
+    for par_task, par_mode, par_flags, par_details in lc_arguments:
+        if ((task in par_task or 'all' in par_task)
+          and (mode in par_mode or 'all' in par_mode)):
+            parser.add_argument(*par_flags, **par_details)
 
 
 def get_args(task, mode, add_model=True, add_criteria=True, add_config=True, add_data=True, add_logging=True, parser_only=False):
@@ -242,6 +265,8 @@ def get_args(task, mode, add_model=True, add_criteria=True, add_config=True, add
 
     if add_logging:
         add_logging_args(parser, task, mode)
+
+    add_lc_args(parser, task, mode)
 
     if parser_only:
         return parser
