@@ -39,26 +39,31 @@ def compute_mse_loss(forward_fun, data):
     """
     sum_loss = 0
     sum_mse = 0
+    sum_rate = 0
     total_count = 0
 
     with torch.no_grad():
-        q = tqdm(desc='Performance evaluation', total=len(data))
+        q = tqdm(total=len(data))
         for i, (x, _) in enumerate(data):
-            mse, loss = forward_fun(x)
+            mse, rate, loss = forward_fun(x)
 
             # MSE and Loss values come averaged from the forward pass, so these
             # are weighted for the final average computation.
             sum_loss += loss * x.size(0)
             sum_mse += mse * x.size(0)
+            sum_rate += rate * x.size(0)
             total_count += x.size(0)
 
+            q.set_description(f'Performance evaluation. Loss: {sum_loss/total_count:0.3f} MSE: {sum_mse/total_count:0.3f} Rate: {sum_rate/total_count:0.3f}')
             q.update()
 
         q.close()
+
     avg_loss = sum_loss / total_count
     avg_mse = sum_mse / total_count
+    avg_rate = sum_rate / total_count
 
-    return avg_mse, avg_loss
+    return avg_mse, avg_rate, avg_loss
 
 
 def train_test_eval_base(net, criterion, args):
@@ -70,14 +75,15 @@ def train_test_eval_base(net, criterion, args):
 
         loss = torch.mean(loss_dict['dist_rate_loss'])
         mse = loss_dict['dist'][0]
+        rate = loss_dict['rate_loss']
 
-        return mse, loss
+        return mse, rate, loss
 
-    mse_train, loss_train = compute_mse_loss(forward_func, train_loader)
-    mse_val, loss_val = compute_mse_loss(forward_func, val_loader)
+    mse_train, rate_train, loss_train = compute_mse_loss(forward_func, train_loader)
+    mse_val, rate_val, loss_val = compute_mse_loss(forward_func, val_loader)
 
-    print(f"Train MSE: {mse_train:.4f}, train loss: {loss_train}")
-    print(f"Validation MSE: {mse_val:.2f}, validation loss: {loss_val}")
+    print(f"Train MSE: {mse_train:0.4f}, Rate: {rate_train:0.4f}, train loss: {loss_train:0.4f}")
+    print(f"Validation MSE: {mse_val:0.2f}, Rate: {rate_val:0.4f}, validation loss: {loss_val:0.4f}")
 
 
 def load_reference_cae(args):
@@ -93,33 +99,39 @@ def my_l_step_base(model, lc_penalty, step, criterion, args):
     lr = 0.0001*(0.98**step)
     optimizer = optim.Adam(params, lr=lr)
 
-    print(f'L-step #{step} with lr: {lr:.5f}')
-    epochs_per_step_ = 7
+    print(f'L-step #{step} with lr: {lr:0.5f}')
 
-    if step == 0:
-        epochs_per_step_ = epochs_per_step_ * 2
+    sum_loss = 0
+    sum_mse = 0
+    sum_rate = 0
+    total_count = 0
 
-    for epoch in range(epochs_per_step_):
-        avg_loss = []
-        q = tqdm(desc='L-step Epoch %i' % epoch, total=len(train_loader))
-        for x, _ in train_loader:
-            optimizer.zero_grad()
-            x = x.to('cuda' if args.gpu else 'cpu')
-            x_r, y, p_y = model(x)
+    q = tqdm(total=len(train_loader))
+    for x, _ in train_loader:
+        total_count += x.size(0)
 
-            loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=model)
-            loss = loss_dict['dist_rate_loss'] + lc_penalty()
+        optimizer.zero_grad()
+        x = x.to('cuda' if args.gpu else 'cpu')
+        x_r, y, p_y = model(x)
 
-            avg_loss.append(loss.item())
-            loss.backward()
-            optimizer.step()
-            q.set_description(f'Loss {loss:0.4f}')
-            q.update()
+        loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=model)
+        loss = loss_dict['dist_rate_loss'] + lc_penalty()
+        mse = loss_dict['dist'][0]
+        rate = loss_dict['rate_loss']
 
-        q.close()
-        
-        print(f"\tepoch #{epoch} is finished.")
-        print(f"\t  avg. train loss: {np.mean(avg_loss):.6f}")
+        sum_loss += loss.item() * x.size(0)
+        sum_mse += mse * x.size(0)
+        sum_rate += rate * x.size(0)
+
+        loss.backward()
+        optimizer.step()
+
+        q.set_description(f'L-step Loss {loss:0.4f}, MSE {sum_mse/total_count:0.4f}, Rate {sum_rate/total_count:0.4f}')
+        q.update()
+
+    q.close()
+    
+    print(f"\t  avg. train loss: {sum_loss/total_count:.6f}, MSE {sum_mse/total_count:.6f}, rate {sum_rate/total_count:.6f}")
 
 
 def run_lc_algorithm(args):
