@@ -79,6 +79,8 @@ if __name__ == "__main__":
         resume_checkpoint(cae_model, None, None, args.resume, gpu=args.gpu,
                           resume_optimizer=False)
 
+        cae_model.train()
+
         exp_setup = utils.CompressibleCAE(
             'cnn_autoencoer', cae_model, train_loader, val_loader, criterion)
 

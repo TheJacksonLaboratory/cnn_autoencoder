@@ -114,9 +114,9 @@ class CompressibleCAE():
             q_bar = tqdm(total=config['steps'], position=0)
 
             while s < config['steps']:
-                s += 1
-
                 for x, _ in self.train_loader:
+                    s += 1
+
                     optimizer.zero_grad()
                     x_r, y, p_y = self.model(x)
                     loss_dict = self.criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=self.model)
@@ -350,9 +350,9 @@ class CompressibleCAE():
             s = 0
             checkpoints = 0
             while s < config['steps']:
-                s += 1
-
                 for x, _ in self.train_loader:
+                    s += 1
+
                     optimizer.zero_grad()
 
                     x_r, y, p_y = self.model(x)
