@@ -211,7 +211,7 @@ class CompressibleCAE():
 
             compression_tasks = {}
             for i, (w, module) in enumerate([((lambda x=x: getattr(x, 'weight')), x) for x in self.model.modules() if
-                                                                             isinstance(x, nn.Conv2d) or isinstance(x, nn.Linear)]):
+                                                                             isinstance(x, (nn.Conv2d, nn.ConvTranspose2d)) or isinstance(x, nn.Linear)]):
                 compression_tasks[LCParameterTorch(w, self.device)] \
                     = (AsIs,
                          RankSelection(conv_scheme=config_['conv_scheme'], alpha=config_["alpha"], criterion=config_["criterion"],
@@ -260,7 +260,7 @@ class CompressibleCAE():
         print("model has been sucessfully loaded")
 
         for i, module in enumerate(
-                [x for x in self.model.modules() if isinstance(x, nn.Conv2d) or isinstance(x, nn.Linear)]):
+                [x for x in self.model.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d)) or isinstance(x, nn.Linear)]):
             module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
             print(module.selected_rank_)
 
