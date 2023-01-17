@@ -146,11 +146,11 @@ class CompressibleCAE():
                         model.eval()
                         lc_evaluator = constract_my_forward_lc_eval(lc_penalty)
 
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, print_log=self.print_log)
                         rec.record('train', [ave_loss, ave_mse_train, ave_rate_train, training_time, step + 1, checkpoints])
                         print('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 
-                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader)
+                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, print_log=self.print_log)
                         rec.record('val', [ave_loss, ave_mse_val, ave_rate_val, training_time, step + 1, checkpoints])
                         print('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
                         model.train()
@@ -387,11 +387,11 @@ class CompressibleCAE():
                         lr_scheduler.step()
 
                         self.model.eval()
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loader)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loade, print_log=self.print_logr)
                         train_info[checkpoints + 1] = [ave_loss, ave_mse_train, ave_rate_train, training_time]
                         print('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 
-                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(my_forward_eval, self.val_loader)
+                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(my_forward_eval, self.val_loader, print_log=self.print_log)
                         val_info[checkpoints + 1] = [ave_loss, ave_mse_val, ave_rate_val, training_time]
                         print('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
                         self.model.train()
