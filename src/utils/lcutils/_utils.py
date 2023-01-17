@@ -76,13 +76,14 @@ class Recorder():
             self.__dict__[tag] = [value]
 
 
-def compute_mse_rate_loss(forward_func, data_loader):
+def compute_mse_rate_loss(forward_func, data_loader, print_log=False):
     total_cnt = 0
     ave_loss = 0
     ave_mse = 0
     ave_rate = 0
 
-    q_bar = tqdm(desc='Evaluating performance', total=len(data_loader), position=1, leave=None)
+    if print_log:
+        q_bar = tqdm(desc='Evaluating performance', total=len(data_loader), position=1, leave=None)
 
     for x, _ in data_loader:
         with torch.no_grad():
@@ -92,9 +93,11 @@ def compute_mse_rate_loss(forward_func, data_loader):
             ave_rate += rate.data.item() * x.size(0)
             total_cnt += x.size(0)
 
-            q_bar.update()
+            if print_log:
+                q_bar.update()
 
-    q_bar.close()
+    if print_log:
+        q_bar.close()
 
     ave_loss /= total_cnt
     ave_mse /= total_cnt

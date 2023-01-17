@@ -82,7 +82,8 @@ if __name__ == "__main__":
         cae_model.train()
 
         exp_setup = utils.CompressibleCAE(
-            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion)
+            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion,
+            print_log=args.print_log)
 
         l_step_config = {
             'lr_decay_mode': args.lc_lr_decay_mode,
@@ -117,7 +118,8 @@ if __name__ == "__main__":
                           resume_optimizer=False)
 
         exp_setup = utils.CompressibleCAE(
-            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion)
+            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion,
+            print_log=args.print_log)
 
 
         c_step_config = {
