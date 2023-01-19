@@ -230,6 +230,7 @@ def add_lc_args(parser, task, mode='training'):
         (['lc-compress'], ['training'], ('-lctg', '--lc-tag'), dict(dest='lc_tag', type=str, default="tag")),
         (['lc-compress'], ['training'], ('-lcr', '--lc-resume'), dict(dest='lc_resume', action='store_true')),
         (['lc-compress'], ['training'], ('-lcpm', '--lc-pretrained-model'), dict(dest='lc_pretrained_model', type=str, help='Model pretrained by the LC algorthm')),
+        (['lc-compress'], ['training'], ('-lcft', '--lc-pretrained-model-ft'), dict(dest='ft_pretrained_model', type=str, help='Model pretrained by fine tuning with the LC algorthm')),
         (['lc-compress'], ['training'], ('-lcs', '--lc-steps'), dict(dest='lc_steps', type=int, default=20)),
         (['lc-compress'], ['training'], ('-lcmui', '--lc-mu_init'), dict(dest='lc_mu_init', type=float, default=9e-5)),
         (['lc-compress'], ['training'], ('-lcmuc', '--lc-mu_inc'), dict(dest='lc_mu_inc', type=float, default=1.09)),

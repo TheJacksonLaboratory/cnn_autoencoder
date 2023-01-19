@@ -219,15 +219,18 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                             dirs_exist_ok=True)
 
 
-def setup_network(state, use_gpu=False, compressed_model=None):
+def setup_network(state, use_gpu=False, lc_compressed_model=None,
+                  ft_compressed_model=None):
     """ Setup a neural network-based image compression model.
 
     Parameters
     ----------
     state : Dictionary
         A checkpoint state saved during the network training
-    compressed_model : path to model or None
-        Path to where the model has been compressed using the LC algorithm is stored.
+    lc_compressed_model : path to model or None
+        Path to where the model that has been compressed using the LC algorithm is stored.
+    ft_compressed_model : path to model or None
+        Path to where the model that has been fine tuned using the LC algorithm is stored.
 
     Returns
     -------
@@ -239,44 +242,29 @@ def setup_network(state, use_gpu=False, compressed_model=None):
 
     cae_model_base = models.AutoEncoder(**state['args'])
 
-    if compressed_model is not None:
+    cae_model_base.embedding.load_state_dict(state['embedding'])
+    cae_model_base.analysis.load_state_dict(state['encoder'])
+    cae_model_base.fact_entropy.update(force=True)
+    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
+
+    if lc_compressed_model is not None and ft_compressed_model is not None:
+
         # Load the model checkpoint from its compressed version
-        c_step_config = {
-            'alpha': 0.0,
-            'criterion': "flops",
-            'conv_scheme': "scheme_2"
-        }
+        lc_compressed_model_state = torch.load(lc_compressed_model,
+                                               map_location='cpu')
+        ft_compressed_model_state = torch.load(ft_compressed_model,
+                                               map_location='cpu')['model_state']
 
-        compression_tasks = utils.create_lc_compression_task(
-            config_=c_step_config,
-            model=cae_model_base,
-            eval_flops=False)
+        cae_model_base = nn.DataParallel(cae_model_base)
+        cae_model_base = utils.load_compressed_dict(cae_model_base,
+                                                    lc_compressed_model_state,
+                                                    ft_compressed_model_state,
+                                                    conv_scheme='scheme_2')
+        cae_model_base = cae_model_base.module
 
-        compressed_model_state = torch.load(compressed_model,
-                                            map_location='cpu')
-
-        comp_alg = Algorithm(cae_model_base, compression_tasks, None, None,
-                             None)
-
-        utils.load_compressed_dict(cae_model_base, compressed_model_state,
-                                   comp_alg.compression_tasks, 
-                                   conv_scheme='scheme_2')
-
-        embedding = cae_model_base.embedding
-        analysis = cae_model_base.analysis
-        fact_ent = cae_model_base.fact_entropy
-
-        fact_ent.update(force=True)
-
-    else:
-        embedding = cae_model_base.embedding
-        analysis = cae_model_base.analysis
-        fact_ent = cae_model_base.fact_entropy
-        fact_ent.update(force=True)
-
-        embedding.load_state_dict(state['embedding'])
-        analysis.load_state_dict(state['encoder'])
-        fact_ent.load_state_dict(state['fact_ent'], strict=False)
+    embedding = cae_model_base.embedding
+    analysis = cae_model_base.analysis
+    fact_ent = cae_model_base.fact_entropy
 
     comp_model = nn.Sequential(embedding, analysis, fact_ent)
 
@@ -299,7 +287,8 @@ def compress(args):
     state = utils.load_state(args)
 
     comp_model = setup_network(state, args.gpu,
-                               compressed_model=args.compressed_model)
+                               lc_compressed_model=args.lc_compressed_model,
+                               ft_compressed_model=args.ft_compressed_model)
     transform, _, _ = utils.get_zarr_transform(normalize=args.normalize)
 
     # Get the compression level from the model checkpoint

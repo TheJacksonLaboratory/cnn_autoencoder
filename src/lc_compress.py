@@ -82,7 +82,7 @@ if __name__ == "__main__":
         cae_model.train()
 
         exp_setup = utils.CompressibleCAE(
-            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion,
+            'cnn_autoencoder', cae_model, train_loader, val_loader, criterion,
             print_log=args.print_log)
 
         l_step_config = {
@@ -118,7 +118,7 @@ if __name__ == "__main__":
                           resume_optimizer=False)
 
         exp_setup = utils.CompressibleCAE(
-            'cnn_autoencoer', cae_model, train_loader, val_loader, criterion,
+            'cnn_autoencoder', cae_model, train_loader, val_loader, criterion,
             print_log=args.print_log)
 
 

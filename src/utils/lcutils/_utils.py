@@ -143,37 +143,39 @@ def create_lc_compression_task(config_, model=None, device='cpu',
     return compression_tasks
 
 
-def load_compressed_dict(model_base, checkpoint, compression_tasks, 
+def load_compressed_dict(model_base, lc_checkpoint, ft_checkpoint,
                          conv_scheme='scheme_2'):
-    compression_tasks_state = checkpoint['best_compression_tasks_state']
-    compression_tasks_info = checkpoint['best_compression_tasks_info']
-    compression_tasks_lambdas = checkpoint['best_compression_tasks_lambdas']
+    # despite the 's' at the end, there is only one model state, the last
+    model_state_to_load = lc_checkpoint['model_states']
+    last_lc_it = lc_checkpoint['last_step_number']
 
-    last_lc_it = checkpoint['last_step_number']
+    compression_info = {}
+    for task_name, infos in lc_checkpoint['compression_tasks_info'].items():
+        compression_info[task_name] = infos[last_lc_it]
 
-    for task_name, infos in compression_tasks_info.items():
-        compression_tasks_info[task_name] = infos[last_lc_it]
+    for key in list(model_state_to_load.keys()):
+        if key.startswith("lc_param_list"):
+            del model_state_to_load[key]
 
-    for i, module in enumerate([x for x in model_base.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
-        module.selected_rank_ = compression_tasks_info[f"task_{i}"]['selected_rank']
-        print(module.selected_rank_)
+    for i, module in enumerate(
+            [x for x in model_base.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
+        module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
 
-    for param in compression_tasks.keys():
-        (view, compression, task_name) = compression_tasks[param]
-        compression_state = compression_tasks_state[task_name]
-        if "init_shape" not in compression_state:
-            # we need to manually set init_shape since old version didn't save it
-            x=param.vector_to_compression_view(param.w, view)
-            compression_state["init_shape"] = x.shape
-        compression.load_state_dict(compression_state)
-        compression.info = compression_tasks_info[task_name]
+    old_weight_decay = True
+    if hasattr(model_base, 'old_weight_decay'):
+        old_weight_decay = model_base.old_weight_decay
 
-        if isinstance(param, LCParameterTorch):
-            param.retrieve(full=True)
-            param.lambda_ = compression_tasks_lambdas[task_name]
-            param.delta_theta = param.compression_view_to_vector(compression.uncompress_state(), view)
-            print(param.delta_theta, compression, task_name)
-        else:
-            raise Exception("RankSelection contains non-torch LCparameters, critical error")
+    if hasattr(model_base, 'conv_scheme'):
+        conv_scheme = model_base.conv_scheme
 
-    reparametrize_low_rank(model_base, conv_scheme=conv_scheme)
+    reparametrize_low_rank(model_base, conv_scheme=conv_scheme, old_weight_decay=old_weight_decay)
+
+    analysis_chk = dict([(k[len('module.analysis.'):], w) for k, w in ft_checkpoint.items() if k.startswith('module.analysis')])
+    synthesis_chk = dict([(k[len('module.synthesis.'):], w) for k, w in ft_checkpoint.items() if k.startswith('module.synthesis')])
+    embedding_chk = dict([(k[len('module.embedding.'):], w) for k, w in ft_checkpoint.items() if k.startswith('module.embedding')])
+
+    model_base.module.analysis.load_state_dict(analysis_chk)
+    model_base.module.synthesis.load_state_dict(synthesis_chk)
+    model_base.module.embedding.load_state_dict(embedding_chk)
+
+    return model_base
