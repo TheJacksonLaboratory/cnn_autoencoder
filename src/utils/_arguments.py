@@ -167,6 +167,7 @@ def add_config_args(parser, task, mode='training'):
 
 def add_model_args(parser, task, mode='training'):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
+    parser.add_argument('-cm', '--compressed-model', type=str, dest='compressed_model', help='The checkpoint of the compressed model fine tuned using the LC algorithm')
 
     if task in ['autoencoder', 'lc-compress']:
         model_choices = CAE_MODELS
@@ -228,6 +229,7 @@ def add_lc_args(parser, task, mode='training'):
         (['lc-compress'], ['training'], ('-lctp', '--lc-type'), dict(dest='lc_type', type=str, choices=['lc', 'ft'], default='lc')),
         (['lc-compress'], ['training'], ('-lctg', '--lc-tag'), dict(dest='lc_tag', type=str, default="tag")),
         (['lc-compress'], ['training'], ('-lcr', '--lc-resume'), dict(dest='lc_resume', action='store_true')),
+        (['lc-compress'], ['training'], ('-lcpm', '--lc-pretrained-model'), dict(dest='lc_pretrained_model', type=str, help='Model pretrained by the LC algorthm')),
         (['lc-compress'], ['training'], ('-lcs', '--lc-steps'), dict(dest='lc_steps', type=int, default=20)),
         (['lc-compress'], ['training'], ('-lcmui', '--lc-mu_init'), dict(dest='lc_mu_init', type=float, default=9e-5)),
         (['lc-compress'], ['training'], ('-lcmuc', '--lc-mu_inc'), dict(dest='lc_mu_inc', type=float, default=1.09)),

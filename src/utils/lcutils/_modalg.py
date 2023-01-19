@@ -114,7 +114,8 @@ class RankSelectionLcAlg(Algorithm):
         return to_save
 
     def restore(self, setup_name, tag, continue_with_original_config=False, restore_from_best=False):
-        checkpoint = torch.load(f'results/{setup_name}_lc_{tag}.th', map_location='cpu')
+        # checkpoint = torch.load(f'results/{setup_name}_lc_{tag}.th', map_location='cpu')
+        checkpoint = torch.load(f'/mnt/model/{setup_name}_lc_{tag}.th', map_location='cpu')
         step_number = checkpoint['last_step_number']
         self.best_model_state = checkpoint['best_model_state']
 
@@ -122,7 +123,9 @@ class RankSelectionLcAlg(Algorithm):
             self.model.load_state_dict(self.best_model_state)
         else:
             self.model.load_state_dict(checkpoint['model_states'])
-        self.model = self.model.cuda()
+
+        if torch.cuda.is_available():
+            self.model = self.model.cuda()
 
         self.model_states = checkpoint['model_states']
         if continue_with_original_config:

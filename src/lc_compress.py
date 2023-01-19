@@ -60,8 +60,8 @@ def lc_exp_runner(exp_setup, lc_config, l_step_config, c_step_config, resume=Fal
         lc_alg.run(name=exp_setup.name, tag=lc_config['tag'])
 
 
-def ft_exp_runner(exp_setup, ft_config, c_step_config):
-    finetuning_func = exp_setup.finetune_setup(tag_of_lc_model=ft_config['tag'], c_step_config=c_step_config)
+def ft_exp_runner(exp_setup, ft_config, c_step_config, pretrained_model):
+    finetuning_func = exp_setup.finetune_setup(tag_of_lc_model=ft_config['tag'], c_step_config=c_step_config, pretrained_model=pretrained_model)
     finetuning_func(ft_config)
 
 
@@ -129,11 +129,11 @@ if __name__ == "__main__":
         }
 
         ft_config = {
-            'lr': args.larning_rate,
+            'lr': args.learning_rate,
             'steps': args.steps,
             'print_freq': args.checkpoint_steps,
             'lr_decay': args.lc_lr_decay,
             'tag': args.lc_tag,
             'log_dir': args.log_dir,
         }
-        ft_exp_runner(exp_setup, ft_config, c_step_config)
+        ft_exp_runner(exp_setup, ft_config, c_step_config, args.lc_pretrained_model)

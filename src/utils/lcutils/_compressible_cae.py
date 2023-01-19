@@ -36,14 +36,17 @@ From the examples module of the LC-Model-Compression package
 import time
 import torch
 from torch import nn
-from lc.torch import ParameterTorch as LCParameterTorch, AsIs
-from lc.compression_types.low_rank import RankSelection
 from lc.models.torch.utils import count_params
 from ._compflops import add_flops_counting_methods
 from ._finetune import reparametrize_low_rank
-from ._utils import AverageMeter, Recorder, format_time, compute_mse_rate_loss
+from ._utils import (AverageMeter,
+                     Recorder,
+                     format_time,
+                     compute_mse_rate_loss,
+                     create_lc_compression_task)
 
 from tqdm import tqdm
+from functools import partial
 
 
 class CompressibleCAE():
@@ -201,33 +204,16 @@ class CompressibleCAE():
                 'nested_val_rate': ave_rate_val,
             }
 
-        def create_lc_compression_task(config_):
+        create_lc_comp_task_func = partial(create_lc_compression_task,
+                                           model=self.model,
+                                           device=self.device,
+                                           eval_flops=True,
+                                           val_loader=self.val_loader)
 
-            if config_['criterion'] == "flops":
-                model = add_flops_counting_methods(self.model)
-                model.start_flops_count()
+        return l_step_optimization, evaluation, create_lc_comp_task_func
 
-                for x, _ in self.val_loader:
-                    _ = model(x)
-                    break
-                uncompressed_flops = model.compute_average_flops_cost()
-                print('The number of FLOPS in model', uncompressed_flops)
-                model.stop_flops_count()
-
-            compression_tasks = {}
-            for i, (w, module) in enumerate([((lambda x=x: getattr(x, 'weight')), x) for x in self.model.modules() if
-                                                                             isinstance(x, (nn.Conv2d, nn.ConvTranspose2d)) or isinstance(x, nn.Linear)]):
-                compression_tasks[LCParameterTorch(w, self.device)] \
-                    = (AsIs,
-                         RankSelection(conv_scheme=config_['conv_scheme'], alpha=config_["alpha"], criterion=config_["criterion"],
-                                                     normalize=True, module=module), f"task_{i}")
-
-            return compression_tasks
-
-        return l_step_optimization, evaluation, create_lc_compression_task
-
-    def finetune_setup(self, tag_of_lc_model, c_step_config):
-        exp_run_details = torch.load(f"results/{self.name}_lc_{tag_of_lc_model}.th", map_location="cpu")
+    def finetune_setup(self, tag_of_lc_model, c_step_config, pretrained_model):
+        exp_run_details = torch.load(pretrained_model, map_location="cpu")
         # despite the 's' at the end, there is only one model state, the last
         model_state_to_load = exp_run_details['model_states']
         last_lc_it = exp_run_details['last_step_number']
@@ -265,7 +251,7 @@ class CompressibleCAE():
         print("model has been sucessfully loaded")
 
         for i, module in enumerate(
-                [x for x in self.model.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d)) or isinstance(x, nn.Linear)]):
+                [x for x in self.model.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
             module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
             print(module.selected_rank_)
 
@@ -276,7 +262,7 @@ class CompressibleCAE():
         if hasattr(model, 'conv_scheme'):
             conv_scheme = model.conv_scheme
         else:
-            conv_scheme = 'scheme_1'
+            conv_scheme = c_step_config.get('conv_scheme', 'scheme_1')
 
         reparametrize_low_rank(self.model, conv_scheme=conv_scheme, old_weight_decay=old_weight_decay)
         print(self.model)
@@ -379,15 +365,14 @@ class CompressibleCAE():
                         epoch_time.update(end_time - start_time)
 
                         checkpoints += 1
-                        print("Checkpoint {} reached in {1.val:.3f}s (avg: {1.avg:.3f}s). Training for {2}"
-                                    .format(checkpoints, epoch_time, format_time(end_time - all_start_time)))
+                        print(f"Checkpoint {checkpoints} reached in {epoch_time.val:.3f}s (avg: {epoch_time.avg:.3f}s). Training for {format_time(end_time - all_start_time)}")
                         print('AVG train loss {0.avg:.6f}'.format(avg_loss_))
 
                         print("\tLR: {:.4e}".format(lr_scheduler.get_lr()[0]))
                         lr_scheduler.step()
 
                         self.model.eval()
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loade, print_log=self.print_logr)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loader, print_log=self.print_log)
                         train_info[checkpoints + 1] = [ave_loss, ave_mse_train, ave_rate_train, training_time]
                         print('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 

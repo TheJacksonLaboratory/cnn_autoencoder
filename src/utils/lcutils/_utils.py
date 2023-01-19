@@ -31,10 +31,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 From the examples module of the LC-Model-Compression package
 """
+import torch
+from torch import nn
+from lc.torch import ParameterTorch as LCParameterTorch, AsIs
+from lc.compression_types.low_rank import RankSelection
 
+from ._compflops import add_flops_counting_methods
+from ._finetune import reparametrize_low_rank
 
 from tqdm import tqdm
-import torch
 
 
 def format_time(seconds):
@@ -104,3 +109,71 @@ def compute_mse_rate_loss(forward_func, data_loader, print_log=False):
     ave_rate /= total_cnt
 
     return ave_mse, ave_rate, ave_loss
+
+
+def create_lc_compression_task(config_, model=None, device='cpu',
+                               eval_flops=False,
+                               val_loader=None):
+    if eval_flops and config_['criterion'] == "flops":
+        model = add_flops_counting_methods(model)
+        model.start_flops_count()
+
+        for x, _ in val_loader:
+            _ = model(x)
+            break
+        uncompressed_flops = model.compute_average_flops_cost()
+        print('The number of FLOPS in model', uncompressed_flops)
+        model.stop_flops_count()
+
+    compression_tasks = {}
+    for i, (w, module) in enumerate(
+        [((lambda x=x: getattr(x, 'weight')), x)
+         for x in model.modules() if isinstance(x, (nn.Conv2d,
+                                                    nn.ConvTranspose2d,
+                                                    nn.Linear))]):
+        compression_tasks[LCParameterTorch(w, device)] = \
+            (AsIs,
+             RankSelection(conv_scheme=config_['conv_scheme'],
+                           alpha=config_["alpha"],
+                           criterion=config_["criterion"],
+                           normalize=True,
+                           module=module),
+             f"task_{i}")
+
+    return compression_tasks
+
+
+def load_compressed_dict(model_base, checkpoint, compression_tasks, 
+                         conv_scheme='scheme_2'):
+    compression_tasks_state = checkpoint['best_compression_tasks_state']
+    compression_tasks_info = checkpoint['best_compression_tasks_info']
+    compression_tasks_lambdas = checkpoint['best_compression_tasks_lambdas']
+
+    last_lc_it = checkpoint['last_step_number']
+
+    for task_name, infos in compression_tasks_info.items():
+        compression_tasks_info[task_name] = infos[last_lc_it]
+
+    for i, module in enumerate([x for x in model_base.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
+        module.selected_rank_ = compression_tasks_info[f"task_{i}"]['selected_rank']
+        print(module.selected_rank_)
+
+    for param in compression_tasks.keys():
+        (view, compression, task_name) = compression_tasks[param]
+        compression_state = compression_tasks_state[task_name]
+        if "init_shape" not in compression_state:
+            # we need to manually set init_shape since old version didn't save it
+            x=param.vector_to_compression_view(param.w, view)
+            compression_state["init_shape"] = x.shape
+        compression.load_state_dict(compression_state)
+        compression.info = compression_tasks_info[task_name]
+
+        if isinstance(param, LCParameterTorch):
+            param.retrieve(full=True)
+            param.lambda_ = compression_tasks_lambdas[task_name]
+            param.delta_theta = param.compression_view_to_vector(compression.uncompress_state(), view)
+            print(param.delta_theta, compression, task_name)
+        else:
+            raise Exception("RankSelection contains non-torch LCparameters, critical error")
+
+    reparametrize_low_rank(model_base, conv_scheme=conv_scheme)

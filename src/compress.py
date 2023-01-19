@@ -20,6 +20,7 @@ from numcodecs import Blosc
 import models
 from compressai.entropy_models import EntropyBottleneck
 import utils
+from lc import Algorithm
 
 
 COMP_VERSION = '0.1.3'
@@ -218,13 +219,15 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                             dirs_exist_ok=True)
 
 
-def setup_network(state, use_gpu=False):
+def setup_network(state, use_gpu=False, compressed_model=None):
     """ Setup a neural network-based image compression model.
 
     Parameters
     ----------
     state : Dictionary
         A checkpoint state saved during the network training
+    compressed_model : path to model or None
+        Path to where the model has been compressed using the LC algorithm is stored.
 
     Returns
     -------
@@ -234,16 +237,46 @@ def setup_network(state, use_gpu=False):
     if state['args']['version'] in ['0.5.5', '0.5.6']:
         state['args']['act_layer_type'] = 'LeakyReLU'
 
-    embedding = models.ColorEmbedding(**state['args'])
-    analysis = models.Analyzer(**state['args'])
-    fact_ent = EntropyBottleneck(channels=state['args']['channels_bn'],
-                                 filters=tuple([state['args']['r']] * state['args']['K']))
+    cae_model_base = models.AutoEncoder(**state['args'])
 
-    embedding.load_state_dict(state['embedding'])
-    analysis.load_state_dict(state['encoder'])
-    fact_ent.load_state_dict(state['fact_ent'], strict=False)
+    if compressed_model is not None:
+        # Load the model checkpoint from its compressed version
+        c_step_config = {
+            'alpha': 0.0,
+            'criterion': "flops",
+            'conv_scheme': "scheme_2"
+        }
 
-    fact_ent.update(force=True)
+        compression_tasks = utils.create_lc_compression_task(
+            config_=c_step_config,
+            model=cae_model_base,
+            eval_flops=False)
+
+        compressed_model_state = torch.load(compressed_model,
+                                            map_location='cpu')
+
+        comp_alg = Algorithm(cae_model_base, compression_tasks, None, None,
+                             None)
+
+        utils.load_compressed_dict(cae_model_base, compressed_model_state,
+                                   comp_alg.compression_tasks, 
+                                   conv_scheme='scheme_2')
+
+        embedding = cae_model_base.embedding
+        analysis = cae_model_base.analysis
+        fact_ent = cae_model_base.fact_entropy
+
+        fact_ent.update(force=True)
+
+    else:
+        embedding = cae_model_base.embedding
+        analysis = cae_model_base.analysis
+        fact_ent = cae_model_base.fact_entropy
+        fact_ent.update(force=True)
+
+        embedding.load_state_dict(state['embedding'])
+        analysis.load_state_dict(state['encoder'])
+        fact_ent.load_state_dict(state['fact_ent'], strict=False)
 
     comp_model = nn.Sequential(embedding, analysis, fact_ent)
 
@@ -265,7 +298,8 @@ def compress(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    comp_model = setup_network(state, args.gpu)
+    comp_model = setup_network(state, args.gpu,
+                               compressed_model=args.compressed_model)
     transform, _, _ = utils.get_zarr_transform(normalize=args.normalize)
 
     # Get the compression level from the model checkpoint

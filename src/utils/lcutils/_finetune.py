@@ -39,6 +39,11 @@ from collections import OrderedDict
 from scipy.linalg import svd
 import numpy as np
 
+from lc.compression_types.low_rank import matrix_to_tensor
+
+from models.tasks._autoencoders import ColorEmbedding, DownsamplingUnit, UpsamplingUnit, ResidualDownsamplingUnit, ResidualUpsamplingUnit
+
+
 class FullRankException(Exception):
     pass
 
@@ -69,7 +74,7 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
         else sub_module.selected_rank_ if hasattr(sub_module, 'selected_rank_') \
         else int(matrix_rank(W))
     print(r)
-    if r < np.min(W.shape):
+    if True: # r < np.min(W.shape):
         diag = np.diag(s[:r] ** 0.5)
         U = u[:, :r] @ diag
         V = diag @ v[:r, :]
@@ -83,8 +88,11 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
 
 
         m,n = W.shape
-        if r > np.floor(m*n/(m+n)):
-            raise RankNotEfficientException("Selected rank doesn't contribute to any savings")
+        # if r > np.floor(m*n/(m+n)):
+        #     # raise RankNotEfficientException("Selected rank doesn't contribute to any savings")
+        #     print("Selected rank doesn't contribute to any savings")
+        #     return sub_module, None
+
         bias = sub_module.bias is not None
         if isinstance(sub_module, nn.Linear):
             l1 = nn.Linear(in_features=sub_module.in_features, out_features=r, bias=False)
@@ -124,6 +132,7 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
                                    out_channels=sub_module.out_channels,
                                    kernel_size=1,
                                    bias=bias)
+
                 l1.weight.data = torch.from_numpy(V.reshape([-1, *init_shape[1:]]))
                 l2.weight.data = torch.from_numpy(U[:, :, None, None])
 
@@ -134,11 +143,12 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
 
             elif conv_scheme == 'scheme_2':
                 if isinstance(sub_module, nn.ConvTranspose2d):
-                    l1 = nn.Conv2d(in_channels=sub_module.in_channels,
+                    l1 = nn.ConvTranspose2d(in_channels=sub_module.in_channels,
                                    out_channels=r,
                                    kernel_size=(1, sub_module.kernel_size[1]),
                                    stride=(1, sub_module.stride[1]),
                                    padding=(0, sub_module.padding[1]),
+                                   output_padding=(0, sub_module.output_padding[1]),
                                    dilation=sub_module.dilation,
                                    groups=sub_module.groups,
                                    bias=False)
@@ -147,7 +157,7 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
                                             out_channels=sub_module.out_channels,
                                             kernel_size=(sub_module.kernel_size[0], 1),
                                             padding=(sub_module.padding[0], 0),
-                                            output_padding=sub_module.output_padding,
+                                            output_padding=(sub_module.output_padding[0], 0),
                                             stride=(sub_module.stride[0], 1),
                                             bias=bias)
                 else:
@@ -167,62 +177,153 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
                                    stride=(sub_module.stride[0], 1),
                                    bias=bias)
 
-def reparametrization_helper(list_of_modules, conv_scheme, old_weight_decay=True):
+                l1.weight.data = matrix_to_tensor(torch.from_numpy(V).to(l1.weight.data.device), l1.weight.data.shape, conv_scheme)
+                l2.weight.data = matrix_to_tensor(torch.from_numpy(U).to(l1.weight.data.device), l2.weight.data.shape, conv_scheme)
+
+                if bias:
+                    l2.bias.data = sub_module.bias.data
+
+                return l1, l2
+
+    else:
+        return sub_module, None
+
+
+def reparametrization_helper(sub_module_name, sub_module, conv_scheme, old_weight_decay=True):
     new_sequence = []
-    items = list_of_modules.items()
     decayed_values_repar = []
     decayed_valued_old = []
 
-    for i, (name, sub_module) in enumerate(items):
-        print(name, sub_module)
+    if isinstance(sub_module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        l1, l2 = linear_layer_reparametrizer(sub_module, conv_scheme=conv_scheme)
+        if l2 is None:
+            new_sequence.append((sub_module_name, sub_module))
+            decayed_valued_old.append(sub_module.weight)
+        else:            
+            new_sequence.append((sub_module_name + '_V', l1))
+            new_sequence.append((sub_module_name + '_U', l2))
+            decayed_values_repar.append((l1, l2))
 
-        if isinstance(sub_module, nn.Sequential):
-            dv_repar_sub, dv_old_sub, nseq_sub = reparametrization_helper(sub_module._modules,
-                                                                          conv_scheme=conv_scheme,
-                                                                          old_weight_decay=old_weight_decay)
-            new_sequence.append((name, nn.Sequential(OrderedDict(nseq_sub))))
-            decayed_values_repar.extend(dv_repar_sub)
-            decayed_valued_old.extend(dv_old_sub)
+    elif isinstance(sub_module, nn.Sequential):
+        for m_name, m in sub_module._modules.items():
+            m_decayed_values_repar, m_decayed_valued_old, reparametrized = \
+                reparametrization_helper(m_name, m, conv_scheme, old_weight_decay=old_weight_decay)
+            decayed_values_repar += m_decayed_values_repar
+            decayed_valued_old += m_decayed_valued_old
+            new_sequence += reparametrized
+    else:
+        new_sequence.append((sub_module_name, sub_module))
+        if old_weight_decay and hasattr(sub_module, 'weight'):
+            decayed_valued_old.append(sub_module.weight)
 
-        elif isinstance(sub_module, nn.Linear) or isinstance(sub_module, (nn.Conv2d, nn.ConvTranspose2d)):
-            try:
-                l1, l2 = linear_layer_reparametrizer(sub_module, conv_scheme=conv_scheme)
-                new_sequence.append((name + '_V', l1))
-                new_sequence.append((name + '_U', l2))
-                decayed_values_repar.append((l1, l2))
-
-            except Exception as e:
-                print(str(e))
-                new_sequence.append((name, sub_module))
-                decayed_valued_old.append(sub_module.weight)
-
-        else:
-            new_sequence.append((name, sub_module))
-            if old_weight_decay and hasattr(sub_module, 'weight'):
-                decayed_valued_old.append(sub_module.weight)
     return decayed_values_repar, decayed_valued_old, new_sequence
 
 
-def reparametrize_low_rank(model, conv_scheme='scheme_1', old_weight_decay=True):
-    decayed_values_repar, decayed_valued_old, new_sequence \
-        = reparametrization_helper(model.output._modules, conv_scheme=conv_scheme, old_weight_decay=old_weight_decay)
-    model.output = nn.Sequential(OrderedDict(new_sequence))
+def reparametrize_blocks(block_name, block, conv_scheme='scheme_1', old_weight_decay=True):
+    all_decayed_values_repar = []
+    all_decayed_valued_old = []
 
-    for xi in decayed_valued_old:
-        print(xi.shape)
-    for xi,xj in decayed_values_repar:
-        print(xi.weight.shape, xj.weight.shape)
+    if isinstance(block, ColorEmbedding):
+        decayed_values_repar, decayed_valued_old, reparametrized = \
+            reparametrization_helper('embedding', block.embedding, conv_scheme, old_weight_decay=old_weight_decay)
+        block.embedding = nn.Sequential(OrderedDict(reparametrized))
+
+        all_decayed_values_repar += decayed_values_repar
+        all_decayed_valued_old += decayed_valued_old
+
+    elif isinstance(block, (DownsamplingUnit, UpsamplingUnit)):
+        decayed_values_repar, decayed_valued_old, reparametrized = \
+            reparametrization_helper('model', block.model, conv_scheme, old_weight_decay=old_weight_decay)
+        block.model = nn.Sequential(OrderedDict(reparametrized))
+
+        all_decayed_values_repar += decayed_values_repar
+        all_decayed_valued_old += decayed_valued_old
+
+    elif isinstance(block, (ResidualDownsamplingUnit, ResidualUpsamplingUnit)):
+        decayed_values_repar, decayed_valued_old, reparametrized = \
+            reparametrization_helper('res_model', block.res_model, conv_scheme, old_weight_decay=old_weight_decay)
+        block.res_model = nn.Sequential(OrderedDict(reparametrized))
+
+        all_decayed_values_repar += decayed_values_repar
+        all_decayed_valued_old += decayed_valued_old
+
+        decayed_values_repar, decayed_valued_old, reparametrized = \
+            reparametrization_helper('model', block.model, conv_scheme, old_weight_decay=old_weight_decay)
+        block.model = nn.Sequential(OrderedDict(reparametrized))
+
+        all_decayed_values_repar += decayed_values_repar
+        all_decayed_valued_old += decayed_valued_old
+
+    elif isinstance(block, (nn.Sequential, nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        decayed_values_repar, decayed_valued_old, reparametrized = \
+            reparametrization_helper(block_name, block, conv_scheme, old_weight_decay=old_weight_decay)
+        all_decayed_values_repar += decayed_values_repar
+        all_decayed_valued_old += decayed_valued_old
+        block = nn.Sequential(OrderedDict(reparametrized))
+
+    return block, all_decayed_values_repar, all_decayed_valued_old
+
+
+def reparametrize_low_rank(model, conv_scheme='scheme_1', old_weight_decay=True):
+    all_decayed_values_repar = []
+    all_decayed_valued_old = []
+
+    # Reparametrize the CAE model blocks
+    (model.module.embedding,
+     block_decayed_values_repar,
+     block_decayed_valued_old) = reparametrize_blocks('color_embedding',
+                                                      model.module.embedding,
+                                                      conv_scheme,
+                                                      old_weight_decay)
+    all_decayed_values_repar += block_decayed_values_repar
+    all_decayed_values_repar += block_decayed_valued_old
+
+    for block_name, block in model.module.analysis.analysis_track._modules.items():
+        (block,
+         block_decayed_values_repar,
+         block_decayed_valued_old) = reparametrize_blocks(block_name,
+                                                          block,
+                                                          conv_scheme,
+                                                          old_weight_decay)
+        model.module.analysis.analysis_track._modules[block_name] = block
+        all_decayed_values_repar += block_decayed_values_repar
+        all_decayed_values_repar += block_decayed_valued_old
+
+    for block_name, block in model.module.synthesis.synthesis_track._modules.items():
+        (block,
+         block_decayed_values_repar,
+         block_decayed_valued_old) = reparametrize_blocks(block_name,
+                                                          block,
+                                                          conv_scheme,
+                                                          old_weight_decay)
+        model.module.synthesis.synthesis_track._modules[block_name] = block
+        all_decayed_values_repar += block_decayed_values_repar
+        all_decayed_values_repar += block_decayed_valued_old
+
+    for b_i, block in enumerate(model.module.synthesis.color_layers):
+        (block,
+         block_decayed_values_repar,
+         block_decayed_valued_old) = reparametrize_blocks(str(b_i),
+                                                          block,
+                                                          conv_scheme,
+                                                          old_weight_decay)
+        model.module.synthesis.color_layers[b_i] = block
+        all_decayed_values_repar += block_decayed_values_repar
+        all_decayed_values_repar += block_decayed_valued_old
 
     def weight_decay():
-        sum_ = torch.autograd.Variable(torch.FloatTensor([0.0]).cuda())
-        for x in decayed_valued_old:
+        sum_ = torch.autograd.Variable(torch.FloatTensor([0.0], device='cuda' if torch.cuda.is_available() else 'cpu'))
+
+        for x in all_decayed_valued_old:
             sum_ += torch.sum(x**2)
-        for v,u in decayed_values_repar:
+
+        for v, u in all_decayed_values_repar:
             v = v.weight
             u = u.weight
             u_ = u.view(u.size()[0], -1)
             v_ = v.view(u_.size()[1], -1)
             sum_ += torch.sum(torch.matmul(u_,v_)**2)
+
         return sum_
+
     model.weight_decay = weight_decay
-    print(new_sequence)
