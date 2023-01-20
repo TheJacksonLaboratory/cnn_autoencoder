@@ -507,8 +507,10 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
     else:
         checkpoint_state = torch.load(checkpoint)
 
-    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'])
-    cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'])
+    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'],
+                                               strict=False)
+    cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'],
+                                               strict=False)
     cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'],
                                                strict=False)
     if checkpoint_state['args']['version'] == '0.5.5':

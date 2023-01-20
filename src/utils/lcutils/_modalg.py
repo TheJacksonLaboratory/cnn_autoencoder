@@ -304,7 +304,7 @@ class RankSelectionLcAlg(Algorithm):
             current_state = self.save(step_number, name, tag)
 
             async def actual_save():
-                torch.save(current_state, f'results/{name}_lc_{tag}.th')
+                torch.save(current_state, f'/mnt/model/{name}_lc_{tag}.th')
 
             asyncio.run_coroutine_threadsafe(actual_save(), new_loop)
 
