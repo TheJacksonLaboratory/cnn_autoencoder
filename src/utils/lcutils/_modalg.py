@@ -43,7 +43,7 @@ import numpy as np
 
 
 class RankSelectionLcAlg(Algorithm):
-    def __init__(self, model, compression_tasks, lc_config, l_step_optimization, evaluation_func, l_step_config):
+    def __init__(self, model, compression_tasks, lc_config, l_step_optimization, evaluation_func, l_step_config, log_dir='.'):
         mu_schedule = [lc_config['mu_init'] * (lc_config['mu_inc'] ** step) for step in range(lc_config['steps']) for _ in range(lc_config['mu_rep'])]
         print("Used mu-schedule:", mu_schedule)
         l_step_config['all_start_time'] = time.time()
@@ -68,6 +68,7 @@ class RankSelectionLcAlg(Algorithm):
         self.best_compression_tasks_state = None
         self.best_compression_tasks_info = None
         self.best_compression_tasks_lambdas = None
+        self.log_dir = lc_config.get('log_dir', '.')
 
     def save(self, step_number, setup_name, tag):
         # I'm making changes to saving routine to only save last and best  lc iteration model state
@@ -114,8 +115,7 @@ class RankSelectionLcAlg(Algorithm):
         return to_save
 
     def restore(self, setup_name, tag, continue_with_original_config=False, restore_from_best=False):
-        # checkpoint = torch.load(f'results/{setup_name}_lc_{tag}.th', map_location='cpu')
-        checkpoint = torch.load(f'/mnt/model/{setup_name}_lc_{tag}.th', map_location='cpu')
+        checkpoint = torch.load(f'{self.log_dir}/{setup_name}_lc_{tag}.th', map_location='cpu')
         step_number = checkpoint['last_step_number']
         self.best_model_state = checkpoint['best_model_state']
 
@@ -304,7 +304,7 @@ class RankSelectionLcAlg(Algorithm):
             current_state = self.save(step_number, name, tag)
 
             async def actual_save():
-                torch.save(current_state, f'/mnt/model/{name}_lc_{tag}.th')
+                torch.save(current_state, f'{self.log_dir}/{name}_lc_{tag}.th')
 
             asyncio.run_coroutine_threadsafe(actual_save(), new_loop)
 

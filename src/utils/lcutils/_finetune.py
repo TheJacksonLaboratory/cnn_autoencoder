@@ -74,7 +74,7 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
         else sub_module.selected_rank_ if hasattr(sub_module, 'selected_rank_') \
         else int(matrix_rank(W))
     print(r)
-    if True: # r < np.min(W.shape):
+    if 0 < r < np.min(W.shape):
         diag = np.diag(s[:r] ** 0.5)
         U = u[:, :r] @ diag
         V = diag @ v[:r, :]
@@ -88,10 +88,10 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
 
 
         m,n = W.shape
-        # if r > np.floor(m*n/(m+n)):
-        #     # raise RankNotEfficientException("Selected rank doesn't contribute to any savings")
-        #     print("Selected rank doesn't contribute to any savings")
-        #     return sub_module, None
+        if r > np.floor(m*n/(m+n)):
+            # raise RankNotEfficientException("Selected rank doesn't contribute to any savings")
+            print("Selected rank doesn't contribute to any savings")
+            return sub_module, None
 
         bias = sub_module.bias is not None
         if isinstance(sub_module, nn.Linear):
