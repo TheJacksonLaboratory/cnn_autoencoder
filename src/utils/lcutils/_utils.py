@@ -124,7 +124,7 @@ def create_lc_compression_task(config_, model=None, device='cpu',
             _ = model(x)
             break
         uncompressed_flops = model.compute_average_flops_cost()
-        logger.info('The number of FLOPS in model', uncompressed_flops)
+        logger.info(f'The number of FLOPS in model {uncompressed_flops}')
         model.stop_flops_count()
 
     compression_tasks = {}

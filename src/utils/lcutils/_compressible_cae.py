@@ -101,7 +101,7 @@ class CompressibleCAE():
 
             steps_in_this_it = config['steps'] // config['print_freq'] if step > 0 else \
                 config['first_mu_epochs'] if 'first_mu_epochs' in config else config['steps'] // config['print_freq']
-            logger.debug('Steps in this iteration is :', steps_in_this_it)
+            logger.debug(f'Steps in this iteration are {steps_in_this_it}')
             model.eval()
 
             lc_evaluator = constract_my_forward_lc_eval(lc_penalty)
@@ -303,10 +303,10 @@ class CompressibleCAE():
         self.model = self.model.cpu()
         compressed_params = count_params(model)
         self.model = self.model.to(self.device)
-        logger.info('The number of FLOPS in original model', all_flops)
-        logger.info('The number of params in original model:', all_params)
-        logger.info('The number of FLOPS in this model', compressed_flops)
-        logger.info('The number of params in this model:', compressed_params)
+        logger.info(f'The number of FLOPS in original model {all_flops}')
+        logger.info(f'The number of params in original model: {all_params}')
+        logger.info(f'The number of FLOPS in this model {compressed_flops}')
+        logger.info(f'The number of params in this model: {compressed_params}')
         flops_rho = all_flops[0] / compressed_flops[0]
         storage_rho = all_params / compressed_params
         logger.info(f'FLOPS rho={flops_rho:.3f}; STORAGE rho={storage_rho:.3f};')

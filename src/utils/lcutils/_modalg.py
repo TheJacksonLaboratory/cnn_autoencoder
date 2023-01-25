@@ -46,7 +46,7 @@ class RankSelectionLcAlg(Algorithm):
     def __init__(self, model, compression_tasks, lc_config, l_step_optimization, evaluation_func, l_step_config, log_dir='.'):
         logger = logging.getLogger('training_log')
         mu_schedule = [lc_config['mu_init'] * (lc_config['mu_inc'] ** step) for step in range(lc_config['steps']) for _ in range(lc_config['mu_rep'])]
-        logger.debug("Used mu-schedule:", mu_schedule)
+        logger.debug(f"Used mu-schedule: {mu_schedule}")
         l_step_config['all_start_time'] = time.time()
         super(RankSelectionLcAlg, self).__init__(model, compression_tasks, mu_schedule,
                                                  l_step_optimization, evaluation_func)
@@ -172,7 +172,7 @@ class RankSelectionLcAlg(Algorithm):
                 param.retrieve(full=True)
                 param.lambda_ = compression_tasks_lambdas[task_name]
                 param.delta_theta = param.compression_view_to_vector(compression.uncompress_state(), view)
-                logger.debug(param.delta_theta, compression, task_name)
+                logger.debug("Delta theta={}, compression={}, task name={}".format(param.delta_theta, compression, task_name))
             else:
                 raise Exception("RankSelection contains non-torch LCparameters, critical error")
 
@@ -250,7 +250,7 @@ class RankSelectionLcAlg(Algorithm):
         # output best info
         best_info = self.eval_info['best']
         logger.info('------------------>--------------------')
-        logger.info('\tBEST TRAIN LOSS was encountered at step :', best_info['step_number'])
+        logger.info(f'\tBEST TRAIN LOSS was encountered at step {best_info["step_number"]}')
         logger.info('\tBEST nested train loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'
               .format(best_info['nested_train_loss'], best_info['nested_train_mse'], best_info['nested_train_rate']))
         logger.info('\tCORR nested validation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'

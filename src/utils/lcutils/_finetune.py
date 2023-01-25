@@ -84,8 +84,8 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
 
 
         from numpy.linalg import norm
-        logger.debug('Fro. norm of W: ', norm(W))
-        logger.debug('Fro. norm of diff: ', norm(W - new_W))
+        logger.debug(f'Fro. norm of W: {norm(W)}')
+        logger.debug(f'Fro. norm of diff: {norm(W - new_W)}')
 
 
         m,n = W.shape
