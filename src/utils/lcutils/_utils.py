@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 From the examples module of the LC-Model-Compression package
 """
+import logging
 import torch
 from torch import nn
 from lc.torch import ParameterTorch as LCParameterTorch, AsIs
@@ -81,13 +82,13 @@ class Recorder():
             self.__dict__[tag] = [value]
 
 
-def compute_mse_rate_loss(forward_func, data_loader, print_log=False):
+def compute_mse_rate_loss(forward_func, data_loader, progress_bar=False):
     total_cnt = 0
     ave_loss = 0
     ave_mse = 0
     ave_rate = 0
 
-    if print_log:
+    if progress_bar:
         q_bar = tqdm(desc='Evaluating performance', total=len(data_loader), position=1, leave=None)
 
     for x, _ in data_loader:
@@ -98,10 +99,10 @@ def compute_mse_rate_loss(forward_func, data_loader, print_log=False):
             ave_rate += rate.data.item() * x.size(0)
             total_cnt += x.size(0)
 
-            if print_log:
+            if progress_bar:
                 q_bar.update()
 
-    if print_log:
+    if progress_bar:
         q_bar.close()
 
     ave_loss /= total_cnt
@@ -114,6 +115,7 @@ def compute_mse_rate_loss(forward_func, data_loader, print_log=False):
 def create_lc_compression_task(config_, model=None, device='cpu',
                                eval_flops=False,
                                val_loader=None):
+    logger = logging.getLogger('training_log')
     if eval_flops and config_['criterion'] == "flops":
         model = add_flops_counting_methods(model)
         model.start_flops_count()
@@ -122,7 +124,7 @@ def create_lc_compression_task(config_, model=None, device='cpu',
             _ = model(x)
             break
         uncompressed_flops = model.compute_average_flops_cost()
-        print('The number of FLOPS in model', uncompressed_flops)
+        logger.info('The number of FLOPS in model', uncompressed_flops)
         model.stop_flops_count()
 
     compression_tasks = {}

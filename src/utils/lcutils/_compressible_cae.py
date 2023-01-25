@@ -34,6 +34,7 @@ From the examples module of the LC-Model-Compression package
 
 
 import time
+import logging
 import torch
 from torch import nn
 from lc.models.torch.utils import count_params
@@ -50,16 +51,18 @@ from functools import partial
 
 
 class CompressibleCAE():
-    def __init__(self, name, model, train_loader, val_loader, criterion, print_log=False):
+    def __init__(self, name, model, train_loader, val_loader, criterion,
+                 progress_bar=False):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.name = name
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.criterion = criterion
-        self.print_log = print_log
+        self.progress_bar = progress_bar
 
     def lc_setup(self):
+        logger = logging.getLogger('training_log')
         def l_step_optimization(model, lc_penalty, step, config):
             all_start_time = config['all_start_time']
 
@@ -69,7 +72,7 @@ class CompressibleCAE():
 
             if config['lr_decay_mode'] == 'after_l':
                 learning_rate *= (config['lr_decay'] ** step)
-                print(f"Current LR={learning_rate}")
+                logger.debug(f"Current LR={learning_rate}")
 
             def constract_my_forward_lc_eval(lc_penalty):
                 pen = lc_penalty()
@@ -91,21 +94,21 @@ class CompressibleCAE():
 
             if 'lr_trick' in config:
                 l_trick_value = 0.1
-                print('LR trick in play. first epoch is trained with LR of {:.4e}'.format(config['lr'] * l_trick_value))
+                logger.debug('LR trick in play. first epoch is trained with LR of {:.4e}'.format(config['lr'] * l_trick_value))
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = config['lr'] * l_trick_value
                 # TODO: revert back the lr_trick?
 
             steps_in_this_it = config['steps'] // config['print_freq'] if step > 0 else \
                 config['first_mu_epochs'] if 'first_mu_epochs' in config else config['steps'] // config['print_freq']
-            print('Steps in this iteration is :', steps_in_this_it)
+            logger.debug('Steps in this iteration is :', steps_in_this_it)
             model.eval()
 
             lc_evaluator = constract_my_forward_lc_eval(lc_penalty)
-            ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, print_log=self.print_log)
-            print('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
-            ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, print_log=self.print_log)
-            print('\tval    loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
+            ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, progress_bar=self.progress_bar)
+            logger.info('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
+            ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, progress_bar=self.progress_bar)
+            logger.info('\tval    loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
             model.train()
             epoch_time = AverageMeter()
             rec = Recorder()
@@ -116,7 +119,7 @@ class CompressibleCAE():
             start_time = time.time()
             avg_loss_ = AverageMeter()
 
-            if self.print_log:
+            if self.progress_bar:
                 q_bar = tqdm(total=config['steps'], position=0)
 
             while s < config['steps']:
@@ -131,7 +134,7 @@ class CompressibleCAE():
                     loss.backward()
                     optimizer.step()
 
-                    if self.print_log:
+                    if self.progress_bar:
                         q_bar.update()
 
                     if (s % config['print_freq'] == 0
@@ -141,30 +144,30 @@ class CompressibleCAE():
                         epoch_time.update(end_time - start_time)
 
                         checkpoints += 1
-                        print("LC step {0}, Checkpoint {1} reached in {2.val:.3f}s (avg: {2.avg:.3f}s). Training for {3}"
+                        logger.info("LC step {0}, Checkpoint {1} reached in {2.val:.3f}s (avg: {2.avg:.3f}s). Training for {3}"
                                     .format(s, checkpoints, epoch_time, format_time(end_time - all_start_time)))
-                        print('AVG train loss {0.avg:.6f}'.format(avg_loss_))
+                        logger.info('AVG train loss {0.avg:.6f}'.format(avg_loss_))
                         rec.record('average_loss_per_epoch', avg_loss_)
 
                         model.eval()
                         lc_evaluator = constract_my_forward_lc_eval(lc_penalty)
 
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, print_log=self.print_log)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, progress_bar=self.progress_bar)
                         rec.record('train', [ave_loss, ave_mse_train, ave_rate_train, training_time, step + 1, checkpoints])
-                        print('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
+                        logger.info('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 
-                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, print_log=self.print_log)
+                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, progress_bar=self.progress_bar)
                         rec.record('val', [ave_loss, ave_mse_val, ave_rate_val, training_time, step + 1, checkpoints])
-                        print('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
+                        logger.info('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
                         model.train()
 
                         if config['lr_decay_mode'] == 'restart_on_l':
-                            print("\told LR: {:.4e}".format(optimizer.param_groups[0]['lr']))
+                            logger.debug("\told LR: {:.4e}".format(optimizer.param_groups[0]['lr']))
                             lr_scheduler.step()
-                            print("\tnew LR: {:.4e}".format(optimizer.param_groups[0]['lr']))
+                            logger.debug("\tnew LR: {:.4e}".format(optimizer.param_groups[0]['lr']))
 
                         else:
-                            print("\tLR: {:.4e}".format(learning_rate))
+                            logger.debug("\tLR: {:.4e}".format(learning_rate))
                         
                         start_time = time.time()
                         avg_loss_ = AverageMeter()
@@ -172,7 +175,7 @@ class CompressibleCAE():
                     if s >= config['steps']:
                         break
 
-            if self.print_log:
+            if self.progress_bar:
                 q_bar.close()
 
             info = {'train': rec.train, 'val': rec.val, 'average_loss_per_train_epoch': rec.average_loss_per_epoch}
@@ -189,11 +192,11 @@ class CompressibleCAE():
 
             model.eval()
 
-            ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.train_loader, print_log=self.print_log)
-            print('\tnested train loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss_train, ave_mse_train, ave_rate_train))
-            ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.val_loader, print_log=self.print_log)
+            ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.train_loader, progress_bar=self.progress_bar)
+            logger.info('\tnested train loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss_train, ave_mse_train, ave_rate_train))
+            ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.val_loader, progress_bar=self.progress_bar)
             model.train()
-            print('\tnested validation loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss_val, ave_mse_val, ave_rate_val))
+            logger.info('\tnested validation loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss_val, ave_mse_val, ave_rate_val))
 
             return {
                 'nested_train_loss': ave_loss_train,
@@ -213,6 +216,8 @@ class CompressibleCAE():
         return l_step_optimization, evaluation, create_lc_comp_task_func
 
     def finetune_setup(self, tag_of_lc_model, c_step_config, pretrained_model):
+        logger = logging.getLogger('training_log')
+
         exp_run_details = torch.load(pretrained_model, map_location="cpu")
         # despite the 's' at the end, there is only one model state, the last
         model_state_to_load = exp_run_details['model_states']
@@ -234,7 +239,7 @@ class CompressibleCAE():
             compression_info[task_name] = infos[last_lc_it]
         # compression_infos = exp_run_details['compression_tasks_info'][last_lc_it]
 
-        print(model_state_to_load.keys())
+        logger.debug(model_state_to_load.keys())
         del exp_run_details
 
         for key in list(model_state_to_load.keys()):
@@ -243,17 +248,17 @@ class CompressibleCAE():
 
         import gc
         gc.collect()
-        print(gc.garbage)
+        logger.debug(gc.garbage)
 
-        print(model_state_to_load.keys())
+        logger.debug(model_state_to_load.keys())
 
         self.model.load_state_dict(model_state_to_load)
-        print("model has been sucessfully loaded")
+        logger.info("model has been sucessfully loaded")
 
         for i, module in enumerate(
                 [x for x in self.model.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
             module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
-            print(module.selected_rank_)
+            logger.debug(module.selected_rank_)
 
         old_weight_decay = True
         if hasattr(model, 'old_weight_decay'):
@@ -265,10 +270,10 @@ class CompressibleCAE():
             conv_scheme = c_step_config.get('conv_scheme', 'scheme_1')
 
         reparametrize_low_rank(self.model, conv_scheme=conv_scheme, old_weight_decay=old_weight_decay)
-        print(self.model)
+        logger.debug(self.model)
 
         self.model = self.model.to(self.device)
-        print("Low rank layers of the model has been successfully reparameterized with sequence of full-rank matrices.")
+        logger.debug("Low rank layers of the model has been successfully reparameterized with sequence of full-rank matrices.")
 
         def my_forward_eval(x):
             x_r, y, p_y = model(x)
@@ -279,12 +284,12 @@ class CompressibleCAE():
             return mse, rate, loss
 
         self.model.eval()
-        ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.train_loader, print_log=self.print_log)
-        print('\tBefore finetuning, the train loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss_train, ave_mse_train, ave_rate_train))
+        ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.train_loader, progress_bar=self.progress_bar)
+        logger.info('\tBefore finetuning, the train loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss_train, ave_mse_train, ave_rate_train))
         # rec.record('train_nested', [ave_loss, accuracy, training_time, step + 1])
-        ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.val_loader, print_log=self.print_log)
+        ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.val_loader, progress_bar=self.progress_bar)
         self.model.train()
-        print('\tBefore finetuning, the val loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss_val, ave_mse_val, ave_rate_val))
+        logger.info('\tBefore finetuning, the val loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss_val, ave_mse_val, ave_rate_val))
 
         model = add_flops_counting_methods(self.model)
         model.start_flops_count()
@@ -298,13 +303,13 @@ class CompressibleCAE():
         self.model = self.model.cpu()
         compressed_params = count_params(model)
         self.model = self.model.to(self.device)
-        print('The number of FLOPS in original model', all_flops)
-        print('The number of params in original model:', all_params)
-        print('The number of FLOPS in this model', compressed_flops)
-        print('The number of params in this model:', compressed_params)
+        logger.info('The number of FLOPS in original model', all_flops)
+        logger.info('The number of params in original model:', all_params)
+        logger.info('The number of FLOPS in this model', compressed_flops)
+        logger.info('The number of params in this model:', compressed_params)
         flops_rho = all_flops[0] / compressed_flops[0]
         storage_rho = all_params / compressed_params
-        print(f'FLOPS rho={flops_rho:.3f}; STORAGE rho={storage_rho:.3f};')
+        logger.info(f'FLOPS rho={flops_rho:.3f}; STORAGE rho={storage_rho:.3f};')
 
         compression_stats = {
             'original_flops': all_flops,
@@ -336,7 +341,7 @@ class CompressibleCAE():
             start_time = time.time()
             avg_loss_ = AverageMeter()
 
-            if self.print_log:
+            if self.progress_bar:
                 q_bar = tqdm(total=config['steps'], position=0)
 
             s = 0
@@ -355,7 +360,7 @@ class CompressibleCAE():
                     avg_loss_.update(loss.item())
                     optimizer.step()
 
-                    if self.print_log:
+                    if self.progress_bar:
                         q_bar.update()
 
                     if (s % config['print_freq'] == 0
@@ -365,20 +370,20 @@ class CompressibleCAE():
                         epoch_time.update(end_time - start_time)
 
                         checkpoints += 1
-                        print(f"Checkpoint {checkpoints} reached in {epoch_time.val:.3f}s (avg: {epoch_time.avg:.3f}s). Training for {format_time(end_time - all_start_time)}")
-                        print('AVG train loss {0.avg:.6f}'.format(avg_loss_))
+                        logger.info(f"Checkpoint {checkpoints} reached in {epoch_time.val:.3f}s (avg: {epoch_time.avg:.3f}s). Training for {format_time(end_time - all_start_time)}")
+                        logger.info('AVG train loss {0.avg:.6f}'.format(avg_loss_))
 
-                        print("\tLR: {:.4e}".format(lr_scheduler.get_lr()[0]))
+                        logger.info("\tLR: {:.4e}".format(lr_scheduler.get_lr()[0]))
                         lr_scheduler.step()
 
                         self.model.eval()
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loader, print_log=self.print_log)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loader, progress_bar=self.progress_bar)
                         train_info[checkpoints + 1] = [ave_loss, ave_mse_train, ave_rate_train, training_time]
-                        print('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
+                        logger.info('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 
-                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(my_forward_eval, self.val_loader, print_log=self.print_log)
+                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(my_forward_eval, self.val_loader, progress_bar=self.progress_bar)
                         val_info[checkpoints + 1] = [ave_loss, ave_mse_val, ave_rate_val, training_time]
-                        print('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
+                        logger.info('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
                         self.model.train()
 
                         to_save = {}
@@ -403,11 +408,11 @@ class CompressibleCAE():
                     if s >= config['steps']:
                         break
 
-            if self.print_log:
+            if self.progress_bar:
                 q_bar.close()
 
             async def last_task():
-                print("Async file saving has been finished.")
+                logger.info("Async file saving has been finished.")
                 new_loop.stop()
 
             asyncio.run_coroutine_threadsafe(last_task(), new_loop)

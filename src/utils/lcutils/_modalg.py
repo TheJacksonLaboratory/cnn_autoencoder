@@ -32,7 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 From the examples module of the LC-Model-Compression package
 """ 
 
-
+import logging
 from lc import Algorithm
 from lc.torch import ParameterTorch as LCParameterTorch
 from torch import nn
@@ -44,8 +44,9 @@ import numpy as np
 
 class RankSelectionLcAlg(Algorithm):
     def __init__(self, model, compression_tasks, lc_config, l_step_optimization, evaluation_func, l_step_config, log_dir='.'):
+        logger = logging.getLogger('training_log')
         mu_schedule = [lc_config['mu_init'] * (lc_config['mu_inc'] ** step) for step in range(lc_config['steps']) for _ in range(lc_config['mu_rep'])]
-        print("Used mu-schedule:", mu_schedule)
+        logger.debug("Used mu-schedule:", mu_schedule)
         l_step_config['all_start_time'] = time.time()
         super(RankSelectionLcAlg, self).__init__(model, compression_tasks, mu_schedule,
                                                  l_step_optimization, evaluation_func)
@@ -56,7 +57,7 @@ class RankSelectionLcAlg(Algorithm):
                 all_torch_nn_parameters.extend(lc_param.d_theta_list)
             else:
                 raise Exception("RankSelection contains non-torch LCparameters, critical error")
-        print(f"Total of {len(all_torch_nn_parameters)} additional parameters will be added to model_parameters.")
+        logger.debug(f"Total of {len(all_torch_nn_parameters)} additional parameters will be added to model_parameters.")
         model.lc_param_list = nn.ParameterList(getter() for getter in all_torch_nn_parameters)
         self.l_step_config = l_step_config
         self.lstep_info = {}
@@ -115,6 +116,7 @@ class RankSelectionLcAlg(Algorithm):
         return to_save
 
     def restore(self, setup_name, tag, continue_with_original_config=False, restore_from_best=False):
+        logger = logging.getLogger('training_log')
         checkpoint = torch.load(f'{self.log_dir}/{setup_name}_lc_{tag}.th', map_location='cpu')
         step_number = checkpoint['last_step_number']
         self.best_model_state = checkpoint['best_model_state']
@@ -132,12 +134,12 @@ class RankSelectionLcAlg(Algorithm):
             self.l_step_config = checkpoint['l_step_config']
             self.lc_config = checkpoint['lc_config']
             self.mu_schedule = checkpoint['mu_schedule']
-        print("L_STEP CONFIG:")
-        print(self.l_step_config)
-        print("LC CONFIG:")
-        print(self.lc_config)
-        print("MU schedule:")
-        print(self.mu_schedule)
+        logger.debug("L_STEP CONFIG:")
+        logger.debug(self.l_step_config)
+        logger.debug("LC CONFIG:")
+        logger.debug(self.lc_config)
+        logger.debug("MU schedule:")
+        logger.debug(self.mu_schedule)
 
         self.lstep_info = checkpoint['l_step_info']
         self.eval_info = checkpoint['eval_info']
@@ -170,7 +172,7 @@ class RankSelectionLcAlg(Algorithm):
                 param.retrieve(full=True)
                 param.lambda_ = compression_tasks_lambdas[task_name]
                 param.delta_theta = param.compression_view_to_vector(compression.uncompress_state(), view)
-                print(param.delta_theta, compression, task_name)
+                logger.debug(param.delta_theta, compression, task_name)
             else:
                 raise Exception("RankSelection contains non-torch LCparameters, critical error")
 
@@ -199,6 +201,7 @@ class RankSelectionLcAlg(Algorithm):
         return loss_
 
     def l_step(self, step):
+        logger = logging.getLogger('training_log')
 
         l_step_needed = False
 
@@ -211,7 +214,7 @@ class RankSelectionLcAlg(Algorithm):
                 break
 
         if not l_step_needed:
-            print(f"With current compression structure, L-step for μ={self.mu} is skipped.")
+            logger.debug(f"With current compression structure, L-step for μ={self.mu} is skipped.")
             return
 
         for param in self.lc_parameters:
@@ -223,6 +226,8 @@ class RankSelectionLcAlg(Algorithm):
         self.retrieve()
 
     def evaluate(self):
+        logger = logging.getLogger('training_log')
+
         # first make regular evaluation of LC objective: loss + lc_penalty
         # self.evaluation_func()
         # then compressed evaluation of objective: loss
@@ -244,23 +249,24 @@ class RankSelectionLcAlg(Algorithm):
 
         # output best info
         best_info = self.eval_info['best']
-        print('------------------>--------------------')
-        print('\tBEST TRAIN LOSS was encountered at step :', best_info['step_number'])
-        print('\tBEST nested train loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'
+        logger.info('------------------>--------------------')
+        logger.info('\tBEST TRAIN LOSS was encountered at step :', best_info['step_number'])
+        logger.info('\tBEST nested train loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'
               .format(best_info['nested_train_loss'], best_info['nested_train_mse'], best_info['nested_train_rate']))
-        print('\tCORR nested validation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'
+        logger.info('\tCORR nested validation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'
               .format(best_info['nested_val_loss'], best_info['nested_val_mse'], best_info['nested_val_rate']))
-        print('------------------>--------------------')
+        logger.info('------------------>--------------------')
         self.compression_train()
 
 
     def run(self, name=None, tag=None, restore=False):
+        logger = logging.getLogger('training_log')
         # set mu=0 to perform direct compression
         start_step = 0
         if not restore:
             self.mu = 0
             self.c_step(step_number=-1)
-            print("Direct compression has been performed.")
+            logger.info("Direct compression has been performed.")
 
             for param in self.lc_parameters:
                 param.lambda_ *= 0
@@ -269,7 +275,7 @@ class RankSelectionLcAlg(Algorithm):
             self.evaluate() # evaluates train/test acc-s
         else:
             restore_step_number = self.restore(name, tag)
-            print(f"We are continuing previous training from checkpoint={restore_step_number}")
+            logger.info(f"We are continuing previous training from checkpoint={restore_step_number}")
             start_step = restore_step_number + 1
 
         from threading import Thread
@@ -287,19 +293,19 @@ class RankSelectionLcAlg(Algorithm):
             mu = self.mu_schedule[step_number]
             self.mu = mu
             self.step_number = step_number
-            print(f"Current LC step is {step_number}, μ={self.mu:.3e}")
+            logger.info(f"Current LC step is {step_number}, μ={self.mu:.3e}")
             if step_number != 0:
                 self.l_step(step_number)
             else:
-                print('skipping initial l_step')
-            print(f"L-step #{step_number} has finished.")
+                logger.info('skipping initial l_step')
+            logger.info(f"L-step #{step_number} has finished.")
             self.c_step(step_number)
-            print(f"C-step #{step_number} has finished.")
+            logger.info(f"C-step #{step_number} has finished.")
             if step_number+1 < len(self.mu_schedule) and mu == self.mu_schedule[step_number+1]:
-                print("NOT UPDATING Lagrange multipliers")
+                logger.info("NOT UPDATING Lagrange multipliers")
             else:
                 self.multipliers_step()
-                print("Lagrange multipliers have been updated.")
+                logger.info("Lagrange multipliers have been updated.")
             self.evaluate()
             current_state = self.save(step_number, name, tag)
 
@@ -309,7 +315,7 @@ class RankSelectionLcAlg(Algorithm):
             asyncio.run_coroutine_threadsafe(actual_save(), new_loop)
 
         async def last_task():
-            print("Async file saving has been finished.")
+            logger.info("Async file saving has been finished.")
             new_loop.stop()
 
         asyncio.run_coroutine_threadsafe(last_task(), new_loop)

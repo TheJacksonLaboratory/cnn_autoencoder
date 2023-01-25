@@ -51,6 +51,7 @@ def add_logging_args(parser, task, mode='training'):
     logging_args = [
         (['all'], ['all'], ('-rs', '--seed'), dict(dest='seed', type=int, help='Seed for random number generators', default=-1)),
         (['all'], ['all'], ('-pl', '--printlog'), dict(dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters)', default=False)),
+        (['all'], ['all'], ('-pb', '--progress-bar'), dict(dest='progress_bar', action='store_true', help='Show progress bar (Not recommended when running on clusters)', default=False)),
         (['all'], ['all'], ('-ld', '--logdir'), dict(dest='log_dir', type=str, help='Directory where all logging and model checkpoints are stored', default='.')),
         (['all'], ['all'], ('-li', '--logid'), dict(dest='log_identifier', type=str, help='Identifier added to the log file', default='')),
     ]

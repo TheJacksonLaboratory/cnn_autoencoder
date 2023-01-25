@@ -32,7 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 From the examples module of the LC-Model-Compression package
 """ 
 
-
+import logging
 import torch
 from torch import nn
 from collections import OrderedDict
@@ -52,6 +52,7 @@ class RankNotEfficientException(Exception):
 
 
 def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
+    logger = logging.getLogger('training_log')
     W = sub_module.weight.data.cpu().numpy()
 
     init_shape = None
@@ -73,24 +74,24 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
     r = sub_module.rank_ if hasattr(sub_module, 'rank_') \
         else sub_module.selected_rank_ if hasattr(sub_module, 'selected_rank_') \
         else int(matrix_rank(W))
-    print(r)
+    logger.debug(r)
     if 0 < r < np.min(W.shape):
         diag = np.diag(s[:r] ** 0.5)
         U = u[:, :r] @ diag
         V = diag @ v[:r, :]
-        print(U.shape, V.shape)
+        logger.debug(U.shape, V.shape)
         new_W = U @ V
 
 
         from numpy.linalg import norm
-        print('Fro. norm of W: ', norm(W))
-        print('Fro. norm of diff: ', norm(W - new_W))
+        logger.debug('Fro. norm of W: ', norm(W))
+        logger.debug('Fro. norm of diff: ', norm(W - new_W))
 
 
         m,n = W.shape
         if r > np.floor(m*n/(m+n)):
             # raise RankNotEfficientException("Selected rank doesn't contribute to any savings")
-            print("Selected rank doesn't contribute to any savings")
+            logger.debug("Selected rank doesn't contribute to any savings")
             return sub_module, None
 
         bias = sub_module.bias is not None

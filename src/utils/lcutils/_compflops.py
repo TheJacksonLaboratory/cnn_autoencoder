@@ -32,7 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 From the examples module of the LC-Model-Compression package
 """ 
 
-
+import logging
 import torch
 
 
@@ -111,7 +111,7 @@ def compute_average_flops_cost(self, quant_k=False):
     Returns current mean flops consumption per image.
 
     """
-
+    logger = logging.getLogger('training_log')
     batches_count = self.__batch_counter__
 
     flops_sum = 0
@@ -129,7 +129,7 @@ def compute_average_flops_cost(self, quant_k=False):
             fp_quant_multp +=module.__fpmults_quant__
 
 
-    print(flops_sum, fp_mults, fp_adds, fp_quant_multp)
+    logger.debug('Flops sum=%i, mults=%i, adds=%i, quant=%i' % (flops_sum, fp_mults, fp_adds, fp_quant_multp))
     return flops_sum / batches_count, fp_mults/batches_count, fp_adds/batches_count, fp_quant_multp/batches_count
 
 

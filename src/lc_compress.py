@@ -87,7 +87,7 @@ if __name__ == "__main__":
 
         exp_setup = utils.CompressibleCAE(
             'cnn_autoencoder', cae_model, train_loader, val_loader, criterion,
-            print_log=args.print_log)
+            progress_bar=args.progress_bar)
 
         l_step_config = {
             'lr_decay_mode': args.lc_lr_decay_mode,
@@ -124,8 +124,7 @@ if __name__ == "__main__":
 
         exp_setup = utils.CompressibleCAE(
             'cnn_autoencoder', cae_model, train_loader, val_loader, criterion,
-            print_log=args.print_log)
-
+            progress_bar=args.progress_bar)
 
         c_step_config = {
             'alpha': args.lc_alpha,
