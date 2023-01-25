@@ -219,17 +219,17 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                             dirs_exist_ok=True)
 
 
-def setup_network(state, use_gpu=False, lc_compressed_model=None,
-                  ft_compressed_model=None):
+def setup_network(state, use_gpu=False, lc_pretrained_model=None,
+                  ft_pretrained_model=None):
     """ Setup a neural network-based image compression model.
 
     Parameters
     ----------
     state : Dictionary
         A checkpoint state saved during the network training
-    lc_compressed_model : path to model or None
+    lc_pretrained_model : path to model or None
         Path to where the model that has been compressed using the LC algorithm is stored.
-    ft_compressed_model : path to model or None
+    ft_pretrained_model : path to model or None
         Path to where the model that has been fine tuned using the LC algorithm is stored.
 
     Returns
@@ -247,12 +247,12 @@ def setup_network(state, use_gpu=False, lc_compressed_model=None,
     cae_model_base.fact_entropy.update(force=True)
     cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
 
-    if lc_compressed_model is not None and ft_compressed_model is not None:
+    if lc_pretrained_model is not None and ft_pretrained_model is not None:
 
         # Load the model checkpoint from its compressed version
-        lc_compressed_model_state = torch.load(lc_compressed_model,
+        lc_compressed_model_state = torch.load(lc_pretrained_model,
                                                map_location='cpu')
-        ft_compressed_model_state = torch.load(ft_compressed_model,
+        ft_compressed_model_state = torch.load(ft_pretrained_model,
                                                map_location='cpu')['model_state']
 
         cae_model_base = nn.DataParallel(cae_model_base)
@@ -287,8 +287,8 @@ def compress(args):
     state = utils.load_state(args)
 
     comp_model = setup_network(state, args.gpu,
-                               lc_compressed_model=args.lc_compressed_model,
-                               ft_compressed_model=args.ft_compressed_model)
+                               lc_pretrained_model=args.lc_pretrained_model,
+                               ft_pretrained_model=args.ft_pretrained_model)
     transform, _, _ = utils.get_zarr_transform(normalize=args.normalize)
 
     # Get the compression level from the model checkpoint

@@ -51,13 +51,17 @@ from functools import partial
 
 
 class CompressibleCAE():
-    def __init__(self, name, model, train_loader, val_loader, criterion,
+    def __init__(self, name, model, train_loader, val_loader, eval_trn_loader,
+                 eval_val_loader,
+                 criterion,
                  progress_bar=False):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.name = name
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.eval_trn_loader = eval_trn_loader
+        self.eval_val_loader = eval_val_loader
         self.criterion = criterion
         self.progress_bar = progress_bar
 
@@ -105,9 +109,9 @@ class CompressibleCAE():
             model.eval()
 
             lc_evaluator = constract_my_forward_lc_eval(lc_penalty)
-            ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, progress_bar=self.progress_bar)
+            ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.eval_trn_loader, progress_bar=self.progress_bar)
             logger.info('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
-            ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, progress_bar=self.progress_bar)
+            ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.eval_val_loader, progress_bar=self.progress_bar)
             logger.info('\tval    loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
             model.train()
             epoch_time = AverageMeter()
@@ -152,11 +156,11 @@ class CompressibleCAE():
                         model.eval()
                         lc_evaluator = constract_my_forward_lc_eval(lc_penalty)
 
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.train_loader, progress_bar=self.progress_bar)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(lc_evaluator, self.eval_trn_loader, progress_bar=self.progress_bar)
                         rec.record('train', [ave_loss, ave_mse_train, ave_rate_train, training_time, step + 1, checkpoints])
                         logger.info('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 
-                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.val_loader, progress_bar=self.progress_bar)
+                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(lc_evaluator, self.eval_val_loader, progress_bar=self.progress_bar)
                         rec.record('val', [ave_loss, ave_mse_val, ave_rate_val, training_time, step + 1, checkpoints])
                         logger.info('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
                         model.train()
@@ -192,9 +196,9 @@ class CompressibleCAE():
 
             model.eval()
 
-            ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.train_loader, progress_bar=self.progress_bar)
+            ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.eval_trn_loader, progress_bar=self.progress_bar)
             logger.info('\tnested train loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss_train, ave_mse_train, ave_rate_train))
-            ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.val_loader, progress_bar=self.progress_bar)
+            ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.eval_val_loader, progress_bar=self.progress_bar)
             model.train()
             logger.info('\tnested validation loss: {:.6f}, mse: {:.4f}, rate: {:0.4f}'.format(ave_loss_val, ave_mse_val, ave_rate_val))
 
@@ -284,10 +288,10 @@ class CompressibleCAE():
             return mse, rate, loss
 
         self.model.eval()
-        ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.train_loader, progress_bar=self.progress_bar)
+        ave_mse_train, ave_rate_train, ave_loss_train = compute_mse_rate_loss(my_forward_eval, self.eval_trn_loader, progress_bar=self.progress_bar)
         logger.info('\tBefore finetuning, the train loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss_train, ave_mse_train, ave_rate_train))
         # rec.record('train_nested', [ave_loss, accuracy, training_time, step + 1])
-        ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.val_loader, progress_bar=self.progress_bar)
+        ave_mse_val, ave_rate_val, ave_loss_val = compute_mse_rate_loss(my_forward_eval, self.eval_val_loader, progress_bar=self.progress_bar)
         self.model.train()
         logger.info('\tBefore finetuning, the val loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss_val, ave_mse_val, ave_rate_val))
 
@@ -377,11 +381,11 @@ class CompressibleCAE():
                         lr_scheduler.step()
 
                         self.model.eval()
-                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.train_loader, progress_bar=self.progress_bar)
+                        ave_mse_train, ave_rate_train, ave_loss = compute_mse_rate_loss(my_forward_eval, self.eval_trn_loader, progress_bar=self.progress_bar)
                         train_info[checkpoints + 1] = [ave_loss, ave_mse_train, ave_rate_train, training_time]
                         logger.info('\ttrain loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_train, ave_rate_train))
 
-                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(my_forward_eval, self.val_loader, progress_bar=self.progress_bar)
+                        ave_mse_val, ave_rate_val, ave_loss = compute_mse_rate_loss(my_forward_eval, self.eval_val_loader, progress_bar=self.progress_bar)
                         val_info[checkpoints + 1] = [ave_loss, ave_mse_val, ave_rate_val, training_time]
                         logger.info('\tvalidation loss: {:.6f}, mse: {:.4f}, rate: {:.4f}'.format(ave_loss, ave_mse_val, ave_rate_val))
                         self.model.train()

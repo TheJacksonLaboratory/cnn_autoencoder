@@ -49,17 +49,65 @@ def override_config_file(parser):
 
 def add_logging_args(parser, task, mode='training'):
     logging_args = [
-        (['all'], ['all'], ('-rs', '--seed'), dict(dest='seed', type=int, help='Seed for random number generators', default=-1)),
-        (['all'], ['all'], ('-pl', '--printlog'), dict(dest='print_log', action='store_true', help='Print log into console (Not recommended when running on clusters)', default=False)),
-        (['all'], ['all'], ('-pb', '--progress-bar'), dict(dest='progress_bar', action='store_true', help='Show progress bar (Not recommended when running on clusters)', default=False)),
-        (['all'], ['all'], ('-ld', '--logdir'), dict(dest='log_dir', type=str, help='Directory where all logging and model checkpoints are stored', default='.')),
-        (['all'], ['all'], ('-li', '--logid'), dict(dest='log_identifier', type=str, help='Identifier added to the log file', default='')),
+        {'tasks': ['all'],
+         'modes': ['all'],
+         'flags': ('-rs', '--seed'),
+         'details': {
+            'dest': 'seed',
+            'type': int,
+            'help': 'Seed for random number generators',
+            'default': -1
+            }
+        },
+        {'tasks': ['all'],
+         'modes': ['all'],
+         'flags': ('-pl', '--printlog'),
+         'details': {
+            'dest': 'print_log',
+            'action': 'store_true',
+            'help': 'Print log into console (Not recommended when running on '
+                    'clusters)',
+            'default': False
+            }
+        },
+        {'tasks': ['all'],
+         'modes': ['all'],
+         'flags': ('-pb', '--progress-bar'),
+         'details': {
+            'dest': 'progress_bar',
+            'action': 'store_true',
+            'help': 'Show progress bar (Not recommended when running on '
+                    'clusters)',
+            'default': False
+            }
+        },
+        {'tasks': ['all'],
+         'modes': ['all'],
+         'flags': ('-ld', '--logdir'),
+         'details': {
+            'dest': 'log_dir',
+            'type': str,
+            'help': 'Directory where all logging and model checkpoints are '
+                    'stored',
+            'default': '.'
+            }
+        },
+        {'tasks': ['all'],
+         'modes': ['all'],
+         'flags': ('-li', '--logid'),
+         'details': {
+            'dest': 'log_identifier',
+            'type': str,
+            'help': 'Identifier added to the log file',
+            'default': ''
+            }
+        },
     ]
 
-    for par_task, par_mode, par_flags, par_details in logging_args:
-        if ((task in par_task or 'all' in par_task)
-          and (mode in par_mode or 'all' in par_mode)):
-            parser.add_argument(*par_flags, **par_details)
+    for par in logging_args:
+        if ((task in par['tasks'] or 'all' in par['tasks'])
+          and (mode in par['modes'] or 'all' in par['modes'])):
+            parser.add_argument(*par['flags'], **par['details'])
 
 
 def add_data_args(parser, task, mode='training'):
@@ -227,27 +275,144 @@ def add_criteria_args(parser, task, mode='training'):
 
 def add_lc_args(parser, task, mode='training'):
     lc_arguments = [
-        (['lc-compress'], ['training'], ('-lctp', '--lc-type'), dict(dest='lc_type', type=str, choices=['lc', 'ft'], default='lc')),
-        (['lc-compress'], ['training'], ('-lctg', '--lc-tag'), dict(dest='lc_tag', type=str, default="tag")),
-        (['lc-compress'], ['training'], ('-lcr', '--lc-resume'), dict(dest='lc_resume', action='store_true')),
-        (['lc-compress'], ['training'], ('-lcpm', '--lc-pretrained-model'), dict(dest='lc_pretrained_model', type=str, help='Model pretrained by the LC algorthm')),
-        (['lc-compress'], ['training'], ('-lcft', '--lc-pretrained-model-ft'), dict(dest='ft_pretrained_model', type=str, help='Model pretrained by fine tuning with the LC algorthm')),
-        (['lc-compress'], ['training'], ('-lcs', '--lc-steps'), dict(dest='lc_steps', type=int, default=20)),
-        (['lc-compress'], ['training'], ('-lcmui', '--lc-mu_init'), dict(dest='lc_mu_init', type=float, default=9e-5)),
-        (['lc-compress'], ['training'], ('-lcmuc', '--lc-mu_inc'), dict(dest='lc_mu_inc', type=float, default=1.09)),
-        (['lc-compress'], ['training'], ('-lcmur', '--lc-mu_rep'), dict(dest='lc_mu_rep', type=int, default=1)),
-        (['lc-compress'], ['training'], ('-lccvs', '--lc-conv_scheme'), dict(dest='lc_conv_scheme', type=str, choices=['scheme_1', 'scheme_2'], default='scheme_1')),
-        (['lc-compress'], ['training'], ('-lcal', '--lc-alpha'), dict(dest='lc_alpha', type=float)),
-        (['lc-compress'], ['training'], ('-lccr', '--lc-criterion'), dict(dest='lc_criterion', type=str, choices=['storage', 'flops'], default='storage')),
-        (['lc-compress'], ['training'], ('-lcld', '--lc-lr_decay'), dict(dest='lc_lr_decay', default=0.98, type=float, metavar='LRD', help='learning rate decay')),
-        (['lc-compress'], ['training'], ('-lcldm', '--lc-lr_decay_mode'), dict(dest='lc_lr_decay_mode', type=str, choices=['after_l', 'restart_on_l'], default='after_l')),
-        (['lc-compress'], ['training'], ('-lcha', '--lc-half'), dict(dest='lc_half', action='store_true')),
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lctp', '--lc-type'),
+         'details': {
+            'dest': 'lc_type',
+            'type': str,
+            'choices': ['lc', 'ft'],
+            'default': 'lc'
+            }
+        },
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lctg', '--lc-tag'),
+         'details': {
+            'dest': 'lc_tag',
+            'type': str,
+            'default': 'tag'
+            }
+        },
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcr', '--lc-resume'),
+         'details': {
+            'dest': 'lc_resume',
+            'action': 'store_true'
+            }
+        },
+        {'tasks': ['lc-compress', 'encoder', 'decoder'],
+         'modes': ['training', 'inference'],
+         'flags': ('-lcpm', '--lc-pretrained-model'),
+         'details': {
+            'dest': 'lc_pretrained_model',
+            'type': str,
+            'help': 'Model pretrained with the LC algorthm'
+            }
+        },
+        {'tasks': ['lc-compress', 'encoder', 'decoder'],
+         'modes': ['training', 'inference'],
+         'flags': ('-lcft', '--lc-pretrained-model-ft'),
+         'details': {
+            'dest': 'ft_pretrained_model',
+            'type': str,
+            'help': 'Model fine tuned with the LC algorthm'
+            }
+        },
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcs', '--lc-steps'),
+         'details': {
+            'dest': 'lc_steps',
+            'type': int,
+            'default': 20
+            }
+        },
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcmui', '--lc-mu_init'),
+         'details': {
+            'dest': 'lc_mu_init',
+            'type': float,
+            'default': 9e-5}
+        },
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcmuc', '--lc-mu_inc'),
+         'details': {
+            'dest': 'lc_mu_inc',
+            'type': float,
+            'default': 1.09
+            }
+        },
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcmur', '--lc-mu_rep'),
+         'details': {
+            'dest': 'lc_mu_rep',
+            'type': int,
+            'default': 1}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lccvs', '--lc-conv_scheme'),
+         'details': {
+            'dest': 'lc_conv_scheme',
+            'type': str,
+            'choices': ['scheme_1', 'scheme_2'],
+            'default': 'scheme_1'}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcal', '--lc-alpha'),
+         'details': {
+            'dest': 'lc_alpha',
+            'type': float}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lccr', '--lc-criterion'),
+         'details': {
+            'dest': 'lc_criterion',
+            'type': str,
+            'choices': ['storage', 'flops'],
+            'default': 'storage'}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcld', '--lc-lr_decay'),
+         'details': {
+            'dest': 'lc_lr_decay',
+            'default': 0.98,
+            'type': float,
+            'metavar': 'LRD',
+            'help': 'learning rate decay'}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcldm', '--lc-lr_decay_mode'),
+         'details': {
+            'dest': 'lc_lr_decay_mode',
+            'type': str,
+            'choices': ['after_l', 'restart_on_l'],
+            'default': 'after_l'}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcha', '--lc-half'),
+         'details': {
+            'dest': 'lc_half',
+            'action': 'store_true'}},
+        {'tasks': ['lc-compress'],
+         'modes': ['training'],
+         'flags': ('-lcdd', '--lc-data-dir'),
+         'details': {
+            'type': str,
+            'nargs': '+',
+            'dest': 'lc_data_dir',
+            'help': 'Directory, list of files, or text file with a list of '
+                    'files to be used as inputs for LC steps evaluations.'}},
     ]
 
-    for par_task, par_mode, par_flags, par_details in lc_arguments:
-        if ((task in par_task or 'all' in par_task)
-          and (mode in par_mode or 'all' in par_mode)):
-            parser.add_argument(*par_flags, **par_details)
+    for par in lc_arguments:
+        if ((task in par['tasks'] or 'all' in par['tasks'])
+          and (mode in par['modes'] or 'all' in par['modes'])):
+            parser.add_argument(*par['flags'], **par['details'])
 
 
 def get_args(task, mode, add_model=True, add_criteria=True, add_config=True, add_data=True, add_logging=True, parser_only=False):

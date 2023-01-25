@@ -48,8 +48,10 @@ class RankSelectionLcAlg(Algorithm):
         mu_schedule = [lc_config['mu_init'] * (lc_config['mu_inc'] ** step) for step in range(lc_config['steps']) for _ in range(lc_config['mu_rep'])]
         logger.debug(f"Used mu-schedule: {mu_schedule}")
         l_step_config['all_start_time'] = time.time()
-        super(RankSelectionLcAlg, self).__init__(model, compression_tasks, mu_schedule,
-                                                 l_step_optimization, evaluation_func)
+        super(RankSelectionLcAlg, self).__init__(model, compression_tasks,
+                                                 mu_schedule,
+                                                 l_step_optimization,
+                                                 evaluation_func)
         # All view-related data structures should be attached to model parameters for easier retrieval
         all_torch_nn_parameters = []
         for lc_param in self.lc_parameters:

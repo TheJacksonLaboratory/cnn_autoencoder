@@ -79,7 +79,7 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
         diag = np.diag(s[:r] ** 0.5)
         U = u[:, :r] @ diag
         V = diag @ v[:r, :]
-        logger.debug(U.shape, V.shape)
+        logger.debug(f'U shape: {U.shape}, V shape: {V.shape}')
         new_W = U @ V
 
 

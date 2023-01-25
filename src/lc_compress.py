@@ -78,7 +78,13 @@ if __name__ == "__main__":
     if args.lc_type == 'lc':
         cae_model = setup_network(args)
         criterion, _ = setup_criteria(args)
+
         train_loader, val_loader = utils.get_data(args)
+        # Set the evaluation data loaders. These could contain less examples
+        # for quick evaluation of the model performance.
+        if args.lc_data_dir is not None:
+            args.data_dir = args.lc_data_dir
+        eval_trn_loader, eval_val_loader = utils.get_data(args)
 
         resume_checkpoint(cae_model, None, None, args.resume, gpu=args.gpu,
                           resume_optimizer=False)
@@ -86,7 +92,10 @@ if __name__ == "__main__":
         cae_model.train()
 
         exp_setup = utils.CompressibleCAE(
-            'cnn_autoencoder', cae_model, train_loader, val_loader, criterion,
+            'cnn_autoencoder', cae_model, train_loader, val_loader,
+            eval_trn_loader,
+            eval_val_loader,
+            criterion,
             progress_bar=args.progress_bar)
 
         l_step_config = {
@@ -119,11 +128,20 @@ if __name__ == "__main__":
         criterion, _ = setup_criteria(args)
         train_loader, val_loader = utils.get_data(args)
 
+        # Set the evaluation data loaders. These could contain less examples
+        # for quick evaluation of the model performance.
+        if args.lc_data_dir is not None:
+            args.data_dir = args.lc_data_dir
+        eval_trn_loader, eval_val_loader = utils.get_data(args)
+
         resume_checkpoint(cae_model, None, None, args.resume, gpu=args.gpu,
                           resume_optimizer=False)
 
         exp_setup = utils.CompressibleCAE(
-            'cnn_autoencoder', cae_model, train_loader, val_loader, criterion,
+            'cnn_autoencoder', cae_model, train_loader, val_loader,
+            eval_trn_loader,
+            eval_val_loader,
+            criterion,
             progress_bar=args.progress_bar)
 
         c_step_config = {

@@ -147,21 +147,27 @@ def create_lc_compression_task(config_, model=None, device='cpu',
 
 def load_compressed_dict(model_base, lc_checkpoint, ft_checkpoint,
                          conv_scheme='scheme_2'):
-    # despite the 's' at the end, there is only one model state, the last
-    model_state_to_load = lc_checkpoint['model_states']
+    logger = logging.getLogger('inference_log')
+
     last_lc_it = lc_checkpoint['last_step_number']
 
     compression_info = {}
     for task_name, infos in lc_checkpoint['compression_tasks_info'].items():
         compression_info[task_name] = infos[last_lc_it]
+    # compression_infos = exp_run_details['compression_tasks_info'][last_lc_it]
 
-    for key in list(model_state_to_load.keys()):
+    logger.debug(lc_checkpoint.keys())
+
+    for key in list(lc_checkpoint.keys()):
         if key.startswith("lc_param_list"):
-            del model_state_to_load[key]
+            del lc_checkpoint[key]
+
+    logger.debug(lc_checkpoint.keys())
 
     for i, module in enumerate(
             [x for x in model_base.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
         module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
+        logger.debug(module.selected_rank_)
 
     old_weight_decay = True
     if hasattr(model_base, 'old_weight_decay'):
@@ -170,14 +176,16 @@ def load_compressed_dict(model_base, lc_checkpoint, ft_checkpoint,
     if hasattr(model_base, 'conv_scheme'):
         conv_scheme = model_base.conv_scheme
 
-    reparametrize_low_rank(model_base, conv_scheme=conv_scheme, old_weight_decay=old_weight_decay)
+    reparametrize_low_rank(model_base, conv_scheme=conv_scheme,
+                           old_weight_decay=old_weight_decay)
+    logger.debug(model_base)
 
     analysis_chk = dict([(k[len('module.analysis.'):], w) for k, w in ft_checkpoint.items() if k.startswith('module.analysis')])
     synthesis_chk = dict([(k[len('module.synthesis.'):], w) for k, w in ft_checkpoint.items() if k.startswith('module.synthesis')])
     embedding_chk = dict([(k[len('module.embedding.'):], w) for k, w in ft_checkpoint.items() if k.startswith('module.embedding')])
 
-    model_base.module.analysis.load_state_dict(analysis_chk)
-    model_base.module.synthesis.load_state_dict(synthesis_chk)
-    model_base.module.embedding.load_state_dict(embedding_chk)
+    model_base.module.analysis.load_state_dict(analysis_chk, strict=False)
+    model_base.module.synthesis.load_state_dict(synthesis_chk, strict=False)
+    model_base.module.embedding.load_state_dict(embedding_chk, strict=False)
 
     return model_base

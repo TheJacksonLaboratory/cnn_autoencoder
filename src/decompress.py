@@ -318,13 +318,19 @@ def decompress_image(decomp_model, input_filename, output_filename,
                                           'optimize': False})
 
 
-def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
+def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
+                  lc_pretrained_model=None,
+                  ft_pretrained_model=None):
     """ Setup a neural network-based image decompression model.
 
     Parameters
     ----------
     state : Dictionary
         A checkpoint state saved during the network training
+    lc_pretrained_model : path to model or None
+        Path to where the model that has been compressed using the LC algorithm is stored.
+    ft_pretrained_model : path to model or None
+        Path to where the model that has been fine tuned using the LC algorithm is stored.
 
     Returns
     -------
@@ -339,17 +345,33 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False):
 
     compression_level = state['args']['compression_level']
 
-    if compute_pyramids or rec_level < compression_level:
-        decomp_model = models.SynthesizerInflate(rec_level=rec_level,
-                                                 **state['args'])
-    else:
-        decomp_model = models.Synthesizer(**state['args'])
+    cae_model_base = models.AutoEncoder(**state['args'])
 
-    decomp_model.load_state_dict(state['decoder'], strict=False)
+    if compute_pyramids or rec_level < compression_level:
+        cae_model_base.synthesis = models.SynthesizerInflate(rec_level=rec_level,
+                                                             **state['args'])
+
+    cae_model_base.synthesis.load_state_dict(state['decoder'], strict=False)
+
     if state['args']['version'] == '0.5.5':
-        for color_layer in decomp_model.color_layers:
+        for color_layer in cae_model_base.color_layers:
             color_layer[0].weight.data.copy_(state['decoder']['synthesis_track.4.weight'])
 
+    if lc_pretrained_model is not None and ft_pretrained_model is not None:
+        # Load the model checkpoint from its compressed version
+        lc_compressed_model_state = torch.load(lc_pretrained_model,
+                                               map_location='cpu')
+        ft_compressed_model_state = torch.load(ft_pretrained_model,
+                                               map_location='cpu')['model_state']
+
+        cae_model_base = nn.DataParallel(cae_model_base)
+        cae_model_base = utils.load_compressed_dict(cae_model_base,
+                                                    lc_compressed_model_state,
+                                                    ft_compressed_model_state,
+                                                    conv_scheme='scheme_2')
+        cae_model_base = cae_model_base.module
+
+    decomp_model = cae_model_base.synthesis
     decomp_model = nn.DataParallel(decomp_model)
     if use_gpu:
         decomp_model.cuda()
@@ -381,7 +403,9 @@ def decompress(args):
 
     decomp_model = setup_network(state, rec_level=args.reconstruction_level,
                                  compute_pyramids=args.compute_pyramids,
-                                 use_gpu=args.gpu)
+                                 use_gpu=args.gpu,
+                                 lc_pretrained_model=args.lc_pretrained_model,
+                                 ft_pretrained_model=args.ft_pretrained_model)
     transform, _, _ = utils.get_zarr_transform(normalize=True,
                                                compressed_input=True)
 
