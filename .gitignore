@@ -125,8 +125,6 @@ dmypy.json
 *.json
 configs/*.json
 dask-worker-space/
-*.def
-Dockerfile
 docker-compose.yml
 docker-compose.base.yml
 .dockerignore

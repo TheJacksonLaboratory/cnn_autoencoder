@@ -5,7 +5,7 @@ import torch
 from inspect import signature
 
 
-from ._info import VER, SEG_VER
+from ._info import VER
 
 
 def setup_logger(args):
@@ -17,7 +17,7 @@ def setup_logger(args):
     args : Namespace
         The input arguments passed at running time. Only the code version and random seed are used from this.
     """
-    args.version = SEG_VER if args.task in ["segmentation"] else VER
+    args.version = VER
 
     if torch.cuda.is_available() and args.use_gpu:
         args.gpu = True
@@ -118,9 +118,6 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
         training_state['encoder'] = model.module.analysis.state_dict()
         training_state['decoder'] = model.module.synthesis.state_dict()
         training_state['fact_ent'] = model.module.fact_entropy.state_dict()
-
-    elif args.task in ['segmentation', 'projection', 'classification']:
-        training_state['model'] = model.module.state_dict()
 
     if scheduler is not None:
         if 'metrics' in dict(signature(scheduler.step).parameters).keys():

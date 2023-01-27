@@ -34,57 +34,6 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.01)
 
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_dim=1024, dropout=0.0):
-        super(PositionalEncoding, self).__init__()
-
-        self._dropout = nn.Dropout2d(p=dropout, inplace=False)
-
-        pos_y, pos_x = torch.meshgrid([torch.arange(max_dim)]*2)
-        div_term = torch.exp(torch.arange(0, d_model//2, 2)*(-math.log(max_dim*2)/(d_model//2)))
-
-        pe = torch.zeros(max_dim, max_dim, d_model)
-        pe[..., 0:d_model//2:2] = torch.sin(pos_x.unsqueeze(dim=2) * div_term)
-        pe[..., 1:d_model//2:2] = torch.cos(pos_x.unsqueeze(dim=2) * div_term)
-
-        pe[..., d_model//2::2] = torch.sin(pos_y.unsqueeze(dim=2) * div_term)
-        pe[..., (d_model//2+1)::2] = torch.cos(pos_y.unsqueeze(dim=2) * div_term)
-
-        pe = pe.permute(2, 0, 1).unsqueeze(dim=0)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        _, _, h, w = x.size()
-        x = x + self.pe[..., :h, :w]
-        return self._dropout(x)
-
-
-class RandMasking(nn.Module):
-    def __init__(self, n_masks=1, masks_size=64, disable_masking=False, **kwargs):
-        super(RandMasking, self).__init__()
-
-        self._n_masks = n_masks
-        self._masks_size = masks_size
-        self.disable_masking = disable_masking
-
-    def forward(self, x):
-        if self.disable_masking:
-            return x
-
-        b, _, h, w = x.size()
-
-        mask_w = w // self._masks_size
-        mask_h = h // self._masks_size
-
-        with torch.no_grad():
-            m = torch.ones((b, mask_h*mask_w), requires_grad=False)
-            m_indices = torch.randint(0, mask_w*mask_h, (b, self._n_masks))
-            m[(torch.arange(b).view(-1, 1).repeat(1, self._n_masks), m_indices)] = 0
-            m = F.interpolate(m.view(b, 1, mask_h, mask_w), size=(h, w), mode='nearest')
-
-        return x * m.to(x.device)
-
-
 class Quantizer(nn.Module):
     """ Quantizer implements the additive uniform noise quantization method 
         from Balle et al. END-TO-END OPTIMIZED IMAGE COMPRESSION. ICLR 2017
@@ -182,25 +131,6 @@ class FactorizedEntropy(nn.Module):
         fx = F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels)
 
         return fx
-
-
-class FactorizedEntropyLaplace(nn.Module):
-    """Univariate non-parametric density model to approximate the factorized
-    entropy prior using a laplace distribution
-    """
-    def __init__(self, **kwargs):
-        super(FactorizedEntropyLaplace, self).__init__()
-        self._gaussian_approx = None
-
-    def reset(self, x):
-        self._gaussian_approx = torch.distributions.Laplace(
-            torch.zeros_like(x),
-            torch.var(x.detach(),
-                      dim=(0, 2, 3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
-
-    def forward(self, x):
-        self.reset(x)
-        return self._gaussian_approx.cdf(x)
 
 
 class DownsamplingUnit(nn.Module):
@@ -508,8 +438,6 @@ class Analyzer(nn.Module):
 
         self.analysis_track = nn.Sequential(*down_track)
 
-        # self.quantizer = Quantizer()
-
         self.apply(initialize_weights)
 
     def forward(self, x):
@@ -549,6 +477,7 @@ class Synthesizer(nn.Module):
                               groups=channels_bn if groups else 1,
                               bias=bias,
                               padding_mode='reflect')]
+
         up_track += [upsampling_op(channels_in=channels_net
                                    * channels_expansion**(i+1),
                                    channels_out=channels_net
@@ -686,7 +615,9 @@ class AutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
+        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9,
+                                              init_scale=10,
+                                              filters=tuple([r] * K))
 
     def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
         if synthesize_only:
@@ -702,87 +633,6 @@ class AutoEncoder(nn.Module):
         fx = self.embedding(x)
 
         y = self.analysis(fx)
-        y_q, p_y = self.fact_entropy(y)
-
-        x_r = self.synthesis(y_q)
-
-        return x_r, y, p_y
-
-
-class MaskedAutoEncoder(nn.Module):
-    """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
-    """
-    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
-                 compression_level=3,
-                 channels_expansion=1,
-                 kernel_size=3,
-                 groups=False,
-                 batch_norm=False,
-                 dropout=0.0,
-                 bias=False,
-                 use_residual=False,
-                 act_layer_type=None,
-                 multiscale_analysis=False,
-                 K=4,
-                 r=3,
-                 n_masks=1,
-                 masks_size=64,
-                 **kwargs):
-        super(MaskedAutoEncoder, self).__init__()
-
-        self.masking = RandMasking(n_masks=n_masks, masks_size=masks_size)
-        self.pos_enc = PositionalEncoding(channels_net, max_dim=1024,
-                                          dropout=dropout)
-
-        # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org=channels_org,
-                                        channels_net=channels_net,
-                                        kernel_size=kernel_size,
-                                        groups=groups,
-                                        bias=bias)
-
-        self.analysis = Analyzer(channels_net=channels_net,
-                                 channels_bn=channels_bn,
-                                 compression_level=compression_level,
-                                 channels_expansion=channels_expansion,
-                                 kernel_size=kernel_size,
-                                 groups=groups,
-                                 batch_norm=batch_norm,
-                                 dropout=dropout,
-                                 bias=bias,
-                                 use_residual=use_residual,
-                                 act_layer_type=act_layer_type)
-        if multiscale_analysis:
-            synthesizer_class = SynthesizerInflate
-        else:
-            synthesizer_class = Synthesizer
-
-        self.synthesis = synthesizer_class(
-            channels_org=channels_org,
-            channels_net=channels_net,
-            channels_bn=channels_bn,
-            compression_level=compression_level,
-            channels_expansion=channels_expansion,
-            kernel_size=kernel_size,
-            groups=groups,
-            batch_norm=batch_norm,
-            dropout=dropout,
-            bias=bias,
-            use_residual=use_residual,
-            act_layer_type=act_layer_type)
-
-        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
-
-    def forward(self, x, synthesize_only=False):
-        if synthesize_only:
-            return self.synthesis(x)
-
-        fx = self.embedding(x)
-        fx = self.masking(fx)
-        fx = self.pos_enc(fx)
-
-        y = self.analysis(fx)
-
         y_q, p_y = self.fact_entropy(y)
 
         x_r = self.synthesis(y_q)

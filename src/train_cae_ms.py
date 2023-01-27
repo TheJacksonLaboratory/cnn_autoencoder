@@ -18,8 +18,7 @@ optimization_algorithms = {"Adam": optim.Adam,
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
                      "StepLR": optim.lr_scheduler.StepLR}
 
-model_options = {"AutoEncoder": models.AutoEncoder,
-                 "MaskedAutoEncoder": models.MaskedAutoEncoder}
+model_options = {"AutoEncoder": models.AutoEncoder}
 
 
 def valid(cae_model, data, criterion, args):

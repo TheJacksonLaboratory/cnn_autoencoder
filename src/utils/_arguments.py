@@ -5,17 +5,11 @@ import json
 import argparse
 
 from ._info import (DATASETS,
-                    SEG_MODELS,
                     CAE_MODELS,
-                    PROJ_MODELS,
-                    FE_MODELS,
-                    CLASS_MODELS,
                     CAE_CRITERIONS,
                     CAE_ACT_LAYERS,
-                    SEG_CRITERIONS,
                     OPTIMIZERS,
-                    SCHEDULERS,
-                    MERGE_TYPES)
+                    SCHEDULERS)
 
 
 def override_config_file(parser):
@@ -111,10 +105,6 @@ def add_logging_args(parser, task, mode='training'):
 
 
 def add_data_args(parser, task, mode='training'):
-    if task in ['classifier', 'segmentation']:
-        parser.add_argument('-lg', '--labels-group', type=str, dest='labels_group', help='For Zarr datasets, the group from where the lables are retrieved', default='labels/0/0')
-        parser.add_argument('-lda', '--labels-data-axes', type=str, dest='labels_data_axes', help='Order of the axes in which the labels are stored. For 5 channels: XYZCT')
-
     if task in ['decoder']:
         parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='compressed/0/0')
     else:
@@ -122,16 +112,16 @@ def add_data_args(parser, task, mode='training'):
 
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
 
-    if task in ['encoder', 'decoder', 'classifier', 'segmentation', 'autoencoder', 'lc-compress']:
+    if task in ['encoder', 'decoder', 'autoencoder', 'lc-compress']:
         parser.add_argument('-ps', '--patchsize', type=int, dest='patch_size', help='Size of the patch taken from the orignal image', default=512)
         parser.add_argument('-nw', '--workers', type=int, dest='workers', help='Number of worker threads', default=0)
         parser.add_argument('-da', '--data-axes', type=str, dest='data_axes', help='Order of the axes in which the data is stored. For 5 channels: XYZCT', default='XYZCT')
 
     if mode in ['inference', 'test']:
         parser.add_argument('-off', '--offset', action='store_true', dest='add_offset', help='Add offset to prevent stitching artifacts', default=False)
-        if task in ['decoder', 'segmentation']:
+        if task in ['decoder']:
             parser.add_argument('-of', '--dst-format', type=str, dest='destination_format', help='Format of the destination files', default='zarr')
-    if task in ['autoencoder', 'encoder', 'segmentation', 'lc-compress']:
+    if task in ['autoencoder', 'encoder', 'lc-compress']:
         parser.add_argument('-if', '--src-format', type=str, dest='source_format', help='Format of the source files to compress', default='zarr')
 
     if mode in ['trainig', 'test']:
@@ -163,12 +153,6 @@ def add_data_args(parser, task, mode='training'):
             parser.add_argument('-o', '--output', type=str, dest='output_dir', help='Directory where to store temporaly the testing files')
         parser.add_argument('-ci', '--identifier', type=str, dest='comp_identifier', help='Identifier added as suffix to the output filename of a compression/decompression process', default='')
 
-    # TODO: Probably a general label identifier for any task that stores
-    # annotations into a zarr file. The output could be inserted in the same
-    # zarr file this way.
-    if mode in ['inference'] and task in ['segmentation']:        
-        parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group inside the labels gorup where to store the segmentation', default='segmentation')
-
     if mode in ['inference'] and task in ['encoder']:
         parser.add_argument('-tli', '--task-label-identifier', type=str, dest='task_label_identifier', help='Name of the sub group where to store the compressed representation', default='compressed')
 
@@ -183,6 +167,7 @@ def add_config_args(parser, task, mode='training'):
 
     if mode not in 'training':
         return
+
     parser.add_argument('-vbs', '--valbatch', type=int, dest='val_batch_size', help='Batch size for the validation step', default=32)
     parser.add_argument('-lr', '--lrate', type=float, dest='learning_rate', help='Optimizer initial learning rate', default=1e-4)
     parser.add_argument('-alr', '--auxlrate', type=float, dest='aux_learning_rate', help='Auxiliar optimizer initial learning rate', default=1e-3)
@@ -206,13 +191,6 @@ def add_config_args(parser, task, mode='training'):
 
     parser.add_argument('-cl', '--compression-level', type=int, dest='compression_level', help='Level of compression', default=3)
 
-    if task in ['segmentation']:
-        parser.add_argument('-aebch', '--ae-bottleneck-channels', type=int,
-                            dest='autoencoder_channels_bn',
-                            help='Number of channels in the analysis and '
-                                 'synthesis tracks',
-                            default=48)
-
 
 def add_model_args(parser, task, mode='training'):
     parser.add_argument('-m', '--model', type=str, dest='trained_model', help='The checkpoint of the model to be used')
@@ -228,28 +206,6 @@ def add_model_args(parser, task, mode='training'):
             parser.add_argument('-res', '--residual', action='store_true', dest='use_residual', help='Use residual blocks')
             parser.add_argument('-act', '--activation', type=str, dest='act_layer_type', help='Type of activation layer used across all the architecture', choices=CAE_ACT_LAYERS, default=CAE_ACT_LAYERS[0])
 
-    elif task == 'classifier':
-        model_choices = CLASS_MODELS
-        if mode in ['training']:
-            parser.add_argument('-pt', '--pre-trained', action='store_true', dest='pretrained', help='Use a pretrained model')
-            parser.add_argument('-cns', '--consensus', action='store_true', dest='consensus', help='Use consensus to define the models\'s predicted class')
-            parser.add_argument('-mrg', '--merge-labels', type=str, dest='merge_labels', help='Merge the labels spatialy to define the class of a patch', choices=MERGE_TYPES)
-
-    elif task == 'segmentation':
-        parser.add_argument('-dm', '--decoder-model', type=str, dest='autoencoder_model', help='A pretrained autoencoder model')
-        parser.add_argument('-st', '--segmentation-threshold', type=float, dest='seg_threshold', help='Objects will be assigned to their corresponding class if those have a predicted confidence higher than this threshold value', default=0.5)
-        model_choices = SEG_MODELS
-        if mode in ['training']:
-            parser.add_argument('-tc', '--target-classes', type=int, dest='classes', help='Number of target classes', default=1)
-            parser.add_argument('-pos', '--pos-weight', type=float, dest='pos_weight', help='Weight of the positive class (in case of binary classification/segmentation)', default=1.0)
-            parser.add_argument('-trb', '--trainable-bridge', action='store_true', dest='trainable_bridge', help='Use trainable bridge layers')
-
-    elif task == 'projection':
-        model_choices = PROJ_MODELS
-
-    elif task == 'fact_ent':
-        model_choices = FE_MODELS
-
     if mode in ['training']:
         parser.add_argument('-mt', '--model-type', type=str, dest='model_type', help='Type of %s model' % task, choices=model_choices)
         parser.add_argument('-do', '--dropout', type=float, dest='dropout', help='Use drop out in the training stage', default=0.0)
@@ -263,10 +219,7 @@ def add_criteria_args(parser, task, mode='training'):
         criteria_choices = CAE_CRITERIONS
         parser.add_argument('-el', '--energylimit', type=float, dest='energy_limit', help='When using a penalty criterion, the maximum energy on the channel that consentrates the most of it is limited to this value', default=0.7)
         parser.add_argument('-dl', '--distl', type=float, nargs='+', dest='distortion_lambda', help='Distortion penalty parameter (lambda)', default=0.01)
-    elif task in ['classifier', 'segmentation']:
-        criteria_choices = SEG_CRITERIONS
-        parser.add_argument('-ceww', '--cew-weight', type=float, dest='cew_weight', help=argparse.SUPPRESS, default=10.0)
-        parser.add_argument('-cews', '--cew-sigma', type=float, dest='cew_sigma', help=argparse.SUPPRESS, default=128.0)
+
     else:
         raise ValueError('Task %s not supported' % task)
 

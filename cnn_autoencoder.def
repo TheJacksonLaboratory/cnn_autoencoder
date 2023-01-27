@@ -1,0 +1,33 @@
+Bootstrap: docker
+From: pytorch/pytorch:1.12.0-cuda11.3-cudnn8-runtime
+
+%post
+    apt-get update && apt-get install -y libblosc1 wget unzip build-essential
+    pip install --upgrade pip
+
+    cd /usr/local
+    wget https://github.com/TheJacksonLaboratory/cnn_autoencoder/archive/refs/heads/age_classifier.zip
+    wget https://github.com/InterDigitalInc/CompressAI/archive/refs/heads/master.zip
+
+    unzip master.zip
+    unzip age_classifier.zip
+
+    rm master.zip
+    rm age_classifier.zip
+
+    cd /usr/local/CompressAI-master
+    pip install -e '.[dev]'
+
+    cd /usr/local/cnn_autoencoder-age_classifier
+    pip install -r requirements.txt
+
+    # Download and install the LC model compression algorithm
+    wget https://github.com/UCMerced-ML/LC-model-compression/archive/refs/heads/master.zip
+    unzip master.zip
+    rm master.zip
+
+    cd /usr/local/LC-model-compression-master
+    pip install -e .
+
+%runscript
+    exec python "$@"

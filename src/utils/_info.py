@@ -21,16 +21,6 @@ CAE_ACT_LAYERS = ['LeakyReLU',
                   'GDN',
                   'Identiy']
 
-SEG_CRITERIONS = ['CE', 'CEW']
-
 OPTIMIZERS = ['Adam', 'SGD']
 SCHEDULERS = ['None', 'ReduceOnPlateau', 'StepLR']
-
-SEG_MODELS = ['DecoderUNet', 'UNet', 'UNetNoBridge']
-CAE_MODELS = ['MaskedAutoEncoder', 'AutoEncoder']
-
-PROJ_MODELS = ['KCCA']
-FE_MODELS = ['FactorizedEntropy', 'FactorizedEntropyLaplace']
-CLASS_MODELS = ['InceptionV3', 'MobileNet', 'ResNet', 'ViT']
-
-MERGE_TYPES = ['mean', 'max', 'median']
+CAE_MODELS = ['AutoEncoder']

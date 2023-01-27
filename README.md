@@ -15,7 +15,7 @@ Those can be used by passing the argumen ```-c config.json```, where config.json
 The training paramaters can be reviewed by using the following command.
 
 ```
-python ./src/train_cae.py -h
+python ./src/train_cae_ms.py -h
 ```
 
 ## Testing
