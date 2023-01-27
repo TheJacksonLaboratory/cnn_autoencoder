@@ -6,19 +6,19 @@ From: pytorch/pytorch:1.12.0-cuda11.3-cudnn8-runtime
     pip install --upgrade pip
 
     cd /usr/local
-    wget https://github.com/TheJacksonLaboratory/cnn_autoencoder/archive/refs/heads/age_classifier.zip
+    wget https://github.com/TheJacksonLaboratory/cnn_autoencoder/archive/refs/heads/lc_compress.zip
     wget https://github.com/InterDigitalInc/CompressAI/archive/refs/heads/master.zip
 
     unzip master.zip
-    unzip age_classifier.zip
+    unzip lc_compress.zip
 
     rm master.zip
-    rm age_classifier.zip
+    rm lc_compress.zip
 
     cd /usr/local/CompressAI-master
     pip install -e '.[dev]'
 
-    cd /usr/local/cnn_autoencoder-age_classifier
+    cd /usr/local/cnn_autoencoder-lc_compress
     pip install -r requirements.txt
 
     # Download and install the LC model compression algorithm

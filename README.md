@@ -3,7 +3,8 @@ Convolutional neural network Autoencoder.
 Implementation based on Cheng *et al.* **Energy Compaction-Based Image Compression Using Convolutional AutoEncoder**, Transactions on Multimedia 14 (8), 2019.
 
 ## Installation
-Clone this repository and use the [pytorch_lightnening](https://hub.docker.com/r/pytorchlightning/pytorch_lightning) container.
+Clone this repository and build a docker container using the **Dockerfile**, or
+a singularity container using the **cnn_autoencoder.def** definition file.
 The extra required packages can be installed using **pip** from  *requirements.txt*.
 
 ## Training
