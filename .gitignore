@@ -122,9 +122,8 @@ dmypy.json
 *.png
 
 # Configuration files
-*.json
-configs/*.json
 dask-worker-space/
 docker-compose.yml
 docker-compose.base.yml
 .dockerignore
+.vscode/*
