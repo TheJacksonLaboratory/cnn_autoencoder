@@ -9,22 +9,22 @@ From: pytorch/pytorch:1.12.0-cuda11.3-cudnn8-runtime
     wget https://github.com/TheJacksonLaboratory/cnn_autoencoder/archive/refs/heads/lc_compress.zip
     wget https://github.com/InterDigitalInc/CompressAI/archive/refs/heads/master.zip
 
+    # Download and install the LC model compression algorithm
+    wget https://github.com/UCMerced-ML/LC-model-compression/archive/refs/heads/master.zip -O LC-model-compression.zip
+
     unzip master.zip
     unzip lc_compress.zip
+    unzip LC-model-compression.zip
 
     rm master.zip
     rm lc_compress.zip
+    rm LC-model-compression.zip
 
     cd /usr/local/CompressAI-master
     pip install -e '.[dev]'
 
     cd /usr/local/cnn_autoencoder-lc_compress
     pip install -r requirements.txt
-
-    # Download and install the LC model compression algorithm
-    wget https://github.com/UCMerced-ML/LC-model-compression/archive/refs/heads/master.zip
-    unzip master.zip
-    rm master.zip
 
     cd /usr/local/LC-model-compression-master
     pip install -e .
