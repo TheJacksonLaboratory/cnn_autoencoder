@@ -90,7 +90,7 @@ class FactorizedEntropy(nn.Module):
         This function computes the function c(x) from Balle et al. VARIATIONAL IMAGE COMPRESSION WITH A SCALE HYPERPRIOR. ICLR 2018
         Function c(x) can be used to model the probability of a random variable that has been comvolved with a uniform distribution.
     """
-    def __init__(self, channels_bn, K=4, r=3, tails_val=10, **kwargs):
+    def __init__(self, channels_bn, K=4, r=3, quantiles_val=10, **kwargs):
         super(FactorizedEntropy, self).__init__()
         self._channels = channels_bn
         self._K = K
@@ -116,9 +116,9 @@ class FactorizedEntropy(nn.Module):
 
         # Force the range of the symbols value to be between the given tail
         # values.
-        self.tails = nn.Parameter(torch.zeros(1, channels_bn, 3, 1))
-        self.tails.data[0, :, 0, 0] = -tails_val
-        self.tails.data[0, :, 2, 0] = tails_val
+        self.quantiles = nn.Parameter(torch.zeros(1, channels_bn, 3, 1))
+        self.quantiles.data[0, :, 0, 0] = -quantiles_val
+        self.quantiles.data[0, :, 2, 0] = quantiles_val
 
     def reset(self, x):
         pass
@@ -433,18 +433,19 @@ class Analyzer(nn.Module):
                                     bias=bias,
                                     padding_mode='reflect'))
 
-        # down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
-        #                               inplace=False))
+        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+                                      inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
+
+        self.quantizer = Quantizer()
 
         self.apply(initialize_weights)
 
     def forward(self, x):
         y = self.analysis_track(x)
-        # y_q = self.quantizer(y)
-        # return y_q, y
-        return y
+        y_q = self.quantizer(y)
+        return y_q, y
 
 
 class Synthesizer(nn.Module):
@@ -615,9 +616,8 @@ class AutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9,
-                                              init_scale=10,
-                                              filters=tuple([r] * K))
+        self.fact_entropy = FactorizedEntropy(channels_bn=channels_bn, K=K,
+                                              r=r)
 
     def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
         if synthesize_only:
@@ -632,8 +632,8 @@ class AutoEncoder(nn.Module):
 
         fx = self.embedding(x)
 
-        y = self.analysis(fx)
-        y_q, p_y = self.fact_entropy(y)
+        y_q, y = self.analysis(fx)
+        p_y = self.fact_entropy(y + 0.5) - self.fact_entropy(y - 0.5)
 
         x_r = self.synthesis(y_q)
 

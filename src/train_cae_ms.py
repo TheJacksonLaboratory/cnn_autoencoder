@@ -77,7 +77,7 @@ def valid(cae_model, data, criterion, args):
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
+                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
                 q.update()
@@ -97,7 +97,7 @@ def valid(cae_model, data, criterion, args):
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
+                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
 
@@ -214,7 +214,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                                 loss_dict.get('energy', 0.0),
                                 y.detach().min(),
                                 y.detach().max(),
-                                *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
+                                *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                                 x_r[0].detach().min(),
                                 x_r[0].detach().max()))
 
@@ -251,7 +251,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
-                        *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
+                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
                 q.update()
@@ -273,7 +273,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                             loss_dict.get('energy', 0.0),
                             y.detach().min(),
                             y.detach().max(),
-                            *cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1)),
+                            *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                             x_r[0].detach().min(),
                             x_r[0].detach().max()))
 
@@ -517,8 +517,7 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
             color_layer[0].weight.data.copy_(
                 checkpoint_state['decoder']['synthesis_track.4.weight'])
 
-    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'], strict=False)
-    cae_model.module.fact_entropy.update(force=True)
+    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'])
 
     if resume_optimizer:
         optimizer.load_state_dict(checkpoint_state['optimizer'])

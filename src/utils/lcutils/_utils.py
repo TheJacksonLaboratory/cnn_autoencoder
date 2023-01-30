@@ -34,8 +34,9 @@ From the examples module of the LC-Model-Compression package
 import logging
 import torch
 from torch import nn
-from lc.torch import ParameterTorch as LCParameterTorch, AsIs
+from lc.torch import ParameterTorch as LCParameterTorch, AsIs, AsVector
 from lc.compression_types.low_rank import RankSelection
+from lc.compression_types.quantization import AdaptiveQuantization
 
 from ._compflops import add_flops_counting_methods
 from ._finetune import reparametrize_low_rank
@@ -128,20 +129,21 @@ def create_lc_compression_task(config_, model=None, device='cpu',
         model.stop_flops_count()
 
     compression_tasks = {}
-    for i, (w, module) in enumerate(
-        [((lambda x=x: getattr(x, 'weight')), x)
-         for x in model.modules() if isinstance(x, (nn.Conv2d,
-                                                    nn.ConvTranspose2d,
-                                                    nn.Linear))]):
-        compression_tasks[LCParameterTorch(w, device)] = \
-            (AsIs,
-             RankSelection(conv_scheme=config_['conv_scheme'],
-                           alpha=config_["alpha"],
-                           criterion=config_["criterion"],
-                           normalize=True,
-                           module=module),
-             f"task_{i}")
+    layers = [lambda x=x: getattr(x, 'weight')
+              for x in model.modules() if isinstance(x, (nn.Conv2d,
+                                                         nn.ConvTranspose2d,
+                                                         nn.Linear))]
 
+    compression_tasks = {
+        LCParameterTorch(layers, device):
+            [(AsVector,
+              RankSelection(conv_scheme=config_['conv_scheme'],
+                            alpha=config_["alpha"],
+                            criterion=config_["criterion"],
+                            normalize=True,
+                            module=layers),
+              f"low-rank")]
+    }
     return compression_tasks
 
 

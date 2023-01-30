@@ -125,37 +125,37 @@ class RateLoss:
         return {'rate_loss': rate_loss}
 
     def compute_entropy_loss(self, net, **kwargs):
-        # is_training = net.training
+        is_training = net.training
 
-        # fact_ent_pars = []
-        # if hasattr(net, 'module'):
-        #     for par_name, par in net.module.fact_entropy.named_parameters():
-        #         if 'tails' not in par_name:
-        #             par.requires_grad = False
-        #             fact_ent_pars.append(par)
-
-        #     tails = net.module.fact_entropy.tails
-
-        # else:
-        #     for par_name, par in net.fact_entropy.named_parameters():
-        #         if 'tails' not in par_name:
-        #             par.requires_grad = False
-        #             fact_ent_pars.append(par)
-
-        #     tails = net.fact_entropy.tails
-
-        # q_seq = net(x=tails, factorized_entropy_only=True)
-
-        # for par in fact_ent_pars:
-        #     par.requires_grad = is_training
-
-        # entropy_loss = torch.abs(q_seq
-        #                          - self._target_mass.to(q_seq.device)).sum()
-
+        fact_ent_pars = []
         if hasattr(net, 'module'):
-            entropy_loss = net.module.fact_entropy.loss()
+            for par_name, par in net.module.fact_entropy.named_parameters():
+                if 'quantiles' not in par_name:
+                    par.requires_grad = False
+                    fact_ent_pars.append(par)
+
+            quantiles = net.module.fact_entropy.quantiles
+
         else:
-            entropy_loss = net.fact_entropy.loss()
+            for par_name, par in net.fact_entropy.named_parameters():
+                if 'quantiles' not in par_name:
+                    par.requires_grad = False
+                    fact_ent_pars.append(par)
+
+            quantiles = net.fact_entropy.quantiles
+
+        q_seq = net(x=quantiles, factorized_entropy_only=True)
+
+        for par in fact_ent_pars:
+            par.requires_grad = is_training
+
+        entropy_loss = torch.abs(q_seq
+                                 - self._target_mass.to(q_seq.device)).sum()
+
+        # if hasattr(net, 'module'):
+        #     entropy_loss = net.module.fact_entropy.loss()
+        # else:
+        #     entropy_loss = net.fact_entropy.loss()
 
         return {'entropy_loss': entropy_loss}
 

@@ -244,8 +244,7 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
 
     cae_model_base.embedding.load_state_dict(state['embedding'])
     cae_model_base.analysis.load_state_dict(state['encoder'])
-    cae_model_base.fact_entropy.update(force=True)
-    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
+    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'])
 
     if lc_pretrained_model is not None and ft_pretrained_model is not None:
 
