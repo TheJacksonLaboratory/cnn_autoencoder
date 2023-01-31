@@ -459,8 +459,15 @@ class Synthesizer(nn.Module):
                  bias=False,
                  use_residual=False,
                  act_layer_type=None,
+                 normalize=False,
                  **kwargs):
         super(Synthesizer, self).__init__()
+
+        if normalize:
+            self._min_range = -1
+
+        else:
+            self._min_range = 0
 
         if use_residual:
             upsampling_op = ResidualUpsamplingUnit
@@ -524,18 +531,20 @@ class Synthesizer(nn.Module):
             return x_brg
 
         fx = self.color_layers[-1](fx)
-
+        fx = fx.clip_(self._min_range, 1)
         return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)
         x = self.color_layers[-1](x)
+        x = x.clip_(self._min_range, 1)
         return x
 
 
 class SynthesizerInflate(Synthesizer):
     def __init__(self, rec_level=-1, color=True, **kwargs):
         super(SynthesizerInflate, self).__init__(**kwargs)
+
         if rec_level < 1:
             rec_level = len(self.synthesis_track) - 1
 
@@ -552,6 +561,7 @@ class SynthesizerInflate(Synthesizer):
                                          self.color_layers):
             fx = up_layer(fx)
             x_r = color_layer(fx)
+            x_r = x_r.clip_(self._min_range, 1)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms
@@ -614,7 +624,8 @@ class AutoEncoder(nn.Module):
             dropout=dropout,
             bias=bias,
             use_residual=use_residual,
-            act_layer_type=act_layer_type)
+            act_layer_type=act_layer_type,
+            **kwargs)
 
         self.fact_entropy = FactorizedEntropy(channels_bn=channels_bn, K=K,
                                               r=r)

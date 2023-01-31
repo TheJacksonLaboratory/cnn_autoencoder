@@ -44,7 +44,7 @@ def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
                  mode='training',
                  normalize=True,
                  **kwargs):
-    prep_trans = get_imagenet_transform(mode, normalize)
+    prep_trans = get_imagenet_transform(mode, normalize, **kwargs)
 
     if (isinstance(data_dir, list)
        and (data_dir[0].endswith('txt')

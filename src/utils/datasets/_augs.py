@@ -165,7 +165,9 @@ def get_zarr_transform(data_mode='testing', normalize=False,
     return prep_trans, input_target_trans, target_trans
 
 
-def get_imagenet_transform(data_mode='training', normalize=False, patch_size=128):
+def get_imagenet_transform(data_mode='training', normalize=False,
+                           patch_size=128,
+                           **kwargs):
     prep_trans_list = [
          transforms.PILToTensor(),
          transforms.ConvertImageDtype(torch.float32)
@@ -182,7 +184,7 @@ def get_imagenet_transform(data_mode='training', normalize=False, patch_size=128
     return transforms.Compose(prep_trans_list)
 
 
-def get_mnist_transform(data_mode='training', normalize=True):
+def get_mnist_transform(data_mode='training', normalize=True, **kwargs):
     prep_trans_list = [transforms.Pad(2),
                        transforms.PILToTensor(),
                        transforms.ConvertImageDtype(torch.float32)]
