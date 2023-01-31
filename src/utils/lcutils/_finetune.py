@@ -134,8 +134,8 @@ def linear_layer_reparametrizer(sub_module, conv_scheme='scheme_1'):
                                    kernel_size=1,
                                    bias=bias)
 
-                l1.weight.data = torch.from_numpy(V.reshape([-1, *init_shape[1:]]))
-                l2.weight.data = torch.from_numpy(U[:, :, None, None])
+                l1.weight.data = matrix_to_tensor(torch.from_numpy(V).to(l1.weight.data.device), l1.weight.data.shape, conv_scheme)
+                l2.weight.data = matrix_to_tensor(torch.from_numpy(U).to(l1.weight.data.device), l2.weight.data.shape, conv_scheme)
 
                 if bias:
                     l2.bias.data = sub_module.bias.data

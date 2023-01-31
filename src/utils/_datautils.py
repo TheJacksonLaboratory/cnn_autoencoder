@@ -120,20 +120,10 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
         merge_labels=merge_labels,
         add_noise=add_noise)
 
-    if task == 'autoencoder':
+    if task in ['autoencoder', 'segmentation'] and mode in ['training', 'test']:
+        histo_dataset = LabeledZarrDataset
+    else:
         histo_dataset = ZarrDataset
-
-    elif task == 'segmentation':
-        if mode in ['training', 'test']:
-            histo_dataset = LabeledZarrDataset
-        else:
-            histo_dataset = ZarrDataset
-
-    elif task == 'classification':
-        if mode in ['training', 'test']:
-            histo_dataset = LabeledZarrDataset
-        else:
-            histo_dataset = ZarrDataset
 
     # Modes can vary from testing, segmentation, compress, decompress, etc.
     # For this reason, only when it is properly training, two data queues are

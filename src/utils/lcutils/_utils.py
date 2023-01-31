@@ -133,7 +133,7 @@ def create_lc_compression_task(config_, model=None, device='cpu',
               for x in model.modules() if isinstance(x, (nn.Conv2d,
                                                          nn.ConvTranspose2d,
                                                          nn.Linear))]
-    
+
     compression_tasks = {}
     for i, (w, l) in enumerate(layers):
         compression_tasks[LCParameterTorch(w, device)] = (

@@ -261,7 +261,7 @@ class CompressibleCAE():
 
         for i, module in enumerate(
                 [x for x in self.model.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
-            module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
+            module.selected_rank_ = compression_info[f"low-rank-{i}"]['selected_rank']
             logger.debug(module.selected_rank_)
 
         old_weight_decay = True
