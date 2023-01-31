@@ -129,21 +129,22 @@ def create_lc_compression_task(config_, model=None, device='cpu',
         model.stop_flops_count()
 
     compression_tasks = {}
-    layers = [lambda x=x: getattr(x, 'weight')
+    layers = [(lambda x=x: getattr(x, 'weight'), x)
               for x in model.modules() if isinstance(x, (nn.Conv2d,
                                                          nn.ConvTranspose2d,
                                                          nn.Linear))]
+    
+    compression_tasks = {}
+    for i, (w, l) in enumerate(layers):
+        compression_tasks[LCParameterTorch(w, device)] = (
+            AsIs,
+            RankSelection(conv_scheme=config_['conv_scheme'],
+                          alpha=config_["alpha"],
+                          criterion=config_["criterion"],
+                          normalize=True,
+                          module=l),
+              f"low-rank-{i}")
 
-    compression_tasks = {
-        LCParameterTorch(layers, device):
-            [(AsVector,
-              RankSelection(conv_scheme=config_['conv_scheme'],
-                            alpha=config_["alpha"],
-                            criterion=config_["criterion"],
-                            normalize=True,
-                            module=layers),
-              f"low-rank")]
-    }
     return compression_tasks
 
 

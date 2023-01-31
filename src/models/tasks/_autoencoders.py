@@ -627,13 +627,14 @@ class AutoEncoder(nn.Module):
 
         elif factorized_entropy_only:
             # When running on factorized entropy only mode, use x as y_q
-            log_p_y = self.fact_entropy(x)
+            # log_p_y = self.fact_entropy(x)
+            log_p_y = self.fact_entropy(x + 0.5) - self.fact_entropy(x - 0.5) + 1e-12
             return log_p_y
 
         fx = self.embedding(x)
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y + 0.5) - self.fact_entropy(y - 0.5)
+        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-12
 
         x_r = self.synthesis(y_q)
 
