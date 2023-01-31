@@ -120,7 +120,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
         merge_labels=merge_labels,
         add_noise=add_noise)
 
-    if task in ['autoencoder', 'segmentation'] and mode in ['training', 'test']:
+    if task in ['segmentation'] and mode in ['training', 'test']:
         histo_dataset = LabeledZarrDataset
     else:
         histo_dataset = ZarrDataset
