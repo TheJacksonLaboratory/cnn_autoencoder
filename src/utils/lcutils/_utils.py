@@ -169,7 +169,7 @@ def load_compressed_dict(model_base, lc_checkpoint, ft_checkpoint,
 
     for i, module in enumerate(
             [x for x in model_base.modules() if isinstance(x, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear))]):
-        module.selected_rank_ = compression_info[f"task_{i}"]['selected_rank']
+        module.selected_rank_ = compression_info[f"low-rank-{i}"]['selected_rank']
         logger.debug(module.selected_rank_)
 
     old_weight_decay = True

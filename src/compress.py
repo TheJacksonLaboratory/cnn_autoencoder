@@ -1,5 +1,6 @@
 from dask.diagnostics import ProgressBar
 
+import time
 import logging
 import os
 import shutil
@@ -52,7 +53,8 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                    data_group='0/0',
                    data_axes='TCZYX',
                    seed=None,
-                   comp_label='compressed'):
+                   comp_label='compressed',
+                   progress_bar=False):
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
     fn, rois = utils.parse_roi(input_filename, source_format)
@@ -162,9 +164,16 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
     else:
         component = data_group
 
-    with ProgressBar():
-        y.to_zarr(output_filename, component=component, overwrite=True,
-                  compressor=compressor)
+    e_time = time.perf_counter()
+    if progress_bar:
+        with ProgressBar():
+            y.to_zarr(output_filename, component=component, overwrite=True,
+                    compressor=compressor)
+    else:
+            y.to_zarr(output_filename, component=component, overwrite=True,
+                    compressor=compressor)
+    e_time = time.perf_counter() - e_time
+    print('Compression time:', e_time)
 
     # Add metadata to the compressed zarr file
     group = zarr.open(output_filename)
@@ -244,28 +253,28 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
 
     cae_model_base.embedding.load_state_dict(state['embedding'])
     cae_model_base.analysis.load_state_dict(state['encoder'])
-    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'])
+    # cae_model_base.fact_entropy.load_state_dict(state['fact_ent'])
 
     if lc_pretrained_model is not None and ft_pretrained_model is not None:
 
         # Load the model checkpoint from its compressed version
         lc_compressed_model_state = torch.load(lc_pretrained_model,
                                                map_location='cpu')
-        ft_compressed_model_state = torch.load(ft_pretrained_model,
-                                               map_location='cpu')['model_state']
+        ft_compressed_model_checkpoint = torch.load(ft_pretrained_model,
+                                                    map_location='cpu')
 
         cae_model_base = nn.DataParallel(cae_model_base)
         cae_model_base = utils.load_compressed_dict(cae_model_base,
                                                     lc_compressed_model_state,
-                                                    ft_compressed_model_state,
-                                                    conv_scheme='scheme_2')
+                                                    ft_compressed_model_checkpoint['model_state'],
+                                                    conv_scheme=ft_compressed_model_checkpoint['config']['conv_scheme'])
         cae_model_base = cae_model_base.module
 
     embedding = cae_model_base.embedding
     analysis = cae_model_base.analysis
-    fact_ent = cae_model_base.fact_entropy
+    # fact_ent = cae_model_base.fact_entropy
 
-    comp_model = nn.Sequential(embedding, analysis, fact_ent)
+    comp_model = nn.Sequential(embedding, analysis) #, fact_ent)
 
     comp_model = nn.DataParallel(comp_model)
     if use_gpu:
@@ -327,7 +336,8 @@ def compress(args):
             data_axes=args.data_axes,
             data_group=args.data_group,
             seed=state['args']['seed'],
-            comp_label=args.task_label_identifier)
+            comp_label=args.task_label_identifier,
+            progress_bar=args.progress_bar)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))
 

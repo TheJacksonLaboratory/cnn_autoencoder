@@ -117,6 +117,7 @@ if __name__ == "__main__":
             'steps': args.lc_steps,
             'tag': args.lc_tag,
             'log_dir': args.log_dir,
+            'conv_scheme': args.lc_conv_scheme
         }
         exp_setup.eval_config=l_step_config
         lc_exp_runner(exp_setup, lc_config, l_step_config, c_step_config,
@@ -157,6 +158,7 @@ if __name__ == "__main__":
             'lr_decay': args.lc_lr_decay,
             'tag': args.lc_tag,
             'log_dir': args.log_dir,
+            'conv_scheme': args.lc_conv_scheme
         }
         ft_exp_runner(exp_setup, ft_config, c_step_config, args.lc_pretrained_model)
 

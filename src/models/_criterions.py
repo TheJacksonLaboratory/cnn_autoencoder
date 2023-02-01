@@ -175,7 +175,6 @@ class DistortionLoss(DistortionLossBase):
 class MSSSIMLoss(DistortionLossBase):
     def __init__(self, patch_size, scale=1, **kwargs):
         super().__init__(**kwargs)
-
         if ((11 - 2 * scale) - patch_size // 2 ** (scale + 4)) > 0:
             self.padding = nn.ZeroPad2d(
                 ((11 - 2 * scale) - patch_size // 2 ** (scale + 4)) * 2 ** 3)
@@ -193,10 +192,12 @@ class MSSSIMLoss(DistortionLossBase):
             normalize='relu')
 
     def compute_dist(self, x, x_r, **kwargs):
+        padded_x_r = self.padding(x_r)
+        padded_x = self.padding(x.to(x_r.device))
         ms_ssim = self.msssim.to(x_r.device)(
-            self._range_scale * self.padding(x_r)
+            self._range_scale * padded_x_r
             + self._range_offset,
-            self._range_scale * self.padding(x.to(x_r.device))
+            self._range_scale * padded_x
             + self._range_offset)
 
         ms_ssim = 1.0 - ms_ssim

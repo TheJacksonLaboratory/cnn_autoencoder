@@ -1,5 +1,6 @@
 from dask.diagnostics import ProgressBar
 
+import time
 import logging
 import os
 import shutil
@@ -92,7 +93,8 @@ def decompress_image(decomp_model, input_filename, output_filename,
                      min_range=0.0,
                      max_range=1.0,
                      range_offset=0.0,
-                     range_scale=1.0):
+                     range_scale=1.0,
+                     progress_bar=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
     fn, rois = utils.parse_roi(input_filename, '.zarr')
     src_group = zarr.open(fn, mode='r')
@@ -256,9 +258,17 @@ def decompress_image(decomp_model, input_filename, output_filename,
         comp_pyr = '/'.join(component.split('/')[:-1])
         for r, y_r in enumerate(y_pyr):
             comp_r = comp_pyr + '/%i' % r
-            with ProgressBar():
-                y_r.to_zarr(output_filename, component=comp_r, overwrite=True,
-                            compressor=compressor)
+            e_time = time.perf_counter()
+            if progress_bar:
+                with ProgressBar():
+                    y_r.to_zarr(output_filename, component=comp_r, overwrite=True,
+                                compressor=compressor)
+            else:
+                    y_r.to_zarr(output_filename, component=comp_r, overwrite=True,
+                                compressor=compressor)
+
+            e_time = time.perf_counter() - e_time
+            print('Reconstruction time:', e_time)
 
         group = zarr.open(output_filename)
         if len(decomp_label):
@@ -354,21 +364,21 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
     cae_model_base.synthesis.load_state_dict(state['decoder'], strict=False)
 
     if state['args']['version'] == '0.5.5':
-        for color_layer in cae_model_base.color_layers:
+        for color_layer in cae_model_base.synthesis.color_layers:
             color_layer[0].weight.data.copy_(state['decoder']['synthesis_track.4.weight'])
 
     if lc_pretrained_model is not None and ft_pretrained_model is not None:
         # Load the model checkpoint from its compressed version
         lc_compressed_model_state = torch.load(lc_pretrained_model,
                                                map_location='cpu')
-        ft_compressed_model_state = torch.load(ft_pretrained_model,
-                                               map_location='cpu')['model_state']
+        ft_compressed_model_checkpoint = torch.load(ft_pretrained_model,
+                                               map_location='cpu')
 
         cae_model_base = nn.DataParallel(cae_model_base)
         cae_model_base = utils.load_compressed_dict(cae_model_base,
                                                     lc_compressed_model_state,
-                                                    ft_compressed_model_state,
-                                                    conv_scheme='scheme_2')
+                                                    ft_compressed_model_checkpoint['model_state'],
+                                                    conv_scheme=ft_compressed_model_checkpoint['config']['conv_scheme'])
         cae_model_base = cae_model_base.module
 
     decomp_model = cae_model_base.synthesis
@@ -390,7 +400,7 @@ def decompress(args):
     # Open checkpoint from trained model state
     state = utils.load_state(args)
 
-    if state['args']['normalize']:
+    if state['args'].get('normalize', True):
         min_range = -1.0
         max_range = 1.0
         range_scale = 0.5

@@ -51,13 +51,13 @@ def compute_ms_ssim(x=None, x_r=None, **kwargs):
         reduction='elementwise_mean',
         k1=0.01,
         k2=0.03,
-        data_range=1,
+        data_range=255,
         betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
         normalize='relu'
     )
     ms_ssim = ms_ssim_fn(
-        torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float() / 255.0,
-        torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float() / 255.0)
+        torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float(),
+        torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float())
     return ms_ssim, None
 
 
@@ -71,9 +71,9 @@ def compute_psnr(x=None, x_r=None, **kwargs):
     return psnr, None
 
 
-def compute_rmse(x=None, x_r=None, **kwargs):
-    rmse = np.sqrt(mean_squared_error(x / 255.0, x_r / 255.0))
-    return rmse, None
+def compute_mse(x=None, x_r=None, **kwargs):
+    mse = mean_squared_error(x, x_r)
+    return mse, None
 
 
 def compute_rate(x=None, x_r=None, y_q_ptr=None, **kwargs):
@@ -82,14 +82,14 @@ def compute_rate(x=None, x_r=None, y_q_ptr=None, **kwargs):
 
 
 """Available metrics (can add more later):
-    dist=Distortion (RMSE)
+    dist=Distortion (MSE)
     rate=Compression rate (bits-per-pixel bpp)
     ssim=Structural similarity
     psnr=Peak Dignal-to-Noise Ratio (dB)
-    delta_cielab=Distance between images in the CIELAB color space (RMSE in
+    delta_cielab=Distance between images in the CIELAB color space (MSE in
     CIELAB space)
 """
-metric_fun = {'dist': compute_rmse,
+metric_fun = {'dist': compute_mse,
               'rate': compute_rate,
               'ms-ssim': compute_ms_ssim,
               'ssim': compute_ssim,
@@ -205,7 +205,7 @@ def test_cae(args):
 
     state = utils.load_state(args)
 
-    if state['args']['normalize']:
+    if state['args'].get('normalize', True):
         min_range = -1.0
         max_range = 1.0
         range_scale = 0.5
@@ -216,10 +216,14 @@ def test_cae(args):
         range_scale = 1.0
         range_offset = 0.0
 
-    comp_model = compress.setup_network(state, args.use_gpu)
+    comp_model = compress.setup_network(state, args.use_gpu,
+                                        lc_pretrained_model=args.lc_pretrained_model,
+                                        ft_pretrained_model=args.ft_pretrained_model)
     decomp_model = decompress.setup_network(state, rec_level=-1,
                                             compute_pyramids=False,
-                                            use_gpu=args.use_gpu)
+                                            use_gpu=args.use_gpu,
+                                            lc_pretrained_model=args.lc_pretrained_model,
+                                            ft_pretrained_model=args.ft_pretrained_model)
 
     # Log the training setup
     logger.info('Network architecture:')

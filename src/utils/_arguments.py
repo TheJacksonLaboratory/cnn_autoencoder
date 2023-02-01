@@ -106,9 +106,9 @@ def add_logging_args(parser, task, mode='training'):
 
 def add_data_args(parser, task, mode='training'):
     if task in ['decoder']:
-        parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='compressed/0/0')
+        parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='')
     else:
-        parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='0/0')
+        parser.add_argument('-dg', '--data-group', type=str, dest='data_group', help='For Zarr datasets, the group from where the data is retrieved', default='')
 
     parser.add_argument('-dd', '--datadir', type=str, nargs='+', dest='data_dir', help='Directory, list of files, or text file with a list of files to be used as inputs.')
 
@@ -255,8 +255,8 @@ def add_lc_args(parser, task, mode='training'):
             'action': 'store_true'
             }
         },
-        {'tasks': ['lc-compress', 'encoder', 'decoder'],
-         'modes': ['training', 'inference'],
+        {'tasks': ['lc-compress', 'encoder', 'decoder', 'autoencoder'],
+         'modes': ['training', 'inference', 'test'],
          'flags': ('-lcpm', '--lc-pretrained-model'),
          'details': {
             'dest': 'lc_pretrained_model',
@@ -264,8 +264,8 @@ def add_lc_args(parser, task, mode='training'):
             'help': 'Model pretrained with the LC algorthm'
             }
         },
-        {'tasks': ['lc-compress', 'encoder', 'decoder'],
-         'modes': ['training', 'inference'],
+        {'tasks': ['lc-compress', 'encoder', 'decoder', 'autoencoder'],
+         'modes': ['training', 'inference', 'test'],
          'flags': ('-lcft', '--lc-pretrained-model-ft'),
          'details': {
             'dest': 'ft_pretrained_model',

@@ -67,7 +67,7 @@ def valid(cae_model, data, criterion, args):
             if args.print_log:
                 q.set_description(
                     'Validation Loss {:.4f} (dist=[{}], rate={:.2f}, '
-                    'aux={:.2f}, energy={:.3f}). Quant bn [{:.2f}, {:.2f}] '
+                    'aux={:.2f}, energy={:.3f}). Quant bn [{:.2f}, {:.2f}] ({:.2f},{:.2f})'
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         sum_loss / (i+1),
@@ -77,6 +77,8 @@ def valid(cae_model, data, criterion, args):
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
+                        p_y.detach().min(),
+                        p_y.detach().max(),
                         *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
@@ -85,7 +87,7 @@ def valid(cae_model, data, criterion, args):
                 logger.debug(
                     '\t[{:04d}/{:04d}] Validation Loss {:.4f} (dist=[{}], '
                     'rate={:.2f}, aux={:.2f}, energy={:.3f}). '
-                    'Quant bn [{:.2f}, {:.2f}] '
+                    'Quant bn [{:.2f}, {:.2f}] ({:.2f},{:.2f}) '
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         i,
@@ -97,6 +99,8 @@ def valid(cae_model, data, criterion, args):
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
+                        p_y.detach().min(),
+                        p_y.detach().max(),
                         *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
@@ -204,7 +208,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                         q_penalty.set_description(
                             'Sub-iter Loss {:.4f} (dist=[{}], rate={:.2f}, '
                             'aux={:.2f}, energy={:.3f}) '
-                            'Quant bn [{:.2f}, {:.2f}] '
+                            'Quant bn [{:.2f}, {:.2f}] ({:.2f},{:.2f}) '
                             '({:.2f}, {:.2f}, {:.2f}), '
                             'rec [{:.2f}, {:.2f}]'.format(
                                 step_loss,
@@ -214,6 +218,8 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                                 loss_dict.get('energy', 0.0),
                                 y.detach().min(),
                                 y.detach().max(),
+                                p_y.detach().min(),
+                                p_y.detach().max(),
                                 *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                                 x_r[0].detach().min(),
                                 x_r[0].detach().max()))
@@ -241,7 +247,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
             if args.print_log:
                 q.set_description(
                     'Training Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f},'
-                    ' energy={:3f}). Quant bn [{:.2f}, {:.2f}] '
+                    ' energy={:3f}). Quant bn [{:.2f}, {:.2f}] ({:.2f},{:.2f})'
                     '({:.2f}, {:.2f}, {:.2f}), '
                     'rec [{:.2f}, {:.2f}]'.format(
                         sum_loss / (i+1),
@@ -251,6 +257,8 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                         loss_dict.get('energy', 0.0),
                         y.detach().min(),
                         y.detach().max(),
+                        p_y.detach().min(),
+                        p_y.detach().max(),
                         *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                         x_r[0].detach().min(),
                         x_r[0].detach().max()))
@@ -262,7 +270,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                     logger.debug(
                         '\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.4f} '
                         '(dist=[{}], rate={:.2f}, aux={:.2f}'
-                        'energy={:3f} ). Quant bn [{:.2f}, {:.2f}] '
+                        'energy={:3f} ). Quant bn [{:.2f}, {:.2f}] ({:.2f},{:.2f}) '
                         '({:.2f}, {:.2f}, {:.2f}), '
                         'rec [{:.2f}, {:.2f}]'.format(
                             step, i, len(train_data),
@@ -273,6 +281,8 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                             loss_dict.get('energy', 0.0),
                             y.detach().min(),
                             y.detach().max(),
+                            p_y.detach().min(),
+                            p_y.detach().max(),
                             *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1))],
                             x_r[0].detach().min(),
                             x_r[0].detach().max()))

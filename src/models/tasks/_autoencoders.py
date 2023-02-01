@@ -433,7 +433,7 @@ class Analyzer(nn.Module):
                                     bias=bias,
                                     padding_mode='reflect'))
 
-        down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+        down_track.append(nn.Hardtanh(min_val=-127, max_val=127,
                                       inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
@@ -531,13 +531,13 @@ class Synthesizer(nn.Module):
             return x_brg
 
         fx = self.color_layers[-1](fx)
-        fx = fx.clip_(self._min_range, 1)
+        # fx.clip_(self._min_range, 1)
         return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)
         x = self.color_layers[-1](x)
-        x = x.clip_(self._min_range, 1)
+        # x.clip_(self._min_range, 1)
         return x
 
 
@@ -561,7 +561,7 @@ class SynthesizerInflate(Synthesizer):
                                          self.color_layers):
             fx = up_layer(fx)
             x_r = color_layer(fx)
-            x_r = x_r.clip_(self._min_range, 1)
+            #x_r.clip_(self._min_range, 1)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms
@@ -638,14 +638,22 @@ class AutoEncoder(nn.Module):
 
         elif factorized_entropy_only:
             # When running on factorized entropy only mode, use x as y_q
-            # log_p_y = self.fact_entropy(x)
-            log_p_y = self.fact_entropy(x + 0.5) - self.fact_entropy(x - 0.5) + 1e-12
+            log_p_y = self.fact_entropy(x)
             return log_p_y
 
         fx = self.embedding(x)
 
         y_q, y = self.analysis(fx)
-        p_y = self.fact_entropy(y_q + 0.5) - self.fact_entropy(y_q - 0.5) + 1e-12
+        lower = self.fact_entropy(y_q - 0.5)
+        upper = self.fact_entropy(y_q + 0.5)
+
+        sign = -torch.sign(lower + upper)
+        sign = sign.detach()
+
+        p_y = torch.abs(
+            torch.sigmoid(sign * upper) - torch.sigmoid(sign * lower)
+        )
+        p_y = F.hardtanh(p_y, min_val=1e-9)
 
         x_r = self.synthesis(y_q)
 
