@@ -17,7 +17,8 @@ class AddGaussianNoise(object):
         self.mean = mean
 
     def __call__(self, tensor):
-        noisy_tensor = tensor + torch.randn(tensor.size()) * self.std + self.mean
+        noisy_tensor = tensor + torch.randn(tensor.size()) * self.std \
+                       + self.mean
         noisy_tensor.clip_(0, 1)
         return noisy_tensor
 
@@ -127,13 +128,12 @@ def get_zarr_transform(data_mode='testing', normalize=False,
         prep_trans_list.append(AddGaussianNoise(0., 0.001))
 
     if data_mode == 'training':
-        prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size), pad_if_needed=True))
+        prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size),
+                                                     pad_if_needed=True))
 
     # The ToTensor transforms the input into the range [0, 1]. However, if
     # the input is compressed, it is required in the range [-127.5, 127.5].
-    if compressed_input:
-        prep_trans_list.append(transforms.Normalize(mean=0.5, std=1/255))
-    elif normalize:
+    if not compressed_input and normalize:
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
     prep_trans = transforms.Compose(prep_trans_list)
@@ -143,7 +143,8 @@ def get_zarr_transform(data_mode='testing', normalize=False,
         input_target_trans_list.append(RandomRotationInputTarget(degrees=30.))
 
     if elastic_deformation:
-        input_target_trans_list.append(RandomElasticDeformationInputTarget(sigma=10))
+        input_target_trans_list.append(
+            RandomElasticDeformationInputTarget(sigma=10))
 
     if len(input_target_trans_list) > 0:
         input_target_trans = transforms.Compose(input_target_trans_list)

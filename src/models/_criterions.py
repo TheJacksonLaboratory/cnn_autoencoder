@@ -113,13 +113,13 @@ class RateDistortionPenaltyMixin:
 class RateLoss:
     def __init__(self, tail_mass=1e-9, **kwargs):
         super().__init__(**kwargs)
-        self._target_mass = torch.FloatTensor([[[[-math.log(2/tail_mass - 1)],
-                                               [0],
-                                               [math.log(2/tail_mass - 1)]]]])
+        self._target_mass = torch.FloatTensor([[[[-math.log(2/tail_mass - 1),
+                                                  0,
+                                                  math.log(2/tail_mass - 1)]]]])
 
     def compute_rate(self, x, p_y, **kwargs):
         # Rate of compression:
-        rate_loss = (torch.sum(-torch.log2(p_y))
+        rate_loss = (-torch.sum(torch.log2(p_y))
                      / (x.size(0) * x.size(2) * x.size(3)))
 
         return {'rate_loss': rate_loss}
@@ -128,6 +128,30 @@ class RateLoss:
         # is_training = net.training
 
         # fact_ent_pars = []
+        if hasattr(net, 'module'):
+        #     for par_name, par in net.module.fact_entropy.named_parameters():
+        #         if 'quantiles' not in par_name:
+        #             par.requires_grad = False
+        #             fact_ent_pars.append(par)
+
+            quantiles = net.module.fact_entropy.quantiles
+
+        else:
+        #     for par_name, par in net.fact_entropy.named_parameters():
+        #         if 'quantiles' not in par_name:
+        #             par.requires_grad = False
+        #             fact_ent_pars.append(par)
+
+            quantiles = net.fact_entropy.quantiles
+
+        q_seq = net(x=quantiles, factorized_entropy_only=True)
+
+        # for par in fact_ent_pars:
+        #     par.requires_grad = is_training
+
+        entropy_loss = torch.abs(q_seq
+                                 - self._target_mass.to(q_seq.device)).sum()
+
         # if hasattr(net, 'module'):
         #     for par_name, par in net.module.fact_entropy.named_parameters():
         #         if 'tails' not in par_name:
@@ -173,24 +197,27 @@ class DistortionLoss(DistortionLossBase):
 
 
 class MSSSIMLoss(DistortionLossBase):
-    def __init__(self, patch_size, scale=1, **kwargs):
+    def __init__(self, patch_size, scale=1, training=True, **kwargs):
         super().__init__(**kwargs)
 
-        if ((11 - 2 * scale) - patch_size // 2 ** (scale + 4)) > 0:
-            self.padding = nn.ZeroPad2d(
-                ((11 - 2 * scale) - patch_size // 2 ** (scale + 4)) * 2 ** 3)
+        kernel_size = 11 - 2 * scale
+        pad_size = 16 * kernel_size - patch_size // 2 ** scale
+
+        if pad_size > 0:
+            self.padding = nn.ReflectionPad2d(
+                int(math.ceil(pad_size / 2)))
         else:
             self.padding = nn.Identity()
 
         self.msssim = torchmetrics.MultiScaleStructuralSimilarityIndexMeasure(
-            kernel_size=(11 - 2 * scale, 11 - 2 * scale),
+            kernel_size=(kernel_size, kernel_size),
             sigma=(1.5 / 2 ** scale, 1.5 / 2 ** scale),
             reduction='elementwise_mean',
             k1=0.01,
             k2=0.03,
             data_range=None,
             betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-            normalize='relu')
+            normalize='relu' if training else 'none')
 
     def compute_dist(self, x, x_r, **kwargs):
         ms_ssim = self.msssim.to(x_r.device)(
@@ -234,57 +261,48 @@ class PenaltyA:
 
         A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
         A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
+        A = F.hardtanh(A, min_val=1e-10)
 
-        P_A = torch.mean(torch.sum(-A * torch.log2(A + 1e-10), dim=1))
+        P_A = torch.mean(torch.sum(-A * torch.log2(A), dim=1))
 
         # Compute the maximum energy consentrated among the layers
-        max_energy = A.detach().max(dim=1)[0].mean()
+        max_energy, channel_e = A.detach().max(dim=1)
+        max_energy = max_energy.median().cpu()
+        channel_e = channel_e.median().cpu()
 
         return dict(weighted_penalty=self._penalty_beta * P_A,
                     penalty=P_A,
-                    energy=max_energy)
+                    energy=max_energy,
+                    channel_e=channel_e)
 
 
 class PenaltyB:
-    def __init__(self, penalty_beta=0.001, **kwargs):
+    def __init__(self, penalty_beta=0.001, channel_e=0, **kwargs):
         super().__init__(**kwargs)
         self._penalty_beta = penalty_beta
+        self._channel_e = channel_e
 
     def compute_penalty(self, x, y, net, **kwargs):
         # Compute B, the approximation to the variance introduced during the
         # quantization and synthesis track
         _, K, H, W = y.size()
 
-        with torch.no_grad():
-            x_mean = torch.mean(x, dim=1)
-            x_var = torch.var(x_mean, dim=(1, 2)).unsqueeze(dim=1) + 1e-10
-
-            A = torch.var(y, dim=(2, 3)) / x_var.to(y.device)
-            A = A / torch.sum(A, dim=1).unsqueeze(dim=1)
-
-            # Select the maximum energy channel
-            max_energy_channel = A.argmax(dim=1)
-
-        fake_codes = torch.cat(
-            [torch.zeros(1, K, H, W).index_fill_(1, torch.tensor([k]), 1)
-             for k in range(K)], dim=0)
+        fake_codes = torch.zeros(1, K, H, W)
+        fake_codes.index_fill_(1, torch.tensor([self._channel_e]), 1)
 
         fake_rec = net(fake_codes, synthesize_only=True)
+
         if isinstance(fake_rec, list):
             fake_rec = fake_rec[0]
 
         B = torch.var(fake_rec, dim=(1, 2, 3))
-        B = B / torch.sum(B)
 
-        P_B = F.max_pool1d(B.unsqueeze(dim=0).unsqueeze(dim=1),
-                           kernel_size=K,
-                           stride=K).squeeze()
-        P_B = B[max_energy_channel]
-        P_B = P_B.mean()
+        P_B = B[0]
  
         return dict(weighted_penalty=self._penalty_beta * P_B,
                     penalty=P_B.detach(),
-                    energy=P_B.detach())
+                    energy=P_B.detach(),
+                    channel_e=self._channel_e)
 
 
 class RateMSE(RateDistortionMixin,

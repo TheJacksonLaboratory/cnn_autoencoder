@@ -28,17 +28,25 @@ COMP_VERSION = '0.1.3'
 
 @dask.delayed
 def encode(x, comp_model, transform, offset=0):
+
     x_t = transform(x.squeeze()).unsqueeze(0)
+    H, W = x_t.shape[-2:]
 
     with torch.set_grad_enabled(comp_model.training):
-        y_q, _ = comp_model(x_t)
+        fx = comp_model['embedding'](x_t)
+        y = comp_model['analysis'](fx)
+        y_q, _ = comp_model['fact_entropy'](y)
+        y_cmp = comp_model['fact_entropy'].module.compress(y)
 
-    y_q = y_q.detach().cpu() + 127.5
-    y_q = y_q.round().to(torch.uint8)
-    y_q = y_q.unsqueeze(2).numpy()
+        print('AE comp', len(y_cmp[0]), (8 * len(y_cmp[0])) / (H * W))
 
-    h, w = y_q.shape[-2:]
-    y_q = y_q[..., offset:h-offset, offset:w-offset]
+        y_q = y_q.cpu()
+        h, w = y_q.shape[-2:]
+        y_q = y_q[..., offset:h-offset, offset:w-offset]
+
+        y_q = y_q - comp_model['fact_entropy'].module.quantiles[..., 0].unsqueeze(-1)
+        y_q = y_q.round().to(torch.int16)
+        y_q = y_q.unsqueeze(2).numpy()
 
     return y_q
 
@@ -149,7 +157,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                         transform,
                         out_offset),
                     shape=(1, channels_bn, 1, out_patch_size, out_patch_size),
-                    meta=np.empty((), dtype=np.uint8)))
+                    meta=np.empty((), dtype=np.int16)))
     y = da.block(y_blocks)
 
     comp_H = math.ceil(in_H / 2**compression_level)
@@ -244,8 +252,8 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
 
     cae_model_base.embedding.load_state_dict(state['embedding'])
     cae_model_base.analysis.load_state_dict(state['encoder'])
-    cae_model_base.fact_entropy.update(force=True)
     cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
+    cae_model_base.fact_entropy.update()
 
     if lc_pretrained_model is not None and ft_pretrained_model is not None:
 
@@ -262,13 +270,11 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
                                                     conv_scheme='scheme_2')
         cae_model_base = cae_model_base.module
 
-    embedding = cae_model_base.embedding
-    analysis = cae_model_base.analysis
-    fact_ent = cae_model_base.fact_entropy
+    comp_model = nn.ModuleDict(
+        dict(embedding=nn.DataParallel(cae_model_base.embedding),
+             analysis=nn.DataParallel(cae_model_base.analysis),
+             fact_entropy=nn.DataParallel(cae_model_base.fact_entropy)))
 
-    comp_model = nn.Sequential(embedding, analysis, fact_ent)
-
-    comp_model = nn.DataParallel(comp_model)
     if use_gpu:
         comp_model.cuda()
 
@@ -289,7 +295,7 @@ def compress(args):
     comp_model = setup_network(state, args.gpu,
                                lc_pretrained_model=args.lc_pretrained_model,
                                ft_pretrained_model=args.ft_pretrained_model)
-    transform, _, _ = utils.get_zarr_transform(normalize=args.normalize)
+    transform, _, _ = utils.get_zarr_transform(**args.__dict__)
 
     # Get the compression level from the model checkpoint
     compression_level = state['args']['compression_level']

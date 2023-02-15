@@ -41,7 +41,7 @@ import numpy as np
 
 from lc.compression_types.low_rank import matrix_to_tensor
 
-from models.tasks._autoencoders import ColorEmbedding, DownsamplingUnit, UpsamplingUnit, ResidualDownsamplingUnit, ResidualUpsamplingUnit
+from models.tasks._autoencoders import DownsamplingUnit, UpsamplingUnit, ResidualDownsamplingUnit, ResidualUpsamplingUnit
 
 
 class FullRankException(Exception):

@@ -29,9 +29,9 @@ class _UnsqueezeAs2D(nn.Module):
         return x.view(b, c, 1, 1)
 
 
-class _ConsensusAge(nn.Module):
+class _Consensus(nn.Module):
     def __init__(self):
-        super(_ConsensusAge, self).__init__()
+        super(_Consensus, self).__init__()
 
     def forward(self, x):
         b, c, h, w = x.size()        
@@ -98,9 +98,9 @@ class _Encoder(nn.Module):
         return self.ln(self.layers(self.dropout(input)))
 
 
-class ViTAge(nn.Module):
+class ViT(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
-        super(ViTAge, self).__init__()
+        super(ViT, self).__init__()
         self._base_model = vision_transformer.vit_b_16(weights=vision_transformer.ViT_B_16_Weights.IMAGENET1K_SWAG_E2E_V1 if pretrained else None, progress=False)
         self._org_image_h, self._org_image_w = 384, 384
 
@@ -133,16 +133,16 @@ class ViTAge(nn.Module):
 
         self._num_classes = num_classes
         if num_classes == fc_weights.size(0):
-            self._base_model.heads[1].weight = nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
-            self._base_model.heads[1].bias = nn.Parameter(fc_bias)
+            self._base_model.heads[-1].weight = nn.Parameter(fc_weights.reshape(num_classes, fc_weights.size(1), 1, 1))
+            self._base_model.heads[-1].bias = nn.Parameter(fc_bias)
 
         if consensus:
-            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
+            self._consensus = nn.Sequential(_Consensus(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()
 
         if pretrained:
-            if num_classes == fc_weights.size(0):
+            if num_classes != fc_weights.size(0):
                 self._base_model.heads[-1].apply(initialize_weights)
             if channels_org != 3:
                 self._base_model.conv_proj.apply(initialize_weights)
@@ -205,9 +205,9 @@ class ViTAge(nn.Module):
         return x
     
 
-class _InceptionAuxAge(nn.Module):
+class _InceptionAux(nn.Module):
     def __init__(self, in_channels, num_classes, conv_block=None):
-        super(_InceptionAuxAge, self).__init__()
+        super(_InceptionAux, self).__init__()
         if conv_block is None:
             conv_block = inception.BasicConv2d
         self.conv0 = conv_block(in_channels, 128, kernel_size=1)
@@ -229,9 +229,9 @@ class _InceptionAuxAge(nn.Module):
         return x
 
 
-class InceptionV3Age(nn.Module):
+class InceptionV3(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, aux_logits=True, consensus=True, **kwargs):
-        super(InceptionV3Age, self).__init__()
+        super(InceptionV3, self).__init__()
         self._base_model = inception.inception_v3(weights=inception.Inception_V3_Weights.DEFAULT if pretrained else None, progress=False, transform_input=False, aux_logits=aux_logits, init_weights=not pretrained)
 
         # Fix the weights of the base model when pretrained is True
@@ -242,7 +242,7 @@ class InceptionV3Age(nn.Module):
         if aux_logits:
             aux_weights = self._base_model.AuxLogits.fc.weight
             aux_bias = self._base_model.AuxLogits.fc.bias            
-            self._base_model.AuxLogits = _InceptionAuxAge(768, num_classes)
+            self._base_model.AuxLogits = _InceptionAux(768, num_classes)
 
             if num_classes == aux_weights.size(0):
                 self._base_model.AuxLogits.fc.weight = torch.nn.Parameter(aux_weights.reshape(num_classes, 768, 1, 1))
@@ -263,7 +263,7 @@ class InceptionV3Age(nn.Module):
             self._base_model.fc.bias = torch.nn.Parameter(fc_bias)
 
         if consensus:
-            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
+            self._consensus = nn.Sequential(_Consensus(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()        
 
@@ -334,9 +334,9 @@ class InceptionV3Age(nn.Module):
         return x, aux
 
 
-class ResNetAge(nn.Module):
+class ResNet(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
-        super(ResNetAge, self).__init__()
+        super(ResNet, self).__init__()
 
         self._base_model = resnet.resnet152(weights=resnet.ResNet152_Weights.DEFAULT if pretrained else None, progress=False)
         
@@ -361,7 +361,7 @@ class ResNetAge(nn.Module):
             self._base_model.conv1 = nn.Conv2d(channels_org, self._base_model.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         
         if consensus:
-            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
+            self._consensus = nn.Sequential(_Consensus(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()        
 
@@ -394,9 +394,9 @@ class ResNetAge(nn.Module):
         return x
 
 
-class MobileNetAge(nn.Module):
+class MobileNet(nn.Module):
     def __init__(self, channels_org, num_classes, pretrained=False, consensus=True, **kwargs):
-        super(MobileNetAge, self).__init__()
+        super(MobileNet, self).__init__()
         
         self._base_model = mobilenet.mobilenet_v2(weights=mobilenet.MobileNet_V2_Weights.DEFAULT if pretrained else None, progress=False)
         
@@ -421,7 +421,7 @@ class MobileNetAge(nn.Module):
             self._base_model.features[0][0] = nn.Conv2d(channels_org, 32, kernel_size=3, stride=2, padding=1, bias=False)
 
         if consensus:
-            self._consensus = nn.Sequential(_ConsensusAge(), _UnsqueezeAs2D())
+            self._consensus = nn.Sequential(_Consensus(), _UnsqueezeAs2D())
         else:
             self._consensus = nn.Identity()        
 
@@ -448,15 +448,13 @@ class MobileNetAge(nn.Module):
 
 if __name__ == '__main__':
     import os
-    import matplotlib.pyplot as plt
     from PIL import Image
     from torchvision import transforms
     
-
     transform = transforms.Compose([
                     transforms.CenterCrop((512, 768)),
                     transforms.ToTensor(),
-                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 ])
 
     x = []
@@ -470,7 +468,7 @@ if __name__ == '__main__':
     x = torch.cat(x, dim=0)
 
     # -------------------------------------------------------------------------------------------------
-    net = ViTAge(channels_org=3, num_classes=1000, pretrained=True, consensus=False)
+    net = ResNet(channels_org=3, num_classes=1000, pretrained=True, consensus=False)
 
     net.eval()
     with torch.no_grad():
@@ -478,7 +476,67 @@ if __name__ == '__main__':
         if isinstance(y, tuple):
             y, aux_y = y
         
-        top5_prob, top5_catid = torch.topk(torch.softmax(y.squeeze(), dim=1), 2, dim=1)
-        print('Vision Transformer (Consensus: none), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid)
-       
+        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
+        print('ResNet (Consensus: none), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze())
+
+    # -------------------------------------------------------------------------------------------------
+    net = ResNet(channels_org=3, num_classes=1000, pretrained=True, consensus=True)
+
+    net.eval()
+    with torch.no_grad():
+        y = net(x)
+        if isinstance(y, tuple):
+            y, aux_y = y
+        
+        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
+        print('ResNet (Consensus: Most confident), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze(), top5_prob.squeeze())
+
+    # -------------------------------------------------------------------------------------------------
+    net = InceptionV3(channels_org=3, num_classes=1000, pretrained=True, consensus=False)
+
+    net.eval()
+    with torch.no_grad():
+        y = net(x)
+        if isinstance(y, tuple):
+            y, aux_y = y
+        
+        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
+        print('InceptionV3 (Consensus: none), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze(), top5_prob.squeeze())
+
+    # -------------------------------------------------------------------------------------------------
+    net = InceptionV3(channels_org=3, num_classes=1000, pretrained=True, consensus=True)
+
+    net.eval()
+    with torch.no_grad():
+        y = net(x)
+        if isinstance(y, tuple):
+            y, aux_y = y
+        
+        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
+        print('InceptionV3 (Consensus: Most confident), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze(), top5_prob.squeeze())
+
+    # -------------------------------------------------------------------------------------------------
+    net = MobileNet(channels_org=3, num_classes=1000, pretrained=True, consensus=False)
+
+    net.eval()
+    with torch.no_grad():
+        y = net(x)
+        if isinstance(y, tuple):
+            y, aux_y = y
+        
+        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
+        print('MobileNet (Consensus: none), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze(), top5_prob.squeeze())
+
+    # -------------------------------------------------------------------------------------------------
+    net = MobileNet(channels_org=3, num_classes=1000, pretrained=True, consensus=True)
+
+    net.eval()
+    with torch.no_grad():
+        y = net(x)
+        if isinstance(y, tuple):
+            y, aux_y = y
+        
+        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
+        print('MobileNet (Consensus: Most confident), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze(), top5_prob.squeeze())
+
     print('End experiment')

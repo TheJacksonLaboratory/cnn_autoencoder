@@ -30,15 +30,18 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
                max_range=1.0,
                range_offset=0.0,
                range_scale=1.0):
-    y_q_t = transform(y_q.squeeze()).unsqueeze(0)
+
+    y_q_t = torch.from_numpy(y_q.squeeze()).unsqueeze(0).permute(0, 3, 1, 2).float()
+    y_q_t = y_q_t + decomp_model['fact_entropy'].quantiles[..., 0].unsqueeze(-1)
     with torch.set_grad_enabled(decomp_model.training):
-        x_rec = decomp_model(y_q_t)
+        x_rec = decomp_model['synthesis'](y_q_t)
+
     if not isinstance(x_rec, list):
         x_rec = [x_rec]
 
     in_H, in_W = y_q_t.shape[-2:]
 
-    rec_level = decomp_model.module.rec_level
+    rec_level = decomp_model['synthesis'].module.rec_level
 
     H = in_H * 2 ** rec_level - 2 * offset
     W = in_W * 2 ** rec_level - 2 * offset
@@ -352,6 +355,7 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
                                                              **state['args'])
 
     cae_model_base.synthesis.load_state_dict(state['decoder'], strict=False)
+    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
 
     if state['args']['version'] == '0.5.5':
         for color_layer in cae_model_base.color_layers:
@@ -371,8 +375,10 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
                                                     conv_scheme='scheme_2')
         cae_model_base = cae_model_base.module
 
-    decomp_model = cae_model_base.synthesis
-    decomp_model = nn.DataParallel(decomp_model)
+    decomp_model = nn.ModuleDict(
+        dict(synthesis=nn.DataParallel(cae_model_base.synthesis),
+             fact_entropy=cae_model_base.fact_entropy))
+
     if use_gpu:
         decomp_model.cuda()
 
@@ -406,8 +412,8 @@ def decompress(args):
                                  use_gpu=args.gpu,
                                  lc_pretrained_model=args.lc_pretrained_model,
                                  ft_pretrained_model=args.ft_pretrained_model)
-    transform, _, _ = utils.get_zarr_transform(normalize=True,
-                                               compressed_input=True)
+    transform, _, _ = utils.get_zarr_transform(normalize=False,
+                                               compressed_input=False)
 
     if not args.destination_format.startswith('.'):
         args.destination_format = '.' + args.destination_format

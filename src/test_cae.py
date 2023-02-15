@@ -72,7 +72,7 @@ def compute_psnr(x=None, x_r=None, **kwargs):
 
 
 def compute_rmse(x=None, x_r=None, **kwargs):
-    rmse = np.sqrt(mean_squared_error(x / 255.0, x_r / 255.0))
+    rmse = np.sqrt(mean_squared_error(x, x_r))
     return rmse, None
 
 
@@ -226,9 +226,9 @@ def test_cae(args):
     logger.info(comp_model)
     logger.info(decomp_model)
 
-    transform_comp, _, _ = utils.get_zarr_transform(normalize=True)
-    transform_decomp, _, _ = utils.get_zarr_transform(normalize=True,
-                                                      compressed_input=True)
+    transform_comp, _, _ = utils.get_zarr_transform(**args.__dict__)
+    transform_decomp, _, _ = utils.get_zarr_transform(compressed_input=True, 
+                                                      normalize=False)
 
     # Get the compression level from the model checkpoint
     compression_level = state['args']['compression_level']

@@ -34,57 +34,6 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.01)
 
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_dim=1024, dropout=0.0):
-        super(PositionalEncoding, self).__init__()
-
-        self._dropout = nn.Dropout2d(p=dropout, inplace=False)
-
-        pos_y, pos_x = torch.meshgrid([torch.arange(max_dim)]*2)
-        div_term = torch.exp(torch.arange(0, d_model//2, 2)*(-math.log(max_dim*2)/(d_model//2)))
-
-        pe = torch.zeros(max_dim, max_dim, d_model)
-        pe[..., 0:d_model//2:2] = torch.sin(pos_x.unsqueeze(dim=2) * div_term)
-        pe[..., 1:d_model//2:2] = torch.cos(pos_x.unsqueeze(dim=2) * div_term)
-
-        pe[..., d_model//2::2] = torch.sin(pos_y.unsqueeze(dim=2) * div_term)
-        pe[..., (d_model//2+1)::2] = torch.cos(pos_y.unsqueeze(dim=2) * div_term)
-
-        pe = pe.permute(2, 0, 1).unsqueeze(dim=0)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        _, _, h, w = x.size()
-        x = x + self.pe[..., :h, :w]
-        return self._dropout(x)
-
-
-class RandMasking(nn.Module):
-    def __init__(self, n_masks=1, masks_size=64, disable_masking=False, **kwargs):
-        super(RandMasking, self).__init__()
-
-        self._n_masks = n_masks
-        self._masks_size = masks_size
-        self.disable_masking = disable_masking
-
-    def forward(self, x):
-        if self.disable_masking:
-            return x
-
-        b, _, h, w = x.size()
-
-        mask_w = w // self._masks_size
-        mask_h = h // self._masks_size
-
-        with torch.no_grad():
-            m = torch.ones((b, mask_h*mask_w), requires_grad=False)
-            m_indices = torch.randint(0, mask_w*mask_h, (b, self._n_masks))
-            m[(torch.arange(b).view(-1, 1).repeat(1, self._n_masks), m_indices)] = 0
-            m = F.interpolate(m.view(b, 1, mask_h, mask_w), size=(h, w), mode='nearest')
-
-        return x * m.to(x.device)
-
-
 class Quantizer(nn.Module):
     """ Quantizer implements the additive uniform noise quantization method 
         from Balle et al. END-TO-END OPTIMIZED IMAGE COMPRESSION. ICLR 2017
@@ -105,8 +54,10 @@ class Quantizer(nn.Module):
 
 
 class FactorizedEntropyLayer(nn.Module):
-    def __init__(self, channels_bn, K=3, d=3, r=3):
+    def __init__(self, channels_bn, K=3, d=3, r=3, mult_factor=True):
         super(FactorizedEntropyLayer, self).__init__()
+
+        self._mult_factor = mult_factor
         self._channels = channels_bn
 
         weights_scale = 10.0 ** (1 / (K + 1))
@@ -116,32 +67,34 @@ class FactorizedEntropyLayer(nn.Module):
         # distributed weights.
         self._H = nn.Parameter(
             nn.init.constant_(
-                torch.empty(channels_bn * r, d, 1, 1), weights_scale))
+                torch.empty(1, 1, 1, channels_bn, r, d), weights_scale))
         self._b = nn.Parameter(
-            nn.init.uniform_(torch.empty(channels_bn * r), -0.5, 0.5))
-        self._a = nn.Parameter(torch.zeros(1, channels_bn * r, 1, 1))
+            nn.init.uniform_(torch.empty(1, 1, 1, channels_bn, r, 1), -0.5, 0.5))
+
+        if self._mult_factor:
+            self._a = nn.Parameter(torch.zeros(1, 1, 1, channels_bn, r, 1))
 
     def forward(self, x):
         # Reparametrerize the matrix H, and vector a to generate nonegative
         # Jacobian matrices.
-        H_k = F.softplus(self._H)
-        a_k = torch.tanh(self._a)
+        fx = torch.matmul(F.softplus(self._H), x) + self._b
 
-        # Using the 2d convolution iPnstead of simple element-wise product
-        # allows to operate over all channels at the same time.
-        fx = F.conv2d(x, weight=H_k, bias=self._b, groups=self._channels)
-        fx = fx + a_k * torch.tanh(fx)
+        if self._mult_factor:
+            fx = fx + torch.tanh(self._a) * torch.tanh(fx)
 
         return fx
 
 
 class FactorizedEntropy(nn.Module):
-    """ Univariate non-parametric density model to approximate the factorized entropy prior
+    """Univariate non-parametric density model to approximate the factorized
+    entropy prior.
 
-        This function computes the function c(x) from Balle et al. VARIATIONAL IMAGE COMPRESSION WITH A SCALE HYPERPRIOR. ICLR 2018
-        Function c(x) can be used to model the probability of a random variable that has been comvolved with a uniform distribution.
+    This function computes the function c(x) from Balle et al. VARIATIONAL
+    IMAGE COMPRESSION WITH A SCALE HYPERPRIOR. ICLR 2018
+    Function c(x) can be used to model the probability of a random variable
+    that has been comvolved with a uniform distribution.
     """
-    def __init__(self, channels_bn, K=4, r=3, tails_val=10, **kwargs):
+    def __init__(self, channels_bn, K=4, r=3, quantiles_val=10, **kwargs):
         super(FactorizedEntropy, self).__init__()
         self._channels = channels_bn
         self._K = K
@@ -150,57 +103,34 @@ class FactorizedEntropy(nn.Module):
 
         d = [1] + r[:-1]
 
-        # The non-parametric density model is initialized with random normal
-        # distributed weights.
-        weights_scale = 10.0 ** (1 / (K + 1))
-        weights_scale = np.log(np.expm1(1 / weights_scale / r[-1]))
-
         self._layers = nn.Sequential(
             *[FactorizedEntropyLayer(channels_bn=channels_bn, K=K, d=d_k,
-                                     r=r_k)
-              for d_k, r_k in zip(d[:-1], r[:-1])])
-        self._H = nn.Parameter(
-            nn.init.constant_(torch.empty(channels_bn * r[-1], d[-1], 1, 1),
-                              weights_scale))
-        self._b = nn.Parameter(
-            nn.init.uniform_(torch.empty(channels_bn * r[-1]), -0.5, 0.5))
+                                     r=r_k,
+                                     mult_factor=True)
+              for d_k, r_k in zip(d[:-1], r[:-1])],
+              FactorizedEntropyLayer(channels_bn=channels_bn, K=K, d=d[-1],
+                                     r=r[-1],
+                                     mult_factor=False))
 
         # Force the range of the symbols value to be between the given tail
         # values.
-        self.tails = nn.Parameter(torch.zeros(1, channels_bn, 3, 1))
-        self.tails.data[0, :, 0, 0] = -tails_val
-        self.tails.data[0, :, 2, 0] = tails_val
-
-    def reset(self, x):
-        pass
+        self.quantiles = nn.Parameter(torch.zeros(1, channels_bn, 1, 3))
+        self.quantiles.data[0, :, 0, 0] = -quantiles_val
+        self.quantiles.data[0, :, 0, 2] = quantiles_val
 
     def forward(self, x):
         # Compute the logits of the factorized entropy model
-        fx = self._layers(x)
+        b, c, h, w = x.size()
 
-        H_K = F.softplus(self._H)
-        fx = F.conv2d(fx, weight=H_K, bias=self._b, groups=self._channels)
+        fx = x.permute(0, 2, 3, 1)
+        fx = fx.reshape(b, h, w, c, 1, 1)
+
+        fx = self._layers(fx)
+
+        fx = fx.reshape(b, h, w, c)
+        fx = fx.permute(0, 3, 1, 2)
 
         return fx
-
-
-class FactorizedEntropyLaplace(nn.Module):
-    """Univariate non-parametric density model to approximate the factorized
-    entropy prior using a laplace distribution
-    """
-    def __init__(self, **kwargs):
-        super(FactorizedEntropyLaplace, self).__init__()
-        self._gaussian_approx = None
-
-    def reset(self, x):
-        self._gaussian_approx = torch.distributions.Laplace(
-            torch.zeros_like(x),
-            torch.var(x.detach(),
-                      dim=(0, 2, 3)).clamp(1e-10, 1e10).reshape(1, -1, 1, 1))
-
-    def forward(self, x):
-        self.reset(x)
-        return self._gaussian_approx.cdf(x)
 
 
 class DownsamplingUnit(nn.Module):
@@ -212,7 +142,7 @@ class DownsamplingUnit(nn.Module):
         super(DownsamplingUnit, self).__init__()
 
         model = []
-        if act_layer_type not in ['GDN']:
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
             model.append(nn.Conv2d(channels_in, channels_in,
                                    kernel_size=kernel_size,
                                    stride=1,
@@ -240,8 +170,9 @@ class DownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_in,
-                                       track='analysis'))
+        if act_layer_type is not None:
+            model.append(_define_act_layer(act_layer_type, channels_out,
+                                        track='analysis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -263,7 +194,7 @@ class ResidualDownsamplingUnit(nn.Module):
 
         res_model = []
 
-        if act_layer_type not in ['GDN']:
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
             res_model.append(nn.Conv2d(channels_in, channels_in, 
                                        kernel_size=kernel_size,
                                        stride=1,
@@ -292,7 +223,8 @@ class ResidualDownsamplingUnit(nn.Module):
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
         model = [_define_act_layer(act_layer_type, channels_in,
-                                   track='analysis')]
+                                    track='analysis')]
+
         model.append(nn.Conv2d(channels_in, channels_out, 
                                kernel_size=kernel_size,
                                stride=2,
@@ -305,8 +237,9 @@ class ResidualDownsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_out,
-                                       track='analysis'))
+        if act_layer_type is not None:
+            model.append(_define_act_layer(act_layer_type, channels_out,
+                                           track='analysis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -331,7 +264,7 @@ class UpsamplingUnit(nn.Module):
 
         model = []
 
-        if act_layer_type not in ['GDN']:
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
             model.append(nn.Conv2d(channels_in, channels_in,
                                    kernel_size=kernel_size,
                                    stride=1,
@@ -359,8 +292,9 @@ class UpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_out,
-                                       track='synthesis'))
+        if act_layer_type is not None:
+            model.append(_define_act_layer(act_layer_type, channels_out,
+                                           track='synthesis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -382,7 +316,7 @@ class ResidualUpsamplingUnit(nn.Module):
 
         res_model = []
 
-        if act_layer_type not in ['GDN']:
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
             res_model.append(nn.Conv2d(channels_in, channels_in,
                                        kernel_size=kernel_size,
                                        stride=1,
@@ -424,8 +358,9 @@ class ResidualUpsamplingUnit(nn.Module):
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
 
-        model.append(_define_act_layer(act_layer_type, channels_out,
-                                       track='synthesis'))
+        if act_layer_type is not None:
+            model.append(_define_act_layer(act_layer_type, channels_out,
+                                           track='synthesis'))
 
         if dropout > 0.0:
             model.append(nn.Dropout2d(dropout))
@@ -440,29 +375,9 @@ class ResidualUpsamplingUnit(nn.Module):
         return fx
 
 
-class ColorEmbedding(nn.Module):
-    def __init__(self, channels_org, channels_net, kernel_size=3, groups=False,
-                 bias=False,
-                 **kwargs):
-        super(ColorEmbedding, self).__init__()
-        self.embedding = nn.Conv2d(channels_org, channels_net,
-                                   kernel_size=kernel_size,
-                                   stride=1,
-                                   padding=kernel_size//2,
-                                   dilation=1,
-                                   groups=channels_org if groups else 1,
-                                   bias=bias,
-                                   padding_mode='reflect')
-
-        self.apply(initialize_weights)
-
-    def forward(self, x):
-        fx = self.embedding(x)
-        return fx
-
-
 class Analyzer(nn.Module):
-    def __init__(self, channels_net=8, channels_bn=16, compression_level=3,
+    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
+                 compression_level=3,
                  channels_expansion=1,
                  kernel_size=3,
                  groups=False,
@@ -479,17 +394,26 @@ class Analyzer(nn.Module):
         else:
             downsampling_op = DownsamplingUnit
 
-        down_track = [downsampling_op(channels_in=channels_net
-                                      * channels_expansion ** i,
-                                      channels_out=channels_net
-                                      * channels_expansion ** (i+1),
+        down_track = [downsampling_op(channels_in=channels_org,
+                                      channels_out=channels_net,
                                       kernel_size=kernel_size,
                                       groups=groups,
                                       batch_norm=batch_norm,
                                       dropout=dropout,
                                       bias=bias,
-                                      act_layer_type=act_layer_type)
-                      for i in range(compression_level)]
+                                      act_layer_type=act_layer_type)]
+
+        down_track += [downsampling_op(channels_in=channels_net
+                                       * channels_expansion ** i,
+                                       channels_out=channels_net
+                                       * channels_expansion ** (i+1),
+                                       kernel_size=kernel_size,
+                                       groups=groups,
+                                       batch_norm=batch_norm,
+                                       dropout=dropout,
+                                       bias=bias,
+                                       act_layer_type=act_layer_type)
+                      for i in range(1, compression_level - 1)]
 
         # Final convolution in the analysis track
         down_track.append(nn.Conv2d(channels_net
@@ -503,7 +427,7 @@ class Analyzer(nn.Module):
                                     bias=bias,
                                     padding_mode='reflect'))
 
-        # down_track.append(nn.Hardtanh(min_val=-127.5, max_val=127.5,
+        # down_track.append(nn.Hardtanh(min_val=-127, max_val=127,
         #                               inplace=False))
 
         self.analysis_track = nn.Sequential(*down_track)
@@ -515,7 +439,6 @@ class Analyzer(nn.Module):
     def forward(self, x):
         y = self.analysis_track(x)
         # y_q = self.quantizer(y)
-        # return y_q, y
         return y
 
 
@@ -539,16 +462,16 @@ class Synthesizer(nn.Module):
             upsampling_op = UpsamplingUnit
 
         # Initial convolution in the synthesis track
-        up_track = [nn.Conv2d(channels_bn,
-                              channels_net
-                              * channels_expansion**compression_level,
-                              kernel_size=kernel_size,
-                              stride=1,
-                              padding=kernel_size//2,
-                              dilation=1,
-                              groups=channels_bn if groups else 1,
-                              bias=bias,
-                              padding_mode='reflect')]
+        up_track = [upsampling_op(channels_in=channels_bn,
+                                  channels_out=channels_net
+                                  * channels_expansion**compression_level,
+                                  kernel_size=kernel_size,
+                                  groups=groups,
+                                  batch_norm=batch_norm,
+                                  dropout=dropout,
+                                  bias=bias,
+                                  act_layer_type=act_layer_type)]
+
         up_track += [upsampling_op(channels_in=channels_net
                                    * channels_expansion**(i+1),
                                    channels_out=channels_net
@@ -559,13 +482,22 @@ class Synthesizer(nn.Module):
                                    dropout=dropout,
                                    bias=bias,
                                    act_layer_type=act_layer_type)
-                     for i in reversed(range(compression_level))]
+                     for i in reversed(range(1, compression_level - 1))]
+
+        up_track += [upsampling_op(channels_in=channels_net,
+                                   channels_out=channels_org,
+                                   kernel_size=kernel_size,
+                                   groups=groups,
+                                   batch_norm=batch_norm,
+                                   dropout=dropout,
+                                   bias=bias,
+                                   act_layer_type=None)]
 
         # Final color reconvertion
         self.synthesis_track = nn.Sequential(*up_track)
 
-        self.color_layers = nn.ModuleList(
-            [nn.Sequential(
+        color_layers = [
+            nn.Sequential(
                  nn.Conv2d(channels_net * channels_expansion**i, channels_org,
                            kernel_size=kernel_size,
                            stride=1,
@@ -575,7 +507,11 @@ class Synthesizer(nn.Module):
                            bias=bias,
                            padding_mode='reflect')
                 )
-             for i in reversed(range(compression_level))])
+             for i in reversed(range(compression_level - 1))]
+
+        color_layers += [nn.Identity()]
+
+        self.color_layers = nn.ModuleList(color_layers)
 
         self.rec_level = compression_level
 
@@ -594,12 +530,12 @@ class Synthesizer(nn.Module):
             return x_brg
 
         fx = self.color_layers[-1](fx)
-
         return fx, x_brg
 
     def forward(self, x):
         x = self.synthesis_track(x)
         x = self.color_layers[-1](x)
+        # x.clip_(self._min_range, self._max_range)
         return x
 
 
@@ -607,7 +543,7 @@ class SynthesizerInflate(Synthesizer):
     def __init__(self, rec_level=-1, color=True, **kwargs):
         super(SynthesizerInflate, self).__init__(**kwargs)
         if rec_level < 1:
-            rec_level = len(self.synthesis_track) - 1
+            rec_level = len(self.synthesis_track)
 
         if not color:
             self.color_layers = nn.ModuleList([nn.Identity()] * rec_level)
@@ -615,20 +551,21 @@ class SynthesizerInflate(Synthesizer):
         self.rec_level = rec_level
 
     def forward(self, x):
-        fx = self.synthesis_track[0](x)
+        fx = x
         x_r_ms = []
 
-        for up_layer, color_layer in zip(self.synthesis_track[1:1 + self.rec_level],
+        for up_layer, color_layer in zip(self.synthesis_track,
                                          self.color_layers):
             fx = up_layer(fx)
             x_r = color_layer(fx)
+            # x_r.clip_(self._min_range, self._max_range)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms
 
 
 class AutoEncoder(nn.Module):
-    """ AutoEncoderBase encapsulates the full compression-decompression process.
+    """ AutoEncoder encapsulates the full compression-decompression process.
     In this manner, the network can be trained end-to-end, but its modules can
     be saved and accessed separatelly
     """
@@ -649,11 +586,7 @@ class AutoEncoder(nn.Module):
         super(AutoEncoder, self).__init__()
 
         # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org=channels_org,
-                                        channels_net=channels_net,
-                                        kernel_size=kernel_size,
-                                        groups=groups,
-                                        bias=bias)
+        self.embedding = nn.Identity()
 
         self.analysis = Analyzer(channels_net=channels_net,
                                  channels_bn=channels_bn,
@@ -686,7 +619,8 @@ class AutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
+        self.fact_entropy = EntropyBottleneck(channels=channels_bn,
+                                              filters=[r] * K)
 
     def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
         if synthesize_only:
@@ -696,90 +630,11 @@ class AutoEncoder(nn.Module):
 
         elif factorized_entropy_only:
             # When running on factorized entropy only mode, use x as y_q
-            log_p_y = self.fact_entropy(x)
+            # log_p_y = self.fact_entropy(x)
+            log_p_y = self.fact_entropy._logits_cumulative(x, stop_gradient=True)
             return log_p_y
 
         fx = self.embedding(x)
-
-        y = self.analysis(fx)
-        y_q, p_y = self.fact_entropy(y)
-
-        x_r = self.synthesis(y_q)
-
-        return x_r, y, p_y
-
-
-class MaskedAutoEncoder(nn.Module):
-    """ AutoEncoder encapsulates the full compression-decompression process. In this manner, the network can be trained end-to-end.
-    """
-    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
-                 compression_level=3,
-                 channels_expansion=1,
-                 kernel_size=3,
-                 groups=False,
-                 batch_norm=False,
-                 dropout=0.0,
-                 bias=False,
-                 use_residual=False,
-                 act_layer_type=None,
-                 multiscale_analysis=False,
-                 K=4,
-                 r=3,
-                 n_masks=1,
-                 masks_size=64,
-                 **kwargs):
-        super(MaskedAutoEncoder, self).__init__()
-
-        self.masking = RandMasking(n_masks=n_masks, masks_size=masks_size)
-        self.pos_enc = PositionalEncoding(channels_net, max_dim=1024,
-                                          dropout=dropout)
-
-        # Initial color embedding
-        self.embedding = ColorEmbedding(channels_org=channels_org,
-                                        channels_net=channels_net,
-                                        kernel_size=kernel_size,
-                                        groups=groups,
-                                        bias=bias)
-
-        self.analysis = Analyzer(channels_net=channels_net,
-                                 channels_bn=channels_bn,
-                                 compression_level=compression_level,
-                                 channels_expansion=channels_expansion,
-                                 kernel_size=kernel_size,
-                                 groups=groups,
-                                 batch_norm=batch_norm,
-                                 dropout=dropout,
-                                 bias=bias,
-                                 use_residual=use_residual,
-                                 act_layer_type=act_layer_type)
-        if multiscale_analysis:
-            synthesizer_class = SynthesizerInflate
-        else:
-            synthesizer_class = Synthesizer
-
-        self.synthesis = synthesizer_class(
-            channels_org=channels_org,
-            channels_net=channels_net,
-            channels_bn=channels_bn,
-            compression_level=compression_level,
-            channels_expansion=channels_expansion,
-            kernel_size=kernel_size,
-            groups=groups,
-            batch_norm=batch_norm,
-            dropout=dropout,
-            bias=bias,
-            use_residual=use_residual,
-            act_layer_type=act_layer_type)
-
-        self.fact_entropy = EntropyBottleneck(channels_bn, tail_mass=1e-9, init_scale=10, filters=tuple([r] * K))
-
-    def forward(self, x, synthesize_only=False):
-        if synthesize_only:
-            return self.synthesis(x)
-
-        fx = self.embedding(x)
-        fx = self.masking(fx)
-        fx = self.pos_enc(fx)
 
         y = self.analysis(fx)
 
