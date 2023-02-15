@@ -8,6 +8,9 @@ from torchvision.datasets import ImageFolder
 
 from PIL import Image
 
+from pathlib import Path
+import json
+
 
 try:
     import boto3
@@ -17,6 +20,8 @@ try:
 
     class ImageS3(Dataset):
         def __init__(self, root, transform=None, endpoint=None, bucket_name=None):
+            with open(Path(__file__).parent / 'imagenet_classes.json', 'r') as fp:
+                self._imagenet_classes = json.load(fp)
 
             if isinstance(root, list):
                 self._s3_urls = root
@@ -50,6 +55,8 @@ try:
 
             self._transform = transform
 
+
+
         def __getitem__(self, index):
             if self._remove_endpoint:
                 fn = '/'.join(self._s3_urls[index].split('/')[4:])
@@ -66,7 +73,9 @@ try:
             if self._transform is not None:
                 im = self._transform(im)
 
-            return im, [0]
+            target = self._imagenet_classes[fn.split("/")[-2]]
+
+            return im, target
 
         def __len__(self):
             return len(self._s3_urls)
