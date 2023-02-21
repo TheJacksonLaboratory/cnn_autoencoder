@@ -122,7 +122,7 @@ dmypy.json
 *.png
 
 # Configuration files
-*.json
+.vscode/*.json
 configs/*.json
 dask-worker-space/
 *.def
