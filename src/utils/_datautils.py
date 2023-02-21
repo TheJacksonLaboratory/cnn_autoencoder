@@ -33,35 +33,54 @@ def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='tra
 def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
                  mode='training',
                  normalize=True,
+                 patch_size=128,
                  **kwargs):
-    prep_trans = get_imagenet_transform(mode, normalize)
+    prep_trans = get_imagenet_transform(mode, normalize, patch_size)
+
+    if isinstance(data_dir, list) and len(data_dir) == 1:
+        data_dir = data_dir[0]
 
     if (isinstance(data_dir, list)
        and (data_dir[0].endswith('txt')
        or data_dir[0].startswith('s3')
        or data_dir[0].startswith('http'))
        or data_dir.endswith('txt')):
-        if isinstance(data_dir, list) and data_dir[0].endswith('txt'):
-            data_dir = data_dir[0]
+
         image_dataset = ImageS3
+
+        # If testing the model, return the validation set from MNIST
+        if mode != 'training':
+            imagenet_data = image_dataset(root=data_dir, transform=prep_trans)
+            test_queue = DataLoader(imagenet_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True)
+            return test_queue
+
+        trn_data_dir = [fn for fn in data_dir if 'train' in fn][0]
+        val_data_dir = [fn for fn in data_dir if 'val' in fn][0]
+
+        train_ds = image_dataset(root=trn_data_dir, transform=prep_trans)
+        valid_ds = image_dataset(root=val_data_dir, transform=prep_trans)
+
+        train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
+        valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=True)
+
     else:
         image_dataset = ImageFolder
         data_dir = os.path.join(data_dir, 'ILSVRC/Data/CLS-LOC/test')
 
-    # If testing the model, return the validation set from MNIST
-    if mode != 'training':
+        # If testing the model, return the validation set from MNIST
+        if mode != 'training':
+            imagenet_data = image_dataset(root=data_dir, transform=prep_trans)
+            test_queue = DataLoader(imagenet_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True)
+            return test_queue
+
         imagenet_data = image_dataset(root=data_dir, transform=prep_trans)
-        test_queue = DataLoader(imagenet_data, batch_size=batch_size, shuffle=False, num_workers=workers, pin_memory=True)
-        return test_queue
 
-    imagenet_data = image_dataset(root=data_dir, transform=prep_trans)
+        train_size = int(len(imagenet_data) * 0.96)
+        val_size = len(imagenet_data) - train_size
 
-    train_size = int(len(imagenet_data) * 0.96)
-    val_size = len(imagenet_data) - train_size
-
-    train_ds, valid_ds = random_split(imagenet_data, (train_size, val_size))
-    train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
-    valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=True)
+        train_ds, valid_ds = random_split(imagenet_data, (train_size, val_size))
+        train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
+        valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=True)
 
     return train_queue, valid_queue
 
