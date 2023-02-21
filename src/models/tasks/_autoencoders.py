@@ -8,6 +8,11 @@ from compressai.layers import GDN
 from compressai.entropy_models import EntropyBottleneck
 
 
+CAE_ACT_LAYERS = ['LeakyReLU',
+                  'ReLU',
+                  'GDN',
+                  'Identiy']
+
 def _define_act_layer(act_layer_type, channels_in=None, track='analysis'):
     if act_layer_type is None:
         act_layer_type = 'Identity'
@@ -32,105 +37,6 @@ def initialize_weights(m):
 
         if m.bias is not None:
             nn.init.constant_(m.bias.data, 0.01)
-
-
-class Quantizer(nn.Module):
-    """ Quantizer implements the additive uniform noise quantization method 
-        from Balle et al. END-TO-END OPTIMIZED IMAGE COMPRESSION. ICLR 2017
-    """
-    def __init__(self, lower_bound=-0.5, upper_bound=0.5):
-        super(Quantizer, self).__init__()
-        self._lower_bound = lower_bound
-        self._upper_bound = upper_bound
-
-    def forward(self, x):
-        if self.training:
-            u = torch.rand_like(x) * (self._upper_bound - self._lower_bound) + self._lower_bound
-            q = x + u
-        else:
-            q = torch.round(x)
-
-        return q
-
-
-class FactorizedEntropyLayer(nn.Module):
-    def __init__(self, channels_bn, K=3, d=3, r=3, mult_factor=True):
-        super(FactorizedEntropyLayer, self).__init__()
-
-        self._mult_factor = mult_factor
-        self._channels = channels_bn
-
-        weights_scale = 10.0 ** (1 / (K + 1))
-        weights_scale = np.log(np.expm1(1 / weights_scale / r))
-
-        # The non-parametric density model is initialized with random normal
-        # distributed weights.
-        self._H = nn.Parameter(
-            nn.init.constant_(
-                torch.empty(1, 1, 1, channels_bn, r, d), weights_scale))
-        self._b = nn.Parameter(
-            nn.init.uniform_(torch.empty(1, 1, 1, channels_bn, r, 1), -0.5, 0.5))
-
-        if self._mult_factor:
-            self._a = nn.Parameter(torch.zeros(1, 1, 1, channels_bn, r, 1))
-
-    def forward(self, x):
-        # Reparametrerize the matrix H, and vector a to generate nonegative
-        # Jacobian matrices.
-        fx = torch.matmul(F.softplus(self._H), x) + self._b
-
-        if self._mult_factor:
-            fx = fx + torch.tanh(self._a) * torch.tanh(fx)
-
-        return fx
-
-
-class FactorizedEntropy(nn.Module):
-    """Univariate non-parametric density model to approximate the factorized
-    entropy prior.
-
-    This function computes the function c(x) from Balle et al. VARIATIONAL
-    IMAGE COMPRESSION WITH A SCALE HYPERPRIOR. ICLR 2018
-    Function c(x) can be used to model the probability of a random variable
-    that has been comvolved with a uniform distribution.
-    """
-    def __init__(self, channels_bn, K=4, r=3, quantiles_val=10, **kwargs):
-        super(FactorizedEntropy, self).__init__()
-        self._channels = channels_bn
-        self._K = K
-        if isinstance(r, int):
-            r = [r] * K + [1]
-
-        d = [1] + r[:-1]
-
-        self._layers = nn.Sequential(
-            *[FactorizedEntropyLayer(channels_bn=channels_bn, K=K, d=d_k,
-                                     r=r_k,
-                                     mult_factor=True)
-              for d_k, r_k in zip(d[:-1], r[:-1])],
-              FactorizedEntropyLayer(channels_bn=channels_bn, K=K, d=d[-1],
-                                     r=r[-1],
-                                     mult_factor=False))
-
-        # Force the range of the symbols value to be between the given tail
-        # values.
-        self.quantiles = nn.Parameter(torch.zeros(1, channels_bn, 1, 3))
-        self.quantiles.data[0, :, 0, 0] = -quantiles_val
-        self.quantiles.data[0, :, 0, 2] = quantiles_val
-
-    def forward(self, x):
-        # Compute the logits of the factorized entropy model
-        b, c, h, w = x.size()
-
-        fx = x.permute(0, 2, 3, 1)
-        fx = fx.reshape(b, h, w, c, 1, 1)
-
-        fx = self._layers(fx)
-
-        fx = fx.reshape(b, h, w, c)
-        fx = fx.permute(0, 3, 1, 2)
-
-        return fx
 
 
 class DownsamplingUnit(nn.Module):
@@ -194,36 +100,36 @@ class ResidualDownsamplingUnit(nn.Module):
 
         res_model = []
 
-        if act_layer_type is not None and act_layer_type not in ['GDN']:
-            res_model.append(nn.Conv2d(channels_in, channels_in, 
-                                       kernel_size=kernel_size,
-                                       stride=1,
-                                       pading=kernel_size//2,
-                                       dilation=1,
-                                       groups=channels_in if groups else 1,
-                                       bias=bias,
-                                       padding_mode='reflect'))
-
-            if batch_norm:
-                res_model.append(nn.BatchNorm2d(channels_in, affine=True))
-
-            res_model.append(_define_act_layer(act_layer_type, channels_in,
-                                               track='analysis'))
-
         res_model.append(nn.Conv2d(channels_in, channels_in, 
-                                   kernel_size=kernel_size,
-                                   stride=1,
-                                   padding=kernel_size//2,
-                                   dilation=1,
-                                   groups=channels_in if groups else 1,
-                                   bias=bias,
-                                   padding_mode='reflect'))
+                                    kernel_size=kernel_size,
+                                    stride=1,
+                                    pading=kernel_size//2,
+                                    dilation=1,
+                                    groups=channels_in if groups else 1,
+                                    bias=bias,
+                                    padding_mode='reflect'))
 
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [_define_act_layer(act_layer_type, channels_in,
-                                    track='analysis')]
+        res_model.append(_define_act_layer(act_layer_type, channels_in,
+                                            track='analysis'))
+
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
+            res_model.append(nn.Conv2d(channels_in, channels_in, 
+                                    kernel_size=kernel_size,
+                                    stride=1,
+                                    padding=kernel_size//2,
+                                    dilation=1,
+                                    groups=channels_in if groups else 1,
+                                    bias=bias,
+                                    padding_mode='reflect'))
+
+            if batch_norm:
+                res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+        model = [_define_act_layer(act_layer_type, channels_out, 
+                                   track='analysis')]
 
         model.append(nn.Conv2d(channels_in, channels_out, 
                                kernel_size=kernel_size,
@@ -316,6 +222,21 @@ class ResidualUpsamplingUnit(nn.Module):
 
         res_model = []
 
+        res_model.append(nn.Conv2d(channels_in, channels_in,
+                                   kernel_size=kernel_size,
+                                   stride=1,
+                                   padding=kernel_size//2,
+                                   dilation=1,
+                                   groups=channels_in if groups else 1,
+                                   bias=bias,
+                                   padding_mode='reflect'))
+
+        if batch_norm:
+            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
+
+        res_model.append(_define_act_layer(act_layer_type, channels_in,
+                                            track='synthesis'))
+
         if act_layer_type is not None and act_layer_type not in ['GDN']:
             res_model.append(nn.Conv2d(channels_in, channels_in,
                                        kernel_size=kernel_size,
@@ -332,20 +253,9 @@ class ResidualUpsamplingUnit(nn.Module):
             res_model.append(_define_act_layer(act_layer_type, channels_in,
                                                track='synthesis'))
 
-        res_model.append(nn.Conv2d(channels_in, channels_in,
-                                   kernel_size=kernel_size,
-                                   stride=1,
-                                   padding=kernel_size//2,
-                                   dilation=1,
-                                   groups=channels_in if groups else 1,
-                                   bias=bias,
-                                   padding_mode='reflect'))
-
-        if batch_norm:
-            res_model.append(nn.BatchNorm2d(channels_in, affine=True))
-
         model = [_define_act_layer(act_layer_type, channels_in,
                                    track='synthesis')]
+
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=kernel_size,
                                         stride=2,
@@ -420,7 +330,7 @@ class Analyzer(nn.Module):
                                     * channels_expansion**compression_level,
                                     channels_bn,
                                     kernel_size=kernel_size,
-                                    stride=1,
+                                    stride=2,
                                     padding=kernel_size//2,
                                     dilation=1,
                                     groups=channels_bn if groups else 1,
@@ -619,7 +529,7 @@ class AutoEncoder(nn.Module):
             use_residual=use_residual,
             act_layer_type=act_layer_type)
 
-        self.fact_entropy = EntropyBottleneck(channels=channels_bn,
+        self.fact_ent = EntropyBottleneck(channels=channels_bn,
                                               filters=[r] * K)
 
     def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
@@ -630,16 +540,42 @@ class AutoEncoder(nn.Module):
 
         elif factorized_entropy_only:
             # When running on factorized entropy only mode, use x as y_q
-            # log_p_y = self.fact_entropy(x)
-            log_p_y = self.fact_entropy._logits_cumulative(x, stop_gradient=True)
+            # log_p_y = self.fact_ent(x)
+            log_p_y = self.fact_ent._logits_cumulative(x, stop_gradient=True)
             return log_p_y
 
         fx = self.embedding(x)
 
         y = self.analysis(fx)
 
-        y_q, p_y = self.fact_entropy(y)
+        y_q, p_y = self.fact_ent(y)
 
         x_r = self.synthesis(y_q)
 
         return x_r, y, p_y
+
+
+def setup_autoencoder_modules(channels_bn=16, K=4, r=3,
+                              multiscale_analysis=False,
+                              **kwargs):
+
+    encoder = Analyzer(channels_bn=channels_bn, **kwargs)
+
+    if multiscale_analysis:
+        synthesizer_class = SynthesizerInflate
+    else:
+        synthesizer_class = Synthesizer
+
+    decoder = synthesizer_class(channels_bn=channels_bn, 
+                                **kwargs)
+
+    fact_ent = EntropyBottleneck(channels=channels_bn, 
+                                           filters=[r] * K)
+
+    return dict(encoder=encoder, decoder=decoder,
+                fact_ent=fact_ent)
+
+
+CAE_MODELS = {
+    "AutoEncoder": AutoEncoder
+}

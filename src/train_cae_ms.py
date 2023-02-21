@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda.amp import GradScaler
 
 import models
 import utils
@@ -20,18 +19,55 @@ optimization_algorithms = {"Adam": optim.Adam,
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
                      "StepLR": optim.lr_scheduler.StepLR}
 
-model_options = {"AutoEncoder": models.AutoEncoder,
-                 "MaskedAutoEncoder": models.MaskedAutoEncoder}
+
+def log_info(step, len_data, model, output, sum_loss, loss_dict, channel_e,
+             step_type='Training',
+             progress_bar=False):
+
+    if not progress_bar:
+        log_string = '\t[{:04d}/{:04d}] '.format(step, len_data)
+    else:
+        log_string = ''
+
+    log_string += ('{} Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f}, energy'
+                  '={:.3f}). BN [{:.2f},{:.2f}] Py [{:.2f},{:.2f}] QPy'
+                  '({:.2f},{:.2f},{:.2f}), rec [{:.2f},{:.2f}] ch {}'.format(
+        step_type,
+        sum_loss / (step+1),
+        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
+        loss_dict['rate_loss'].item(),
+        loss_dict['entropy_loss'].item(),
+        loss_dict.get('energy', 0.0),
+        output['y'].detach().min(),
+        output['y'].detach().max(),
+        output['p_y'].detach().min(),
+        output['p_y'].detach().max(),
+        *[quant.item()
+          for quant in model['fact_ent'].module.quantiles.detach().mean(dim=(0, 1))],
+        output['x_r'][0].detach().min(),
+        output['x_r'][0].detach().max(),
+        channel_e))
+
+    return log_string
 
 
-def valid(cae_model, data, criterion, args):
+def forward_step(x, model):
+    y = model["encoder"](x)
+    y_q, p_y = model["fact_ent"](y)
+    x_r = model["decoder"](y_q)
+    t_pred, t_aux_pred = model["class_model"](y_q)
+
+    return dict(x_r=x_r, y=y, p_y=p_y, t_pred=t_pred, t_aux_pred=t_aux_pred)
+
+
+def valid(model, data, criterion, args):
     """ Validation step.
     Evaluates the performance of the network in its current state using the
     full set of validation elements.
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
+    model : dict
         The network model in the current state
     data : torch.utils.data.DataLoader or list[tuple]
         The validation dataset. Because the target is recosntruct the input,
@@ -49,77 +85,58 @@ def valid(cae_model, data, criterion, args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    cae_model.eval()
+    for k in model.keys():
+        model[k].eval()
+
     sum_loss = 0
+    channel_e_history = []
 
-    if args.print_log:
+    if args.progress_bar:
         q = tqdm(total=len(data), desc='Validating', position=1, leave=None)
-    with torch.no_grad():
-        for i, (x, _) in enumerate(data):
-            x_r, y, p_y = cae_model(x)
 
-            loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y, net=cae_model)
-            loss = torch.mean(loss_dict['dist_rate_loss'])
+    with torch.no_grad():
+        for i, (x, t) in enumerate(data):
+            output = forward_step(x, model)
+
+            loss_dict = criterion(input=x, output=output, target=t,
+                                  net=model)
+            loss = torch.mean(loss_dict['loss'])
             sum_loss += loss.item()
 
-            aux_loss = torch.mean(loss_dict['entropy_loss'])
 
-            channel_e = loss_dict.get('channel_e', -1)
+            channel_e_history.append(loss_dict.get('channel_e', -1))
+            channel_e = int(np.median(channel_e_history))
 
-            if not isinstance(x_r, list):
-                x_r = [x_r]
+            if args.progress_bar:
+                if not isinstance(output['x_r'], list):
+                    output['x_r'] = [output['x_r']]
 
-            if args.print_log:
                 q.set_description(
-                    'Validation Loss {:.4f} (dist=[{}], rate={:.2f}, '
-                    'aux={:.2f}, energy={:.3f}). Quant bn [{:.2f}, {:.2f}] '
-                    '({:.2f}, {:.2f}, {:.2f}), '
-                    'rec [{:.2f}, {:.2f}] ch {}'.format(
-                        sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
-                        loss_dict['rate_loss'].item(),
-                        aux_loss.item(),
-                        loss_dict.get('energy', 0.0),
-                        y.detach().min(),
-                        y.detach().max(),
-                        p_y.detach().min(),
-                        p_y.detach().max(),
-                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1, 2))],
-                        x_r[0].detach().min(),
-                        x_r[0].detach().max(),
-                        channel_e))
+                    log_info(i, None, model, output, sum_loss, loss_dict,
+                             channel_e,
+                             step_type='Validation',
+                             progress_bar=True))
                 q.update()
 
             if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug(
-                    '\t[{:04d}/{:04d}] Validation Loss {:.4f} (dist=[{}], '
-                    'rate={:.2f}, aux={:.2f}, energy={:.3f}). '
-                    'Quant bn [{:.2f}, {:.2f}] '
-                    '({:.2f}, {:.2f}, {:.2f}), '
-                    'rec [{:.2f}, {:.2f}]'.format(
-                        i,
-                        len(data),
-                        sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
-                        loss_dict['rate_loss'].item(),
-                        aux_loss.item(),
-                        loss_dict.get('energy', 0.0),
-                        y.detach().min(),
-                        y.detach().max(),
-                        p_y.detach().min(),
-                        p_y.detach().max(),
-                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1, 2))],
-                        x_r[0].detach().min(),
-                        x_r[0].detach().max()))
+                if not isinstance(output['x_r'], list):
+                    output['x_r'] = [output['x_r']]
 
-    if args.print_log:
+                logger.debug(log_info(i, len(data), model, output, sum_loss,
+                                      loss_dict,
+                                      channel_e,
+                                      step_type='Validation',
+                                      progress_bar=False))
+
+    if args.progress_bar:
         q.close()
+
     mean_loss = sum_loss / len(data)
 
     return mean_loss
 
 
-def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
+def train(model, train_data, valid_data, criterion, stopping_criteria,
           optimizer,
           aux_optimizer,
           scheduler,
@@ -129,8 +146,8 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
-        The model to be trained
+    model : dict
+        The modules of the model to be trained as a dictionary
     train_data : torch.utils.data.DataLoader or list[tuple]
         The training data. Must contain the input and respective label;
         however, only the input is used because the target is reconstructing
@@ -166,13 +183,14 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
     channel_e_history = []
 
     step = 0
-    if args.print_log:
+    if args.progress_bar:
         q = tqdm(total=stopping_criteria['early_stopping']._max_iterations,
                  desc="Training", position=0)
+
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
-        for i, (x, _) in enumerate(train_data):
+        for i, (x, t) in enumerate(train_data):
             step += 1
             q_penalty = None
             if 'penalty' in stopping_criteria.keys():
@@ -182,16 +200,20 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                 # Start of training step
                 optimizer.zero_grad()
                 aux_optimizer.zero_grad()
-                x_r, y, p_y = cae_model(x)
 
-                loss_dict = criterion(x=x, y=y, x_r=x_r, p_y=p_y,
-                                      net=cae_model)
-                loss = torch.mean(loss_dict['dist_rate_loss'])
+                output = forward_step(x, model)
+
+                loss_dict = criterion(input=x, output=output, target=t,
+                                      net=model)
+
+                loss = torch.mean(loss_dict['loss'])
                 loss.backward()
 
                 # Clip the gradients to prevent from exploding gradients
                 # problems
-                nn.utils.clip_grad_norm_(cae_model.parameters(), max_norm=1.0)
+                for k in model.keys():
+                    nn.utils.clip_grad_norm_(model[k].parameters(),
+                                             max_norm=1.0)
                 optimizer.step()
                 step_loss = loss.item()
 
@@ -201,39 +223,27 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
 
                 channel_e_history.append(loss_dict.get('channel_e', -1))
 
-                if not isinstance(x_r, list):
-                    x_r = [x_r]
-                    
+
                 # When training with penalty on the energy of the compression
                 # representation, update the respective stopping criterion
                 if 'penalty' in stopping_criteria.keys():
-                    if args.print_log:
+                    if args.progress_bar:
                         if q_penalty is None:
                             q_penalty = tqdm(
                                 total=stopping_criteria['penalty']._max_iterations,
                                 position=2,
                                 leave=None)
 
+                        if not isinstance(output['x_r'], list):
+                            output['x_r'] = [output['x_r']]
+
                         channel_e = int(np.median(channel_e_history))
                         q_penalty.set_description(
-                            'Sub-iter Loss {:.4f} (dist=[{}], rate={:.2f}, '
-                            'aux={:.2f}, energy={:.3f}) '
-                            'Quant bn [{:.2f}, {:.2f}] '
-                            '({:.2f}, {:.2f}, {:.2f}), '
-                            'rec [{:.2f}, {:.2f}] ch {}'.format(
-                                step_loss,
-                                ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
-                                loss_dict['rate_loss'].item(),
-                                aux_loss,
-                                loss_dict.get('energy', 0.0),
-                                y.detach().min(),
-                                y.detach().max(),
-                                p_y.detach().min(),
-                                p_y.detach().max(),
-                                *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1, 2))],
-                                x_r[0].detach().min(),
-                                x_r[0].detach().max(),
-                                channel_e))
+                            log_info(step, None, model, output, sum_loss,
+                                     loss_dict,
+                                     channel_e,
+                                     step_type='Sub-iter',
+                                     progress_bar=True))
 
                         q_penalty.update()
 
@@ -241,7 +251,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                                                         metric=torch.mean(loss_dict['energy']).item())
 
                     if not stopping_criteria['penalty'].check():
-                        if args.print_log:
+                        if args.progress_bar:
                             q_penalty.close()
                         break
                 else:
@@ -254,50 +264,33 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                 scheduler.step()
 
             # End of training step
-
-            if args.print_log:
+            if args.progress_bar:
                 channel_e = int(np.median(channel_e_history))
+
+                if not isinstance(output['x_r'], list):
+                    output['x_r'] = [output['x_r']]
+
                 q.set_description(
-                    'Training Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f},'
-                    ' energy={:.3f}). Quant bn [{:.2f}, {:.2f}] '
-                    '({:.2f}, {:.2f}, {:.2f}), '
-                    'rec [{:.2f}, {:.2f}] ch {}'.format(
-                        sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
-                        loss_dict['rate_loss'].item(),
-                        aux_loss.item(),
-                        loss_dict.get('energy', 0.0),
-                        y.detach().min(),
-                        y.detach().max(),
-                        p_y.detach().min(),
-                        p_y.detach().max(),
-                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1, 2))],
-                        x_r[0].detach().min(),
-                        x_r[0].detach().max(),
-                        channel_e))
+                    log_info(step, None, model, output, sum_loss,
+                             loss_dict,
+                             channel_e,
+                             step_type='Training',
+                             progress_bar=True))
                 q.update()
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                logger.debug(
-                    '\n\t[Step {:06d} {:04d}/{:04d}] Training Loss {:.3f} '
-                    '(dist=[{}], rate={:.2f}, aux={:.2f}, '
-                    'energy={:.3f} ). Quant bn [{:.2f}, {:.2f}] ({:.2f},{:.2f}) '
-                    '({:.2f}, {:.2f}, {:.2f}), '
-                    'rec [{:.2f}, {:.2f}]'.format(
-                        step, i, len(train_data),
-                        sum_loss / (i+1),
-                        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
-                        loss_dict['rate_loss'].item(),
-                        aux_loss.item(),
-                        loss_dict.get('energy', 0.0),
-                        y.detach().min(),
-                        y.detach().max(),
-                        p_y.detach().min(),
-                        p_y.detach().max(),
-                        *[quant.item() for quant in cae_model.module.fact_entropy.quantiles.detach().mean(dim=(0, 1, 2))],
-                        x_r[0].detach().min(),
-                        x_r[0].detach().max()))
+                channel_e = int(np.median(channel_e_history))
+
+                if not isinstance(output['x_r'], list):
+                    output['x_r'] = [output['x_r']]
+
+                logger.debug(log_info(step, len(train_data), model, output,
+                                      sum_loss,
+                                      loss_dict,
+                                      channel_e,
+                                      step_type='Training',
+                                      progress_bar=False))
 
             # Checkpoint step
             keep_training = stopping_criteria['early_stopping'].check()
@@ -308,9 +301,10 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(cae_model, valid_data, criterion, args)
+                valid_loss = valid(model, valid_data, criterion, args)
 
-                cae_model.train()
+                for k in model.keys():
+                    model[k].train()
 
                 stopping_info = ';'.join(map(lambda k_sc:\
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
@@ -318,25 +312,24 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
-                if not args.print_log:
-                    logger.info(
-                        '[Step {:06d} ({})] Training loss {:0.4f}, validation '
-                        'loss {:.4f}, best validation loss {:.4f}, learning '
-                        'rate {:e}, stopping criteria: {}'.format(
-                            step, 'training' if keep_training else 'stopping',
-                            train_loss,
-                            valid_loss,
-                            best_valid_loss,
-                            optimizer.param_groups[0]['lr'],
-                            stopping_info)
-                    )
+                logger.info(
+                    '[Step {:06d} ({})] Training loss {:0.4f}, validation '
+                    'loss {:.4f}, best validation loss {:.4f}, learning '
+                    'rate {:e}, stopping criteria: {}'.format(
+                        step, 'training' if keep_training else 'stopping',
+                        train_loss,
+                        valid_loss,
+                        best_valid_loss,
+                        optimizer.param_groups[0]['lr'],
+                        stopping_info)
+                )
 
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
 
                 # Save the current training state in a checkpoint file
                 channel_e = int(np.median(channel_e_history))
-                best_valid_loss = utils.checkpoint(step, cae_model, optimizer,
+                best_valid_loss = utils.checkpoint(step, model, optimizer,
                                                    scheduler,
                                                    best_valid_loss,
                                                    train_loss_history,
@@ -357,7 +350,7 @@ def train(cae_model, train_data, valid_data, criterion, stopping_criteria,
     else:
         completed = True
 
-    if args.print_log:
+    if args.progress_bar:
         q.close()
 
     # Return True if the training finished sucessfully
@@ -382,14 +375,18 @@ def setup_network(args):
 
     # The autoencoder model contains all the modules
     args.multiscale_analysis = 'Multiscale' in args.criterion
-    cae_model = model_options[args.model_type](**args.__dict__)
+    model = models.setup_autoencoder_modules(**args.__dict__)
+    model.update(models.setup_classifier_modules(**args.__dict__))
 
-    # If there are more than one GPU, DataParallel handles automatically the distribution of the work
-    cae_model = nn.DataParallel(cae_model)
-    if args.gpu:
-        cae_model.cuda()
+    # If there are more than one GPU, DataParallel handles automatically the
+    # distribution of the work.
+    for k in model.keys():
+        model[k] = nn.DataParallel(model[k])
 
-    return cae_model
+        if args.gpu:
+            model[k].cuda()
+
+    return model
 
 
 def setup_criteria(args, checkpoint=None):
@@ -412,56 +409,26 @@ def setup_criteria(args, checkpoint=None):
     """
 
     # Early stopping criterion:
-    stopping_criteria = {
-        'early_stopping': models.EarlyStoppingPatience(
-            max_iterations=args.steps,
-            **args.__dict__)
-    }
-
-    criterion_name = ''
-
-    args.max_iterations = args.sub_iter_steps
-    args.target = args.energy_limit
-    if 'PA' in args.criterion:
-        args.comparison = 'le'
-        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args.__dict__)
-        criterion_name = 'PenaltyA'
-
-    elif 'PB' in args.criterion:
+    if 'PB' in args.criterion:
         args.channel_e = 0
         if checkpoint is not None:
             checkpoint_state = torch.load(checkpoint, map_location='cpu')
             args.channel_e = int(checkpoint_state.get('channel_e', 0))
 
-        args.comparison = 'ge'
-        stopping_criteria['penalty'] = models.EarlyStoppingTarget(**args.__dict__)
-        criterion_name = 'PenaltyB'
+    stopping_criteria = models.setup_stopping_criteria(**args.__dict__)
 
-    if 'RD' in args.criterion:
-        criterion_name = 'RateMSE' + criterion_name
-    elif 'RMS-SSIM' in args.criterion:
-        criterion_name = 'RateMSSSIM' + criterion_name
-
-    # Loss function
-    if 'Multiscale' in args.criterion:
-        criterion_name = 'Multiscale' + criterion_name
-
-    if criterion_name not in models.LOSS_LIST:
-        raise ValueError(
-            'Criterion \'%s\' not supported' % args.criterion)
-
-    criterion = models.LOSS_LIST[criterion_name](**args.__dict__)
+    criterion = models.setup_loss(**args.__dict__)
 
     return criterion, stopping_criteria
 
 
-def setup_optim(cae_model, args):
+def setup_optim(model, args):
     """Setup a loss function for the neural network optimization, and training
     stopping criteria.
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
+    model : torch.nn.Module
         The convolutional autoencoder model to be optimized
     scheduler_type : str
         The type of learning rate scheduler used during the neural network
@@ -483,11 +450,12 @@ def setup_optim(cae_model, args):
     net_pars = []
     aux_pars = []
 
-    for par_name, par in cae_model.named_parameters():
-        if 'quantiles' in par_name:
-            aux_pars.append(par)
-        else:
-            net_pars.append(par)
+    for k in model.keys():
+        for par_name, par in model[k].named_parameters():
+            if 'quantiles' in par_name or 'aux' in par_name:
+                aux_pars.append(par)
+            else:
+                net_pars.append(par)
 
     optimizer = optim_algo(params=net_pars,
                            lr=args.learning_rate,
@@ -500,6 +468,7 @@ def setup_optim(cae_model, args):
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
+
     elif args.scheduler_type in scheduler_options.keys():
         scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer,
                                                            mode='min',
@@ -510,7 +479,7 @@ def setup_optim(cae_model, args):
     return optimizer, aux_optimizer, scheduler
 
 
-def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
+def resume_checkpoint(model, optimizer, scheduler, checkpoint, gpu=True,
                       resume_optimizer=False):
     """Resume training from a previous checkpoint
 
@@ -530,26 +499,23 @@ def resume_checkpoint(cae_model, optimizer, scheduler, checkpoint, gpu=True,
         Wether use the optimizer from the checkpoint or not. This only works
         for resume training rather than starting from pre-trained models
     """
-
     if not gpu:
         checkpoint_state = torch.load(checkpoint,
-                                      map_location=torch.device('cpu'))
+                                      map_location='cpu')
     else:
         checkpoint_state = torch.load(checkpoint)
 
-    cae_model.module.embedding.load_state_dict(checkpoint_state['embedding'],
-                                               strict=False)
-    cae_model.module.analysis.load_state_dict(checkpoint_state['encoder'],
-                                               strict=False)
-    cae_model.module.synthesis.load_state_dict(checkpoint_state['decoder'],
-                                               strict=False)
+    for k in model.keys():
+        assert k in checkpoint_state
+        model[k].module.analysis.load_state_dict(checkpoint_state[k],
+                                                  strict=False)
+
     if checkpoint_state['args']['version'] == '0.5.5':
-        for color_layer in cae_model.module.synthesis.color_layers:
+        for color_layer in model['decoder'].module.color_layers:
             color_layer[0].weight.data.copy_(
                 checkpoint_state['decoder']['synthesis_track.4.weight'])
 
-    cae_model.module.fact_entropy.load_state_dict(checkpoint_state['fact_ent'], strict=False)
-    cae_model.module.fact_entropy.update(force=True)
+    model['fact_ent'].module.update(force=True)
 
     if resume_optimizer:
         optimizer.load_state_dict(checkpoint_state['optimizer'])
@@ -569,17 +535,19 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    cae_model = setup_network(args)
+    model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args, checkpoint=args.resume)
-    optimizer, aux_optimizer, scheduler = setup_optim(cae_model, args)
+    optimizer, aux_optimizer, scheduler = setup_optim(model, args)
 
     if args.resume is not None:
-        resume_checkpoint(cae_model, optimizer, scheduler, args.resume,
+        resume_checkpoint(model, optimizer, scheduler, args.resume,
                           gpu=args.gpu)
 
     # Log the training setup
     logger.info('Network architecture:')
-    logger.info(cae_model)
+    for k in model.keys():
+        logger.info('\n' + k)
+        logger.info(model[k])
 
     logger.info('\nCriterion:')
     logger.info(criterion)
@@ -597,7 +565,7 @@ def main(args):
 
     train_data, valid_data = utils.get_data(args)
 
-    train(cae_model, train_data, valid_data, criterion, stopping_criteria,
+    train(model, train_data, valid_data, criterion, stopping_criteria,
           optimizer,
           aux_optimizer,
           scheduler,

@@ -1,7 +1,11 @@
-from ._autoencoders import (Analyzer,
+from ._autoencoders import (setup_autoencoder_modules, 
+                            Analyzer,
                             Synthesizer,
                             SynthesizerInflate,
-                            AutoEncoder)
-from ._segmentation import UNet, DecoderUNet, EmptyBridge
-from ._kernelanalysis import KernelLayer
-from ._classifiers import InceptionV3Age, MobileNetAge, ResNetAge, ViTAge
+                            AutoEncoder,
+                            CAE_ACT_LAYERS,
+                            CAE_MODELS)
+
+from ._classifiers import (setup_classifier_modules,
+                           ViTClassifierHead,
+                           EmptyClassifierHead)

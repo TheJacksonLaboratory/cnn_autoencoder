@@ -70,8 +70,12 @@ def save_state(name, model_state, args):
     logger.info('Saved model in %s' % save_fn)
 
 
-def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_history, valid_loss_history, args, extra_info={}):
-    """ Creates a checkpoint with the current trainig state
+def checkpoint(step, model, optimizer, scheduler, best_valid_loss,
+               train_loss_history,
+               valid_loss_history,
+               args,
+               extra_info={}):
+    """Creates a checkpoint with the current trainig state.
 
     Parameters
     ----------
@@ -113,14 +117,8 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss, train_loss_hi
     # Append any extra information passed by the training loop
     training_state.update(extra_info)
 
-    if args.task == 'autoencoder':
-        training_state['embedding'] = model.module.embedding.state_dict()
-        training_state['encoder'] = model.module.analysis.state_dict()
-        training_state['decoder'] = model.module.synthesis.state_dict()
-        training_state['fact_ent'] = model.module.fact_entropy.state_dict()
-
-    elif args.task in ['segmentation', 'projection', 'classification']:
-        training_state['model'] = model.module.state_dict()
+    for k in model.keys():
+        training_state[k] = model[k].module.state_dict()
 
     if scheduler is not None:
         if 'metrics' in dict(signature(scheduler.step).parameters).keys():

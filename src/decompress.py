@@ -32,7 +32,7 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
                range_scale=1.0):
 
     y_q_t = torch.from_numpy(y_q.squeeze()).unsqueeze(0).permute(0, 3, 1, 2).float()
-    y_q_t = y_q_t + decomp_model['fact_entropy'].quantiles[..., 0].unsqueeze(-1)
+    y_q_t = y_q_t + decomp_model['fact_ent'].quantiles[..., 0].unsqueeze(-1)
     with torch.set_grad_enabled(decomp_model.training):
         x_rec = decomp_model['synthesis'](y_q_t)
 
@@ -355,7 +355,7 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
                                                              **state['args'])
 
     cae_model_base.synthesis.load_state_dict(state['decoder'], strict=False)
-    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
+    cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
 
     if state['args']['version'] == '0.5.5':
         for color_layer in cae_model_base.color_layers:
@@ -377,7 +377,7 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
 
     decomp_model = nn.ModuleDict(
         dict(synthesis=nn.DataParallel(cae_model_base.synthesis),
-             fact_entropy=cae_model_base.fact_entropy))
+             fact_ent=cae_model_base.fact_ent))
 
     if use_gpu:
         decomp_model.cuda()
@@ -428,7 +428,7 @@ def decompress(args):
                       fn.split('.zarr')[0].replace('\\', '/').split('/')[-1],
                       input_fn_list)
         output_fn_list = [os.path.join(args.output_dir[0],
-                                       '%s%s%s' % (fn, args.comp_identifier,
+                                       '%s%s%s' % (fn, args.task_label_identifier,
                                                    args.destination_format))
                           for fn in fn_list]
 

@@ -35,8 +35,8 @@ def encode(x, comp_model, transform, offset=0):
     with torch.set_grad_enabled(comp_model.training):
         fx = comp_model['embedding'](x_t)
         y = comp_model['analysis'](fx)
-        y_q, _ = comp_model['fact_entropy'](y)
-        y_cmp = comp_model['fact_entropy'].module.compress(y)
+        y_q, _ = comp_model['fact_ent'](y)
+        y_cmp = comp_model['fact_ent'].module.compress(y)
 
         print('AE comp', len(y_cmp[0]), (8 * len(y_cmp[0])) / (H * W))
 
@@ -44,7 +44,7 @@ def encode(x, comp_model, transform, offset=0):
         h, w = y_q.shape[-2:]
         y_q = y_q[..., offset:h-offset, offset:w-offset]
 
-        y_q = y_q - comp_model['fact_entropy'].module.quantiles[..., 0].unsqueeze(-1)
+        y_q = y_q - comp_model['fact_ent'].module.quantiles[..., 0].unsqueeze(-1)
         y_q = y_q.round().to(torch.int16)
         y_q = y_q.unsqueeze(2).numpy()
 
@@ -252,8 +252,8 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
 
     cae_model_base.embedding.load_state_dict(state['embedding'])
     cae_model_base.analysis.load_state_dict(state['encoder'])
-    cae_model_base.fact_entropy.load_state_dict(state['fact_ent'], strict=False)
-    cae_model_base.fact_entropy.update()
+    cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
+    cae_model_base.fact_ent.update()
 
     if lc_pretrained_model is not None and ft_pretrained_model is not None:
 
@@ -273,7 +273,7 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
     comp_model = nn.ModuleDict(
         dict(embedding=nn.DataParallel(cae_model_base.embedding),
              analysis=nn.DataParallel(cae_model_base.analysis),
-             fact_entropy=nn.DataParallel(cae_model_base.fact_entropy)))
+             fact_ent=nn.DataParallel(cae_model_base.fact_ent)))
 
     if use_gpu:
         comp_model.cuda()
@@ -313,7 +313,7 @@ def compress(args):
                       fn[:fn.lower().find(args.source_format)].replace('\\', '/').split('/')[-1],
                       input_fn_list)
         output_fn_list = [os.path.join(args.output_dir[0],
-                                       '%s%s.zarr' % (fn, args.comp_identifier))
+                                       '%s%s.zarr' % (fn, args.task_label_identifier))
                           for fn in fn_list]
 
     else:

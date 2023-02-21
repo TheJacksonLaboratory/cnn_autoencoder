@@ -1,7 +1,10 @@
 VER = '0.5.7'
 SEG_VER = '0.5.6'
 
-DATASETS = ['MNIST', 'ImageNet', 'ImageNet.S3', 'Zarr', 'Histology']
+DATASETS = ['MNIST',
+            'ImageNet',
+            'ImageNet.S3',
+            'Zarr']
 
 CAE_CRITERIONS = ['RD',
                   'MultiscaleRD',
@@ -16,21 +19,24 @@ CAE_CRITERIONS = ['RD',
                   'MultiscaleRMS-SSIM_PA',
                   'MultiscaleRMS-SSIM_PB']
 
+CLASS_CRITERIONS = ['CELoss',
+                    'BCELoss',
+                    'CELossWithAux',
+                    'BCELossWithAux']
+
 CAE_ACT_LAYERS = ['LeakyReLU',
                   'ReLU',
                   'GDN',
                   'Identiy']
 
-SEG_CRITERIONS = ['CE', 'CEW']
+OPTIMIZERS = ['Adam',
+              'SGD']
 
-OPTIMIZERS = ['Adam', 'SGD']
-SCHEDULERS = ['None', 'ReduceOnPlateau', 'StepLR']
+SCHEDULERS = ['None',
+              'ReduceOnPlateau',
+              'StepLR']
 
-SEG_MODELS = ['DecoderUNet', 'UNet', 'UNetNoBridge']
-CAE_MODELS = ['MaskedAutoEncoder', 'AutoEncoder']
+CAE_MODELS = ['AutoEncoder']
 
-PROJ_MODELS = ['KCCA']
-FE_MODELS = ['FactorizedEntropy', 'FactorizedEntropyLaplace']
-CLASS_MODELS = ['InceptionV3', 'MobileNet', 'ResNet', 'ViT']
-
-MERGE_TYPES = ['mean', 'max', 'median']
+CLASS_MODELS = ['Empty',
+                'ViT']

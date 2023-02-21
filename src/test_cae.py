@@ -6,7 +6,8 @@ from skimage.color import deltaE_cie76, rgb2lab
 from skimage.metrics import (mean_squared_error,
                              peak_signal_noise_ratio,
                              structural_similarity)
-from torchmetrics import MultiScaleStructuralSimilarityIndexMeasure
+
+from pytorch_msssim import ms_ssim
 
 import numpy as np
 import zarr
@@ -45,19 +46,10 @@ def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
 
 
 def compute_ms_ssim(x=None, x_r=None, **kwargs):
-    ms_ssim_fn = MultiScaleStructuralSimilarityIndexMeasure(
-        kernel_size=(11, 11),
-        sigma=(1.5, 1.5),
-        reduction='elementwise_mean',
-        k1=0.01,
-        k2=0.03,
-        data_range=1,
-        betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
-        normalize='relu'
-    )
-    ms_ssim = ms_ssim_fn(
-        torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float() / 255.0,
-        torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float() / 255.0)
+    ms_ssim = ms_ssim(
+        torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float(),
+        torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float(),
+        data_range=255)
     return ms_ssim, None
 
 
@@ -85,7 +77,7 @@ def compute_rate(x=None, x_r=None, y_q_ptr=None, **kwargs):
     dist=Distortion (RMSE)
     rate=Compression rate (bits-per-pixel bpp)
     ssim=Structural similarity
-    psnr=Peak Dignal-to-Noise Ratio (dB)
+    psnr=Peak Dignal-to-Noise Ratio (dB
     delta_cielab=Distance between images in the CIELAB color space (RMSE in
     CIELAB space)
 """
