@@ -17,7 +17,8 @@ optimization_algorithms = {"Adam": optim.Adam,
                            "SGD": optim.SGD}
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
-                     "StepLR": optim.lr_scheduler.StepLR}
+                     "StepLR": optim.lr_scheduler.StepLR,
+                     "LinearLR": optim.lr_scheduler.LinearLR}
 
 
 def log_info(step, len_data, model, output, avg_loss, loss_dict, channel_e,
@@ -475,11 +476,28 @@ def setup_optim(model, args):
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
-
     elif args.scheduler_type in scheduler_options.keys():
+        if args.scheduler_type == "LinearLR":
+            scheduler_args = dict(start_factor=0.3333333333333333,
+                                  end_factor=1.0,
+                                  total_iters=5,
+                                  last_epoch=-1,
+                                  verbose=False)
+        elif args.scheduler_type == "ReduceOnPlateau":
+            scheduler_args = dict(mode='min', factor=0.1, patience=10,
+                                  threshold=0.0001,
+                                  threshold_mode='rel',
+                                  cooldown=0,
+                                  min_lr=0,
+                                  eps=1e-08,
+                                  verbose=False)
+        elif args.scheduler_type == "StepLR":
+            scheduler_args = dict(gamma=0.1, last_epoch=- 1, verbose=False)
+        else:
+            scheduler_args = {}
+
         scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer,
-                                                           mode='min',
-                                                           patience=2)
+                                                           **scheduler_args)
     else:
         raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler_type)
 
