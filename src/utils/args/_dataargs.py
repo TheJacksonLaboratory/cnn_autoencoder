@@ -78,7 +78,7 @@ data_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['testing', 'inference'],
+        'modes': ['test', 'inference'],
         'flags': ('-off', '--add-offset'),
         'details': {
         'dest': 'add_offset',
@@ -88,7 +88,7 @@ data_args = [
         }
     },
     {'tasks': ['decoder'],
-        'modes': ['testing', 'inference'],
+        'modes': ['test', 'inference'],
         'flags': ('-of', '--dst-format'),
         'details': {
         'dest': 'destination_format',

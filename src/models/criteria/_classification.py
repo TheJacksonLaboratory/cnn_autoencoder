@@ -18,20 +18,26 @@ class CEClassLoss(ClassLoss):
                  reduce=None,
                  reduction='mean',
                  label_smoothing=0.0,
+                 gpu=False,
                  **kwargs):
         self._loss = CrossEntropyLoss(weight, size_average, ignore_index,
                                       reduce,
                                       reduction,
                                       label_smoothing)
+        if gpu:
+            self._loss.cuda()
 
 
 class BCEClassLoss(ClassLoss):
     def __init__(self, weight=None, size_average=None, reduce=None,
                  reduction='mean',
                  pos_weight=None,
+                 gpu=False,
                  **kwargs):
         self._loss = BCEWithLogitsLoss(weight, size_average, reduce, reduction,
                                        pos_weight)
+        if gpu:
+            self._loss.cuda()
 
 
 class CEClassLossWithAux(ClassLossWithAux):
@@ -39,6 +45,7 @@ class CEClassLossWithAux(ClassLossWithAux):
                  reduce=None,
                  reduction='mean',
                  label_smoothing=0.0,
+                 gpu=False,
                  **kwargs):
         self._loss = CrossEntropyLoss(weight, size_average, ignore_index,
                                       reduce,
@@ -48,18 +55,25 @@ class CEClassLossWithAux(ClassLossWithAux):
                                           reduce,
                                           reduction,
                                           label_smoothing)
+        if gpu:
+            self._loss.cuda()
+            self._aux_loss.cuda()
 
 
 class BCEClassLossWithAux(ClassLossWithAux):
     def __init__(self, weight=None, size_average=None, reduce=None,
                  reduction='mean',
                  pos_weight=None,
+                 gpu=False,
                  **kwargs):
         self._loss = BCEWithLogitsLoss(weight, size_average, reduce, reduction,
                                        pos_weight)
         self._aux_loss = BCEWithLogitsLoss(weight, size_average, reduce,
                                            reduction,
                                            pos_weight)
+        if gpu:
+            self._loss.cuda()
+            self._aux_loss.cuda()
 
 
 CLASSLOSS_LIST = {

@@ -51,6 +51,9 @@ class GeneralLoss(nn.Module):
     def forward(self, input, output, target=None, net=None, **kwargs):
         dist_dict = self.dist_loss(x=input, x_r=output['x_r'], **kwargs)
 
+        dist_dict['dist_loss'] = [self._multiplier * d
+                                  for d in dist_dict['dist']]
+
         dist_dict['dist_loss'] = reduce(lambda d1, d2: d1 + d2,
                                         map(lambda wd: wd[0] * wd[1],
                                             zip(dist_dict['dist'],
@@ -69,7 +72,7 @@ class GeneralLoss(nn.Module):
                                          t=target, **kwargs))
 
         dist_dict['loss'] = (
-            self._multiplier * dist_dict['dist_loss'] + dist_dict['rate_loss']
+            dist_dict['dist_loss'] + dist_dict['rate_loss']
             + self._penalty_beta * dist_dict['weighted_penalty']
             + self._class_error_mu * dist_dict['class_error']
             + self._class_error_aux_mu * dist_dict['aux_class_error'])

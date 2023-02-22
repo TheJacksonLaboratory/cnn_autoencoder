@@ -105,7 +105,7 @@ class MergeLabels(object):
         return merged_labels
 
 
-def get_zarr_transform(data_mode='testing', normalize=False,
+def get_zarr_transform(data_mode='test', normalize=False,
                        compressed_input=False,
                        rotation=False,
                        elastic_deformation=False,

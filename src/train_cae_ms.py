@@ -20,7 +20,7 @@ scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
                      "StepLR": optim.lr_scheduler.StepLR}
 
 
-def log_info(step, len_data, model, output, sum_loss, loss_dict, channel_e,
+def log_info(step, len_data, model, output, avg_loss, loss_dict, channel_e,
              step_type='Training',
              progress_bar=False):
 
@@ -30,14 +30,15 @@ def log_info(step, len_data, model, output, sum_loss, loss_dict, channel_e,
         log_string = ''
 
     log_string += ('{} Loss {:.4f} (dist=[{}], rate={:.2f}, aux={:.2f}, energy'
-                  '={:.3f}). BN [{:.2f},{:.2f}] Py [{:.2f},{:.2f}] QPy'
+                  '={:.3f}, cle={:.3f}). BN [{:.2f},{:.2f}] Py [{:.2f},{:.2f}] QPy'
                   '({:.2f},{:.2f},{:.2f}), rec [{:.2f},{:.2f}] ch {}'.format(
         step_type,
-        sum_loss / (step+1),
+        avg_loss,
         ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
         loss_dict['rate_loss'].item(),
         loss_dict['entropy_loss'].item(),
         loss_dict.get('energy', 0.0),
+        loss_dict['class_error'].item(),
         output['y'].detach().min(),
         output['y'].detach().max(),
         output['p_y'].detach().min(),
@@ -57,7 +58,8 @@ def forward_step(x, model):
     x_r = model["decoder"](y_q)
     t_pred, t_aux_pred = model["class_model"](y_q)
 
-    return dict(x_r=x_r, y=y, p_y=p_y, t_pred=t_pred, t_aux_pred=t_aux_pred)
+    return dict(x_r=x_r, y=y, y_q=y_q, p_y=p_y, t_pred=t_pred,
+                t_aux_pred=t_aux_pred)
 
 
 def valid(model, data, criterion, args):
@@ -97,6 +99,7 @@ def valid(model, data, criterion, args):
     with torch.no_grad():
         for i, (x, t) in enumerate(data):
             output = forward_step(x, model)
+            t = t.to(output['y_q'].device)
 
             loss_dict = criterion(input=x, output=output, target=t,
                                   net=model)
@@ -112,7 +115,8 @@ def valid(model, data, criterion, args):
                     output['x_r'] = [output['x_r']]
 
                 q.set_description(
-                    log_info(i, None, model, output, sum_loss, loss_dict,
+                    log_info(i, None, model, output, sum_loss / (i + 1),
+                             loss_dict,
                              channel_e,
                              step_type='Validation',
                              progress_bar=True))
@@ -122,7 +126,8 @@ def valid(model, data, criterion, args):
                 if not isinstance(output['x_r'], list):
                     output['x_r'] = [output['x_r']]
 
-                logger.debug(log_info(i, len(data), model, output, sum_loss,
+                logger.debug(log_info(i, len(data), model, output,
+                                      sum_loss / (i + 1),
                                       loss_dict,
                                       channel_e,
                                       step_type='Validation',
@@ -202,6 +207,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 aux_optimizer.zero_grad()
 
                 output = forward_step(x, model)
+                t = t.to(output['y_q'].device)
 
                 loss_dict = criterion(input=x, output=output, target=t,
                                       net=model)
@@ -215,6 +221,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                     nn.utils.clip_grad_norm_(model[k].parameters(),
                                              max_norm=1.0)
                 optimizer.step()
+
                 step_loss = loss.item()
 
                 aux_loss = torch.mean(loss_dict['entropy_loss'])
@@ -222,7 +229,6 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 aux_optimizer.step()
 
                 channel_e_history.append(loss_dict.get('channel_e', -1))
-
 
                 # When training with penalty on the energy of the compression
                 # representation, update the respective stopping criterion
@@ -239,7 +245,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
                         channel_e = int(np.median(channel_e_history))
                         q_penalty.set_description(
-                            log_info(step, None, model, output, sum_loss,
+                            log_info(step, None, model, output,
+                                     sum_loss / step,
                                      loss_dict,
                                      channel_e,
                                      step_type='Sub-iter',
@@ -271,7 +278,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                     output['x_r'] = [output['x_r']]
 
                 q.set_description(
-                    log_info(step, None, model, output, sum_loss,
+                    log_info(step, None, model, output, sum_loss / step,
                              loss_dict,
                              channel_e,
                              step_type='Training',
@@ -286,7 +293,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                     output['x_r'] = [output['x_r']]
 
                 logger.debug(log_info(step, len(train_data), model, output,
-                                      sum_loss,
+                                      sum_loss / step,
                                       loss_dict,
                                       channel_e,
                                       step_type='Training',
