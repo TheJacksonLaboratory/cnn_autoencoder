@@ -13,3 +13,4 @@ from ._imagenet import ImageFolder, ImageS3
 from ._augs import (get_zarr_transform,
                     get_imagenet_transform,
                     get_mnist_transform)
+from ._datautils import get_data

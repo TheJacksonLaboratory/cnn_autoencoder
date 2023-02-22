@@ -22,6 +22,7 @@ class EmptyClassifierHead(nn.Module):
 class ViTClassifierHead(vision_transformer.VisionTransformer):
     def __init__(self, channels_bn=768, cut_poisition=6, patch_size=128,
                  compression_level=4,
+                 num_classes=1000,
                  **kwargs):
         if cut_poisition is None:
             cut_poisition = 6
@@ -40,7 +41,8 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
             num_layers=12 - cut_poisition,
             num_heads=12,
             hidden_dim=channels_bn,
-            mlp_dim=3072)
+            mlp_dim=3072,
+            num_classes=num_classes)
 
         # The input `x` is the output of several convolution layers, and the
         # number of channels is already the required as input for the encoder

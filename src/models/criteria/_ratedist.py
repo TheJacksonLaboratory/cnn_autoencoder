@@ -54,6 +54,9 @@ class RateLoss(object):
 
 
 class DistMSELoss(object):
+    def __init__(self, **kwargs):
+        pass
+
     def __call__(self, x, x_r, **kwargs):
         dist = F.mse_loss(x_r, x.to(x_r.device))
         return dict(dist=[dist])

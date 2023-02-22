@@ -1,7 +1,7 @@
 import os
 from torch.utils.data import DataLoader, random_split
 
-from .datasets import (get_zarr_transform,
+from . import (get_zarr_transform,
                        get_mnist_transform,
                        get_imagenet_transform,
                        MNIST,
@@ -17,17 +17,17 @@ def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='tra
 
     # If testing the model, return the test set from MNIST
     if mode != 'training':
-        mnist_data = MNIST(root=data_dir, train=False, download=False, transform=prep_trans)
+        mnist_data = MNIST(root=data_dir, train=False, download=True, transform=prep_trans)
         test_queue = DataLoader(mnist_data, batch_size=batch_size, shuffle=False, num_workers=workers)
         return test_queue
 
-    mnist_data = MNIST(root=data_dir, train=True, download=False, transform=prep_trans)
+    mnist_data = MNIST(root=data_dir, train=True, download=True, transform=prep_trans)
 
     train_ds, valid_ds = random_split(mnist_data, (55000, 5000))
     train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers)
     valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers)
 
-    return train_queue, valid_queue
+    return train_queue, valid_queue, 10
 
 
 def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
@@ -82,7 +82,7 @@ def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
         train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers, pin_memory=True)
         valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers, pin_memory=True)
 
-    return train_queue, valid_queue
+    return train_queue, valid_queue, 1000
 
 
 def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
@@ -97,6 +97,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
                      test_dataset_size=-1,
                      gpu=False,
                      mode='training',
+                     num_classes=None,
                      **kwargs):
     """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
@@ -160,7 +161,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
     train_queue = DataLoader(zarr_train_data, batch_size=batch_size, shuffle=shuffle_train, num_workers=min(workers, len(zarr_train_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
     valid_queue = DataLoader(zarr_valid_data, batch_size=val_batch_size, shuffle=shuffle_val, num_workers=min(workers, len(zarr_valid_data._filenames)), pin_memory=gpu, worker_init_fn=zarrdataset_worker_init)
 
-    return train_queue, valid_queue
+    return train_queue, valid_queue, num_classes
 
 
 def get_data(args):

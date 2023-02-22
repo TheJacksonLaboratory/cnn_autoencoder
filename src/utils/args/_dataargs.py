@@ -26,6 +26,16 @@ data_args = [
         }
     },
     {'tasks': ['all'],
+        'modes': ['training', 'test'],
+        'flags': ('-ncl', '--num-classes'),
+        'details': {
+        'dest': 'num_classes',
+        'type': int,
+        'help': 'Number of classes n the classification task',
+        'default': None
+        }
+    },
+    {'tasks': ['all'],
         'modes': ['all'],
         'flags': ('-dg', '--data-group'),
         'details': {
@@ -98,7 +108,7 @@ data_args = [
         }
     },
     {'tasks': ['encoder'],
-        'modes': ['testing', 'inference'],
+        'modes': ['test', 'inference'],
         'flags': ('-if', '--src-format'),
         'details': {
         'dest': 'source_format',
@@ -108,7 +118,7 @@ data_args = [
         }
     },
     {'tasks': ['encoder', 'decoder'],
-        'modes': ['testing', 'inference'],
+        'modes': ['test', 'inference'],
         'flags': ('-md', '--mode-data'),
         'details': {
         'dest': 'data_mode',
@@ -210,7 +220,7 @@ data_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['testing'],
+        'modes': ['test'],
         'flags': ('-shte', '--shuffle-test'),
         'details': {
         'dest': 'shuffle_test',
@@ -222,7 +232,7 @@ data_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['testing'],
+        'modes': ['test'],
         'flags': ('-nte', '--num-test'),
         'details': {
         'dest': 'test_dataset_size',
@@ -232,7 +242,7 @@ data_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['training', 'testing'],
+        'modes': ['training', 'test'],
         'flags': ('-ds', '--dataset'),
         'details': {
         'dest': 'dataset',
@@ -243,7 +253,7 @@ data_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['inference', 'testing'],
+        'modes': ['inference', 'test'],
         'flags': ('-o', '--output'),
         'details': {
         'dest': 'output_dir',
@@ -255,7 +265,7 @@ data_args = [
         }
     },
     {'tasks': ['encoder', 'decoder'],
-        'modes': ['testing', 'inference'],
+        'modes': ['test', 'inference'],
         'flags': ('-tli', '--task-label-identifier'),
         'details': {
         'dest': 'task_label_identifier',

@@ -542,6 +542,9 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
+    train_data, valid_data, num_classes = utils.get_data(args)
+    args.num_classes = num_classes
+
     model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args, checkpoint=args.resume)
     optimizer, aux_optimizer, scheduler = setup_optim(model, args)
@@ -569,8 +572,6 @@ def main(args):
 
     logger.info('\nScheduler parameters:')
     logger.info(scheduler)
-
-    train_data, valid_data = utils.get_data(args)
 
     train(model, train_data, valid_data, criterion, stopping_criteria,
           optimizer,
