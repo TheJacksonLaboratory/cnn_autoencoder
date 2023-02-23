@@ -62,14 +62,18 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
         for k, m in class_metrics.items():
             log_string += ' {}:{:.3f}'.format(k, m)
 
-    log_string += (' BN={:.2f},{:.2f} P={:.2f},{:.2f} QP={:.2f},{:.2f},'
-                    '{:.2f}'.format(output['y'].detach().min(),
-                                    output['y'].detach().max(),
-                                    output['p_y'].detach().min(),
-                                    output['p_y'].detach().max(),
-                                    *[quant.item()
-                                        for quant in model['fact_ent'].module.quantiles.detach().mean(dim=(0, 1))]
-                    ))
+    log_string += ' BN={:.2f},{:.2f} P={:.2f},{:.2f}'.format(
+        output['y'].detach().min(),
+        output['y'].detach().max(),
+        output['p_y'].detach().min(),
+        output['p_y'].detach().max())
+
+    quantiles = model['fact_ent'].module.quantiles.detach()
+    quantiles_info = (quantiles[:, 0, 0].median(),
+                      quantiles[:, 0, 1].median(),
+                      quantiles[:, 0, 2].median())
+
+    log_string += ' QP={:.2f},{:.2f},{:.2f}'.format(*quantiles_info)
 
     log_string += ' Xo={:.2f},{:.2f},std={:.2f}'.format(
         inputs.min(),
@@ -251,7 +255,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 sub_step += 1
                 # Start of training step
                 optimizer.zero_grad()
-                aux_optimizer.zero_grad()
+                if aux_optimizer is not None:
+                    aux_optimizer.zero_grad()
 
                 output = forward_step(x, model)
                 t = t.to(output['y_q'].device)
@@ -265,14 +270,15 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 # Clip the gradients to prevent from exploding gradients
                 # problems
                 for k in model.keys():
-                    nn.utils.clip_grad_norm_(model[k].parameters(),
-                                             max_norm=1.0)
+                    if k in args.trainable_modules:
+                        nn.utils.clip_grad_norm_(model[k].parameters(),
+                                                 max_norm=1.0)
                 optimizer.step()
 
                 step_loss = loss.item()
                 sub_step_loss += step_loss
 
-                if 'entropy_loss' in loss_dict:
+                if 'entropy_loss' in loss_dict and aux_optimizer is not None:
                     aux_loss = torch.mean(loss_dict['entropy_loss'])
                     aux_loss.backward()
                     aux_optimizer.step()
@@ -348,7 +354,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 valid_loss = valid(model, valid_data, criterion, args)
 
                 for k in model.keys():
-                    model[k].train()
+                    if k in args.trainable_modules:
+                        model[k].train()
 
                 stopping_info = ';'.join(map(lambda k_sc:\
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
@@ -495,23 +502,30 @@ def setup_optim(model, args):
     aux_pars = []
 
     for k in model.keys():
-        for par_name, par in model[k].named_parameters():
-            if 'quantiles' in par_name or 'aux' in par_name:
-                aux_pars.append(par)
-            else:
-                net_pars.append(par)
+        if k in args.trainable_modules:
+            for par_name, par in model[k].named_parameters():
+                if 'quantiles' in par_name or 'aux' in par_name:
+                    aux_pars.append(par)
+                else:
+                    net_pars.append(par)
+        else:
+            model[k].eval()
 
     optimizer = optim_algo(params=net_pars,
                            lr=args.learning_rate,
                            weight_decay=args.weight_decay)
 
-    aux_optimizer = optim_algo(params=aux_pars,
-                               lr=args.aux_learning_rate,
-                               weight_decay=args.aux_weight_decay)
+    if len(aux_pars):
+        aux_optimizer = optim_algo(params=aux_pars,
+                                lr=args.aux_learning_rate,
+                                weight_decay=args.aux_weight_decay)
+    else:
+        aux_optimizer = None
 
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
         scheduler = None
+
     elif args.scheduler_type in scheduler_options.keys():
         if args.scheduler_type == "LinearLR":
             scheduler_args = dict(start_factor=0.3333333333333333,
@@ -519,6 +533,7 @@ def setup_optim(model, args):
                                   total_iters=5,
                                   last_epoch=-1,
                                   verbose=False)
+
         elif args.scheduler_type == "ReduceOnPlateau":
             scheduler_args = dict(mode='min', factor=0.1, patience=10,
                                   threshold=0.0001,
@@ -527,15 +542,18 @@ def setup_optim(model, args):
                                   min_lr=0,
                                   eps=1e-08,
                                   verbose=False)
+
         elif args.scheduler_type == "StepLR":
             scheduler_args = dict(gamma=0.1, last_epoch=- 1, verbose=False)
+
         else:
             scheduler_args = {}
 
         scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer,
                                                            **scheduler_args)
     else:
-        raise ValueError('Scheduler \"%s\" is not implemented' % args.scheduler_type)
+        raise ValueError('Scheduler \"%s\" ' % args.scheduler_type
+                         + 'is not implemented')
 
     return optimizer, aux_optimizer, scheduler
 
@@ -568,7 +586,7 @@ def resume_checkpoint(model, optimizer, scheduler, checkpoint, gpu=True,
 
     for k in model.keys():
         assert k in checkpoint_state
-        model[k].module.analysis.load_state_dict(checkpoint_state[k],
+        model[k].module.load_state_dict(checkpoint_state[k],
                                                   strict=False)
 
     if checkpoint_state['args']['version'] == '0.5.5':
@@ -610,7 +628,9 @@ def main(args):
     # Log the training setup
     logger.info('Network architecture:')
     for k in model.keys():
-        logger.info('\n' + k)
+        logger.info('\n{} (is trainable: {})'.format(
+            k,
+            k in args.trainable_modules))
         logger.info(model[k])
 
     logger.info('\nCriterion:')

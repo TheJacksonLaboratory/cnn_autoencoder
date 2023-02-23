@@ -1,1 +1,1 @@
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, EMNIST

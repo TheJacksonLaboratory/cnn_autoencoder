@@ -6,7 +6,7 @@ from ._augs import (get_zarr_transform,
                     get_imagenet_transform,
                     get_cifar_transform)
 from ._cifar import CIFAR10, CIFAR100
-from ._mnist import MNIST
+from ._mnist import MNIST, EMNIST
 from ._zarrbased import (zarrdataset_worker_init,
                          ZarrDataset,
                          LabeledZarrDataset)
@@ -29,6 +29,24 @@ def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='tra
     valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers)
 
     return train_queue, valid_queue, 10
+
+
+def get_EMNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
+    prep_trans = get_mnist_transform(mode, normalize)
+
+    # If testing the model, return the test set from MNIST
+    if mode != 'training':
+        mnist_data = EMNIST(root=data_dir, split='byclass', train=False, download=True, transform=prep_trans)
+        test_queue = DataLoader(mnist_data, batch_size=batch_size, shuffle=False, num_workers=workers)
+        return test_queue
+
+    mnist_data = EMNIST(root=data_dir, split='byclass', train=True, download=True, transform=prep_trans)
+
+    train_ds, valid_ds = random_split(mnist_data, (628132, 69800))
+    train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers)
+    valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers)
+
+    return train_queue, valid_queue, 62
 
 
 def get_CIFAR10(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
@@ -222,6 +240,9 @@ def get_data(args):
 
     if args_dict['dataset'] == 'MNIST':
         return get_MNIST(**args_dict)
+
+    if args_dict['dataset'] == 'EMNIST':
+        return get_EMNIST(**args_dict)
 
     elif args_dict['dataset'] == 'CIFAR10':
         return get_CIFAR10(**args_dict)

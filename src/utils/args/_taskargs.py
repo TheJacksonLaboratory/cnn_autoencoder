@@ -159,4 +159,17 @@ task_args = [
         'default': 0.0,
         }
     },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-trm', '--trainable-modules'),
+        'details': {
+        'dest': 'trainable_modules',
+        'type': str,
+        'nargs': '+',
+        'help': 'Trainable modules of the network. All modules not listed here'
+                ' will set as evaluation mode and their parameters will not be'
+                ' tracked by the optimizer',
+        'default': ['encoder', 'decoder', 'fact_ent', 'class_model'],
+        }
+    },
 ]
