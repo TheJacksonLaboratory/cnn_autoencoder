@@ -1,15 +1,16 @@
 import os
 from torch.utils.data import DataLoader, random_split
 
-from . import (get_zarr_transform,
-                       get_mnist_transform,
-                       get_imagenet_transform,
-                       MNIST,
-                       zarrdataset_worker_init,
-                       ZarrDataset,
-                       LabeledZarrDataset,
-                       ImageFolder,
-                       ImageS3)
+from ._augs import (get_zarr_transform,
+                    get_mnist_transform,
+                    get_imagenet_transform,
+                    get_cifar_transform)
+from ._cifar import CIFAR10, CIFAR100
+from ._mnist import MNIST
+from ._zarrbased import (zarrdataset_worker_init,
+                         ZarrDataset,
+                         LabeledZarrDataset)
+from ._imagenet import ImageFolder, ImageS3
 
 
 def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='training', normalize=True, **kwargs):
@@ -28,6 +29,48 @@ def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0, mode='tra
     valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers)
 
     return train_queue, valid_queue, 10
+
+
+def get_CIFAR10(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
+                mode='training',
+                normalize=True,
+                **kwargs):
+    prep_trans = get_cifar_transform(mode, normalize)
+
+    # If testing the model, return the test set from MNIST
+    if mode != 'training':
+        cifar_data = CIFAR10(root=data_dir, train=False, download=True, transform=prep_trans)
+        test_queue = DataLoader(cifar_data, batch_size=batch_size, shuffle=False, num_workers=workers)
+        return test_queue
+
+    cifar_data = CIFAR10(root=data_dir, train=True, download=True, transform=prep_trans)
+
+    train_ds, valid_ds = random_split(cifar_data, (45000, 5000))
+    train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers)
+    valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers)
+
+    return train_queue, valid_queue, 10
+
+
+def get_CIFAR100(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
+                 mode='training',
+                 normalize=True,
+                 **kwargs):
+    prep_trans = get_cifar_transform(mode, normalize)
+
+    # If testing the model, return the test set from MNIST
+    if mode != 'training':
+        cifar_data = CIFAR100(root=data_dir, train=False, download=True, transform=prep_trans)
+        test_queue = DataLoader(cifar_data, batch_size=batch_size, shuffle=False, num_workers=workers)
+        return test_queue
+
+    cifar_data = CIFAR100(root=data_dir, train=True, download=True, transform=prep_trans)
+
+    train_ds, valid_ds = random_split(cifar_data, (45000, 5000))
+    train_queue = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=workers)
+    valid_queue = DataLoader(valid_ds, batch_size=val_batch_size, shuffle=False, num_workers=workers)
+
+    return train_queue, valid_queue, 100
 
 
 def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
@@ -179,6 +222,12 @@ def get_data(args):
 
     if args_dict['dataset'] == 'MNIST':
         return get_MNIST(**args_dict)
+
+    elif args_dict['dataset'] == 'CIFAR10':
+        return get_CIFAR10(**args_dict)
+
+    elif args_dict['dataset'] == 'CIFAR100':
+        return get_CIFAR100(**args_dict)
 
     elif args_dict['dataset'] in ['ImageNet', 'ImageNet.S3']:
         return get_ImageNet(**args_dict)

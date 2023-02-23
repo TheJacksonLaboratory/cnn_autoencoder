@@ -45,6 +45,9 @@ class PyramidLossMixin:
 
 
 class RateLoss(object):
+    def __init__(self, **kwargs):
+        pass
+
     def __call__(self, x, p_y, **kwargs):
         # Rate of compression:
         rate_loss = (-torch.sum(torch.log2(p_y))
@@ -172,4 +175,8 @@ DIST_LOSS_LIST = {
 PENALTY_LOSS_LIST = {
     "PenaltyA": PenaltyA,
     "PenaltyB": PenaltyB,
+    }
+
+RATE_LOSS_LIST = {
+    "Rate": RateLoss,
     }

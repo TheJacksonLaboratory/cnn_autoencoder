@@ -192,3 +192,13 @@ def get_mnist_transform(data_mode='training', normalize=True):
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
     return transforms.Compose(prep_trans_list)
+
+
+def get_cifar_transform(data_mode='training', normalize=True):
+    prep_trans_list = [transforms.PILToTensor(),
+                       transforms.ConvertImageDtype(torch.float32)]
+
+    if normalize:
+        prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
+
+    return transforms.Compose(prep_trans_list)

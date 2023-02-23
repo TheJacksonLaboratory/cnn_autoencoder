@@ -38,11 +38,13 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
         else:
             log_string += '[{:04d}/{:04d}] '.format(sub_step, len_data)
 
-    log_string += '{} Loss {:.4f} D=[{}] R={:.2f}'.format(
-        step_type,
-        avg_loss,
-        ','.join(['%0.4f' % d.item() for d in loss_dict['dist']]),
-        loss_dict['rate_loss'].item())
+    log_string += '{} Loss {:.4f}'.format(step_type, avg_loss)
+
+    if 'dist' in loss_dict:
+        log_string += ' D=[{}]'.format(','.join(['%0.4f' % d.item()
+                                                for d in loss_dict['dist']]))
+    if 'rate_loss' in loss_dict:
+        log_string += ' R={:.2f}'.format(loss_dict['rate_loss'].item())
 
     if 'entropy_loss' in loss_dict:
         log_string += ' A={:.3f}'.format(loss_dict['entropy_loss'].item())
@@ -270,9 +272,10 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 step_loss = loss.item()
                 sub_step_loss += step_loss
 
-                aux_loss = torch.mean(loss_dict['entropy_loss'])
-                aux_loss.backward()
-                aux_optimizer.step()
+                if 'entropy_loss' in loss_dict:
+                    aux_loss = torch.mean(loss_dict['entropy_loss'])
+                    aux_loss.backward()
+                    aux_optimizer.step()
 
                 channel_e_history.append(loss_dict.get('channel_e', -1))
 

@@ -2,22 +2,11 @@ VER = '0.5.7'
 SEG_VER = '0.5.6'
 
 DATASETS = ['MNIST',
+            'CIFAR10',
+            'CIFAR100',
             'ImageNet',
             'ImageNet.S3',
             'Zarr']
-
-CAE_CRITERIONS = ['RD',
-                  'MultiscaleRD',
-                  'RD_PA',
-                  'RD_PB',
-                  'MultiscaleRD_PA',
-                  'MultiscaleRD_PB',
-                  'RMS-SSIM',
-                  'MultiscaleRMS-SSIM',
-                  'RMS-SSIM_PA',
-                  'RMS-SSIM_PB',
-                  'MultiscaleRMS-SSIM_PA',
-                  'MultiscaleRMS-SSIM_PB']
 
 CLASS_CRITERIONS = ['CELoss',
                     'BCELoss',

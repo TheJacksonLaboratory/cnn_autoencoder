@@ -39,7 +39,7 @@ criteria_args = [
         'dest': 'criterion',
         'type': str,
         'help': 'Training criterion to evaluate the convolutional autoencoder',
-        'default': 'RD'
+        'default': 'RateMSE'
         }
     },
     {'tasks': ['autoencoder', 'lc-compress'],

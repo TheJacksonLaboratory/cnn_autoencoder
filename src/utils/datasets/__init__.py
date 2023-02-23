@@ -8,9 +8,8 @@ from ._zarrbased import (LabeledZarrDataset,
                          get_filenames,
                          compute_grid,
                          zarrdataset_worker_init)
-from ._mnist import MNIST
-from ._imagenet import ImageFolder, ImageS3
 from ._augs import (get_zarr_transform,
                     get_imagenet_transform,
-                    get_mnist_transform)
+                    get_mnist_transform,
+                    get_cifar_transform)
 from ._datautils import get_data
