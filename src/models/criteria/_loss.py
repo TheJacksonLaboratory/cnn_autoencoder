@@ -30,10 +30,12 @@ class GeneralLoss(nn.Module):
             self._penalty_beta = penalty_beta
 
         else:
-            self.penalty_loss = lambda x, y, net: dict(weighted_penalty=0,
-                                                       penalty=0,
-                                                       energy=0,
-                                                       channel_e=0)
+            self.penalty_loss = lambda x, y, net: dict(
+                weighted_penalty=torch.FloatTensor([0]),
+                penalty=torch.FloatTensor([0]),
+                energy=torch.FloatTensor([0]),
+                channel_e=torch.LongTensor([-1]))
+
             self._penalty_beta = 0
 
         if class_loss_type is not None and class_loss_type.lower() != "none":
@@ -43,16 +45,17 @@ class GeneralLoss(nn.Module):
             self._class_error_aux_mu = class_error_aux_mu
 
         else:
-            self.class_loss = lambda pred, t, aux_pred: dict(class_error=0,
-                                                             aux_class_error=0)
+            self.class_loss = lambda pred, t, aux_pred: dict(
+                class_error=torch.FloatTensor([0]),
+                aux_class_error=torch.FloatTensor([0]))
+
             self._class_error_mu = 0
             self._class_error_aux_mu = 0
 
     def forward(self, input, output, target=None, net=None, **kwargs):
         dist_dict = self.dist_loss(x=input, x_r=output['x_r'], **kwargs)
 
-        dist_dict['dist_loss'] = [self._multiplier * d
-                                  for d in dist_dict['dist']]
+        dist_dict['dist'] = [self._multiplier * d for d in dist_dict['dist']]
 
         dist_dict['dist_loss'] = reduce(lambda d1, d2: d1 + d2,
                                         map(lambda wd: wd[0] * wd[1],
