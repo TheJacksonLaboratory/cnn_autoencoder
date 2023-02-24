@@ -73,7 +73,7 @@ config_args = [
         'nargs': '+',
         'help': 'Optimizer initial learning rate for each specific module (if '
                 'not given, the general learning rate will be used instead)',
-        'default': ['class=8e-4']
+        'default': ['class_model=8e-4']
         }
     },
     {'tasks': ['all'],
@@ -85,7 +85,7 @@ config_args = [
         'help': 'Optimizer initial learning rate for each specific auxiliar '
                 'module (if not given, the general learning rate will be used '
                 'instead)',
-        'default': ['class=1e-3']
+        'default': ['class_model=1e-3']
         }
     },
     {'tasks': ['all'],
@@ -118,7 +118,7 @@ config_args = [
         'help': 'Optimizer weight decay (L2 regularizer) for each specific '
                 'module (if not given, the general learning rate will be used '
                 'instead)',
-        'default': ['class=0.1']
+        'default': ['class_model=0.1']
         }
     },
     {'tasks': ['all'],
@@ -131,7 +131,7 @@ config_args = [
         'help': 'Optimizer weight decay (L2 regularizer) for each specific '
                 'auxiliar module (if not given, the general learning rate will'
                 ' be used instead)',
-        'default': ['class=0.0001']
+        'default': ['class_model=0.0001']
         }
     },
     {'tasks': ['all'],

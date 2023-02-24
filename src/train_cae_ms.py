@@ -495,6 +495,10 @@ def setup_optim(model, args):
     """
     optim_algo = optimization_algorithms[args.optim_algo]
 
+    # Parse the values of learning rate and weight decay for each module. These
+    # must be passed in the form `--mod-lrate class_model=0.1`, e.g. to assign
+    # an initial learning rate to the weights update of the `class` module of
+    # the neural network.
     modules_learning_rate = dict([(mlr.split('=')[0], float(mlr.split('=')[1]))
                                   for mlr in args.mod_learning_rate])
 
@@ -510,7 +514,6 @@ def setup_optim(model, args):
                                      for mwd in args.mod_aux_weight_decay])
 
     optim_groups = []
-    optim_aux_groups = []
     for k in model.keys():
         optim_aux_pars = {}
         optim_pars = {}
@@ -532,7 +535,7 @@ def setup_optim(model, args):
                 optim_pars['lr'] = module_lr
 
             if module_wd is not None:
-                optim_pars['wd'] = module_wd
+                optim_pars['weight_decay'] = module_wd
 
             optim_groups.append(optim_pars)
 
@@ -545,7 +548,7 @@ def setup_optim(model, args):
                     optim_aux_pars['lr'] = module_aux_lr
 
                 if module_wd is not None:
-                    optim_aux_pars['wd'] = module_aux_wd
+                    optim_aux_pars['weight_decay'] = module_aux_wd
 
                 optim_groups.append(optim_aux_pars)
 
