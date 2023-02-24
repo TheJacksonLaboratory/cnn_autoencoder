@@ -184,7 +184,6 @@ def valid(model, data, criterion, args):
 
 def train(model, train_data, valid_data, criterion, stopping_criteria,
           optimizer,
-          aux_optimizer,
           scheduler,
           args):
     """Training loop by steps.
@@ -206,8 +205,6 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
         Stopping criteria tracker for different problem statements
     optimizer : torch.optim.Optimizer
         The parameter's optimizer method
-    aux_optimizer : torch.optim.Optimizer
-        The entropy model symbols range optimizer method
     scheduler : torch.optim.lr_scheduler or None
         If provided, a learning rate scheduler for the optimizer
     args : Namespace
@@ -255,8 +252,6 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 sub_step += 1
                 # Start of training step
                 optimizer.zero_grad()
-                if aux_optimizer is not None:
-                    aux_optimizer.zero_grad()
 
                 output = forward_step(x, model)
                 t = t.to(output['y_q'].device)
@@ -267,22 +262,21 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 loss = torch.mean(loss_dict['loss'])
                 loss.backward()
 
+                if 'entropy_loss' in loss_dict:
+                    aux_loss = torch.mean(loss_dict['entropy_loss'])
+                    aux_loss.backward()
+
                 # Clip the gradients to prevent from exploding gradients
                 # problems
                 for k in model.keys():
                     if k in args.trainable_modules:
                         nn.utils.clip_grad_norm_(model[k].parameters(),
                                                  max_norm=1.0)
+
                 optimizer.step()
 
                 step_loss = loss.item()
                 sub_step_loss += step_loss
-
-                if 'entropy_loss' in loss_dict and aux_optimizer is not None:
-                    aux_loss = torch.mean(loss_dict['entropy_loss'])
-                    aux_loss.backward()
-                    aux_optimizer.step()
-
                 channel_e_history.append(loss_dict.get('channel_e', -1))
 
                 # When training with penalty on the energy of the compression
@@ -321,7 +315,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
 
                 q.set_description(
-                    log_info(i + 1, None, model, x, t, output,
+                    log_info(None, i + 1, None, model, x, t, output,
                              sum_loss / (i + 1),
                              loss_dict,
                              channel_e,
@@ -441,22 +435,27 @@ def setup_network(args):
 
 
 def setup_criteria(args, checkpoint=None):
-    """Setup a loss function for the neural network optimization, and training stopping criteria.
+    """Setup a loss function for the neural network optimization, and training
+    stopping criteria.
 
     Parameters
     ----------
     args : Namespace
-        The input arguments passed at running time. All the parameters are passed directly to the criteria constructors.
+        The input arguments passed at running time. All the parameters are
+        passed directly to the criteria constructors.
     checkpoint: Path or None
-        Path to a pretrained model. Only used when the Penalty B is active, in order to extract the channel index with highest energy.
+        Path to a pretrained model. Only used when the Penalty B is active, 
+        to extract the channel index with highest energy.
     Returns
     -------
     criterion : nn.Module
-        The loss function that is used as target to optimize the parameters of the nerual network.
+        The loss function that is used as target to optimize the parameters of
+        the nerual network.
 
     stopping_criteria : list[StoppingCriterion]
-        A list of stopping criteria. The first element is always set to stop the training after a fixed number of iterations.
-        Depending on the criterion used, additional stopping criteria is set.        
+        A list of stopping criteria. The first element is always set to stop
+        the training after a fixed number of iterations.
+        Depending on the criterion used, additional stopping criteria is set.
     """
 
     # Early stopping criterion:
@@ -494,33 +493,68 @@ def setup_optim(model, args):
     scheduler : torch.optim.lr_scheduler
         The learning rate scheduler for the optimizer
     """
-
-    # By now, only the ADAM optimizer is used
     optim_algo = optimization_algorithms[args.optim_algo]
 
-    net_pars = []
-    aux_pars = []
+    modules_learning_rate = dict([(mlr.split('=')[0], float(mlr.split('=')[1]))
+                                  for mlr in args.mod_learning_rate])
 
+    modules_weight_decay = dict([(mwd.split('=')[0], float(mwd.split('=')[1]))
+                                  for mwd in args.mod_weight_decay])
+
+    modules_aux_learning_rate = dict([(mlr.split('=')[0],
+                                       float(mlr.split('=')[1]))
+                                      for mlr in args.mod_aux_learning_rate])
+
+    modules_aux_weight_decay = dict([(mwd.split('=')[0],
+                                      float(mwd.split('=')[1]))
+                                     for mwd in args.mod_aux_weight_decay])
+
+    optim_groups = []
+    optim_aux_groups = []
     for k in model.keys():
+        optim_aux_pars = {}
+        optim_pars = {}
+        pars = []
+        aux_pars = []
+
         if k in args.trainable_modules:
             for par_name, par in model[k].named_parameters():
                 if 'quantiles' in par_name or 'aux' in par_name:
                     aux_pars.append(par)
                 else:
-                    net_pars.append(par)
+                    pars.append(par)
+
+            optim_pars['params'] = pars
+            module_lr = modules_learning_rate.get(k, None)
+            module_wd = modules_weight_decay.get(k, None)
+
+            if module_lr is not None:
+                optim_pars['lr'] = module_lr
+
+            if module_wd is not None:
+                optim_pars['wd'] = module_wd
+
+            optim_groups.append(optim_pars)
+
+            if len(aux_pars) > 0:
+                optim_aux_pars['params'] = aux_pars
+                module_aux_lr = modules_aux_learning_rate.get(k, None)
+                module_aux_wd = modules_aux_weight_decay.get(k, None)
+
+                if module_aux_lr is not None:
+                    optim_aux_pars['lr'] = module_aux_lr
+
+                if module_wd is not None:
+                    optim_aux_pars['wd'] = module_aux_wd
+
+                optim_groups.append(optim_aux_pars)
+
         else:
             model[k].eval()
 
-    optimizer = optim_algo(params=net_pars,
+    optimizer = optim_algo(optim_groups,
                            lr=args.learning_rate,
                            weight_decay=args.weight_decay)
-
-    if len(aux_pars):
-        aux_optimizer = optim_algo(params=aux_pars,
-                                lr=args.aux_learning_rate,
-                                weight_decay=args.aux_weight_decay)
-    else:
-        aux_optimizer = None
 
     # Only the the reduce on plateau, or none at all scheduler are used
     if args.scheduler_type == 'None':
@@ -555,7 +589,7 @@ def setup_optim(model, args):
         raise ValueError('Scheduler \"%s\" ' % args.scheduler_type
                          + 'is not implemented')
 
-    return optimizer, aux_optimizer, scheduler
+    return optimizer, scheduler
 
 
 def resume_checkpoint(model, optimizer, scheduler, checkpoint, gpu=True,
@@ -619,7 +653,7 @@ def main(args):
 
     model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args, checkpoint=args.resume)
-    optimizer, aux_optimizer, scheduler = setup_optim(model, args)
+    optimizer, scheduler = setup_optim(model, args)
 
     if args.resume is not None:
         resume_checkpoint(model, optimizer, scheduler, args.resume,
@@ -649,7 +683,6 @@ def main(args):
 
     train(model, train_data, valid_data, criterion, stopping_criteria,
           optimizer,
-          aux_optimizer,
           scheduler,
           args)
 

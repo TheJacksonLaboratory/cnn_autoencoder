@@ -24,26 +24,6 @@ config_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
-        'flags': ('-lr', '--lrate'),
-        'details': {
-        'dest': 'learning_rate',
-        'type': float,
-        'help': 'Optimizer initial learning rate',
-        'default': 1e-4
-        }
-    },
-    {'tasks': ['all'],
-        'modes': ['training'],
-        'flags': ('-alr', '--auxlrate'),
-        'details': {
-        'dest': 'aux_learning_rate',
-        'type': float,
-        'help': 'Auxiliar optimizer initial learning rate',
-        'default': 1e-3
-        }
-    },
-    {'tasks': ['all'],
-        'modes': ['training'],
         'flags': ('-opt', '--optimizer'),
         'details': {
         'dest': 'optim_algo',
@@ -66,6 +46,50 @@ config_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
+        'flags': ('-lr', '--lrate'),
+        'details': {
+        'dest': 'learning_rate',
+        'type': float,
+        'help': 'Optimizer initial learning rate',
+        'default': 1e-4
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-alr', '--aux-lrate'),
+        'details': {
+        'dest': 'aux_learning_rate',
+        'type': float,
+        'help': 'Auxiliar optimizer initial learning rate',
+        'default': 1e-3
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-mlr', '--mod-lrate'),
+        'details': {
+        'dest': 'mod_learning_rate',
+        'type': str,
+        'nargs': '+',
+        'help': 'Optimizer initial learning rate for each specific module (if '
+                'not given, the general learning rate will be used instead)',
+        'default': ['class=8e-4']
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-malr', '--mod-aux-lrate'),
+        'details': {
+        'dest': 'mod_aux_learning_rate',
+        'type': float,
+        'help': 'Optimizer initial learning rate for each specific auxiliar '
+                'module (if not given, the general learning rate will be used '
+                'instead)',
+        'default': ['class=1e-3']
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
         'flags': ('-wd', '--wdecay'),
         'details': {
         'dest': 'weight_decay',
@@ -76,12 +100,38 @@ config_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
-        'flags': ('-awd', '--auxwdecay'),
+        'flags': ('-awd', '--aux-wdecay'),
         'details': {
         'dest': 'aux_weight_decay',
         'type': float,
         'help': 'Auxiliar optimizer weight decay (L2 regularizer)',
         'default': 0
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-mwd', '--mod-wdecay'),
+        'details': {
+        'dest': 'mod_weight_decay',
+        'type': str,
+        'nargs': '+',
+        'help': 'Optimizer weight decay (L2 regularizer) for each specific '
+                'module (if not given, the general learning rate will be used '
+                'instead)',
+        'default': ['class=0.1']
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-mawd', '--mod-aux-wdecay'),
+        'details': {
+        'dest': 'mod_aux_weight_decay',
+        'type': str,
+        'nargs': '+',
+        'help': 'Optimizer weight decay (L2 regularizer) for each specific '
+                'auxiliar module (if not given, the general learning rate will'
+                ' be used instead)',
+        'default': ['class=0.0001']
         }
     },
     {'tasks': ['all'],
