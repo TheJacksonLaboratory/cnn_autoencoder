@@ -143,7 +143,7 @@ task_args = [
         'modes': ['training'],
         'flags': ('-ccp', '--class-cut-poisition'),
         'details': {
-        'dest': 'cut_poisition',
+        'dest': 'cut_position',
         'type': int,
         'help': 'Position on the architecture where to insert the bottleneck',
         'default': None

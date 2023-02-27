@@ -43,11 +43,37 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
     if 'dist' in loss_dict:
         log_string += ' D=[{}]'.format(','.join(['%0.4f' % d.item()
                                                 for d in loss_dict['dist']]))
+        log_string += ' Xo={:.2f},{:.2f},std={:.2f}'.format(
+            inputs.min(),
+            inputs.max(),
+            inputs.std())
+
+        if isinstance(output['x_r'], list):
+            log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(
+                output['x_r'][0].detach().min(),
+                output['x_r'][0].detach().max())
+        else:
+            log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(
+                output['x_r'].detach().min(),
+                output['x_r'].detach().max(),
+                output['x_r'].detach().std())
+
     if 'rate_loss' in loss_dict:
         log_string += ' R={:.2f}'.format(loss_dict['rate_loss'].item())
 
+        log_string += ' BN={:.2f},{:.2f} P={:.2f},{:.2f}'.format(
+            output['y'].detach().min(),
+            output['y'].detach().max(),
+            output['p_y'].detach().min(),
+            output['p_y'].detach().max())
+
     if 'entropy_loss' in loss_dict:
         log_string += ' A={:.3f}'.format(loss_dict['entropy_loss'].item())
+        quantiles = model['fact_ent'].module.quantiles.detach()
+        quantiles_info = (quantiles[:, 0, 0].median(),
+                        quantiles[:, 0, 1].median(),
+                        quantiles[:, 0, 2].median())
+        log_string += ' QP={:.2f},{:.2f},{:.2f}'.format(*quantiles_info)
 
     if 'energy' in loss_dict:
         log_string += ' E={:.3f}'.format(loss_dict['energy'].item())
@@ -66,35 +92,6 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
         else:
             for k, m in class_metrics.items():
                 log_string += ' {}:{:.3f}'.format(k, m)
-
-    log_string += ' BN={:.2f},{:.2f} P={:.2f},{:.2f}'.format(
-        output['y'].detach().min(),
-        output['y'].detach().max(),
-        output['p_y'].detach().min(),
-        output['p_y'].detach().max())
-
-    quantiles = model['fact_ent'].module.quantiles.detach()
-    quantiles_info = (quantiles[:, 0, 0].median(),
-                      quantiles[:, 0, 1].median(),
-                      quantiles[:, 0, 2].median())
-
-    log_string += ' QP={:.2f},{:.2f},{:.2f}'.format(*quantiles_info)
-
-    log_string += ' Xo={:.2f},{:.2f},std={:.2f}'.format(
-        inputs.min(),
-        inputs.max(),
-        inputs.std())
-
-    if isinstance(output['x_r'], list):
-        log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(
-            output['x_r'][0].detach().min(),
-            output['x_r'][0].detach().max())
-    else:
-        log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(
-            output['x_r'].detach().min(),
-            output['x_r'].detach().max(),
-            output['x_r'].detach().std())
-
 
     if channel_e >= 0:
         log_string += ' Ch={}'.format(int(channel_e))
@@ -345,7 +342,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
             if (not keep_training
               or (step >= args.early_warmup
-                  and (step-args.early_warmup) % args.checkpoint_steps == 0)):
+                  and (step-args.early_warmup) % args.checkpoint_steps == 0)
+                  and step > 1):
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
