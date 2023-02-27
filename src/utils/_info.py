@@ -23,7 +23,8 @@ OPTIMIZERS = ['Adam',
 
 SCHEDULERS = ['None',
               'ReduceOnPlateau',
-              'StepLR']
+              'StepLR',
+              'ExponentialLR']
 
 CAE_MODELS = ['AutoEncoder']
 

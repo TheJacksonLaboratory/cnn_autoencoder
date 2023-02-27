@@ -11,7 +11,6 @@ from ._critargs import criteria_args
 from ._dataargs import data_args
 from ._taskargs import task_args
 
-
 def override_config_file(parser):
     args = parser.parse_args()
 
@@ -70,3 +69,22 @@ def get_args(task, mode, parser_only=False):
     args.task = task
 
     return args
+
+
+def parse_typed_arguments(args):
+    parsed_args = {}
+
+    for arg in args:
+        arg_name, arg_type_val = arg.split("=")
+        arg_type, arg_val = arg_type_val.split(":")
+
+        if arg_type == 'int':
+            arg_val = int(arg_val)
+        elif arg_type == 'float':
+            arg_val = float(arg_val)
+        else:
+            arg_val = arg_val
+    
+        parsed_args[arg_name] = arg_val
+
+    return parsed_args

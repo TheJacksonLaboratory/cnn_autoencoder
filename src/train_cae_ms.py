@@ -317,7 +317,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             # End of training step
             if args.progress_bar:
                 if scheduler is not None:
-                    current_lr = scheduler.get_lr()
+                    current_lr = scheduler.get_last_lr()
                 else:
                     current_lr = None
 
@@ -335,7 +335,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
                 if scheduler is not None:
-                    current_lr = scheduler.get_lr()
+                    current_lr = scheduler.get_last_lr()
                 else:
                     current_lr = None
 
@@ -556,6 +556,7 @@ def setup_optim(model, args):
 
             if module_lr is not None:
                 optim_pars['lr'] = module_lr
+                optim_pars['initial_lr'] = module_lr
 
             if module_wd is not None:
                 optim_pars['weight_decay'] = module_wd
@@ -569,6 +570,7 @@ def setup_optim(model, args):
 
                 if module_aux_lr is not None:
                     optim_aux_pars['lr'] = module_aux_lr
+                    optim_aux_pars['initial_lr'] = module_aux_lr
 
                 if module_wd is not None:
                     optim_aux_pars['weight_decay'] = module_aux_wd
@@ -583,42 +585,22 @@ def setup_optim(model, args):
                            weight_decay=args.weight_decay)
 
     # Only the the reduce on plateau, or none at all scheduler are used
-    if args.scheduler_type == 'None':
+    if args.scheduler_type is None or args.scheduler_type.lower() == 'none':
         scheduler = None
 
-    elif args.scheduler_type in scheduler_options.keys():
-        if args.scheduler_type == "LinearLR":
-            scheduler_args = dict(start_factor=0.3333333333333333,
-                                  end_factor=1.0,
-                                  total_iters=5,
-                                  last_epoch=-1,
-                                  verbose=False)
-
-        elif args.scheduler_type == "ReduceOnPlateau":
-            scheduler_args = dict(mode='min', factor=0.1, patience=10,
-                                  threshold=0.0001,
-                                  threshold_mode='rel',
-                                  cooldown=0,
-                                  min_lr=0,
-                                  eps=1e-08,
-                                  verbose=False)
-
-        elif args.scheduler_type == "StepLR":
-            scheduler_args = dict(gamma=0.1, last_epoch=- 1, verbose=False)
-
-        elif args.scheduler_type == "ExponentialLR":
-            scheduler_args = dict(gamma=0.999,
-                                  last_epoch=-1,
-                                  verbose=False)
-
-        else:
-            scheduler_args = {}
-
-        scheduler = scheduler_options[args.scheduler_type](optimizer=optimizer,
-                                                           **scheduler_args)
     else:
-        raise ValueError('Scheduler \"%s\" ' % args.scheduler_type
-                         + 'is not implemented')
+        scheduler_type = args.scheduler_type.split(',')
+        scheduler_type, scheduler_args = scheduler_type[0], scheduler_type[1:]
+
+
+        if scheduler_type in scheduler_options:
+            scheduler_args = utils.parse_typed_arguments(scheduler_args)
+
+            scheduler = scheduler_options[scheduler_type](
+                optimizer=optimizer, **scheduler_args)
+        else:
+            raise ValueError('Scheduler \"%s\" ' % scheduler_type
+                             + 'is not implemented')
 
     return optimizer, scheduler
 
