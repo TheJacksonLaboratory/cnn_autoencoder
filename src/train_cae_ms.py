@@ -18,7 +18,8 @@ optimization_algorithms = {"Adam": optim.Adam,
 
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
                      "StepLR": optim.lr_scheduler.StepLR,
-                     "LinearLR": optim.lr_scheduler.LinearLR}
+                     "LinearLR": optim.lr_scheduler.LinearLR,
+                     "ExponentialLR": optim.lr_scheduler.ExponentialLR}
 
 
 def log_info(step, sub_step, len_data, model, inputs, targets, output,
@@ -26,6 +27,7 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
              loss_dict,
              channel_e,
              step_type='Training',
+             lr=None,
              progress_bar=False):
     if step is not None:
         log_string = '[{:06d}]'.format(step)
@@ -96,6 +98,9 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
     if channel_e >= 0:
         log_string += ' Ch={}'.format(int(channel_e))
 
+    if lr is not None:
+        log_string += ' lr={}'.format(lr)
+
     return log_string
 
 
@@ -153,7 +158,6 @@ def valid(model, data, criterion, args):
             loss = torch.mean(loss_dict['loss'])
             sum_loss += loss.item()
 
-
             channel_e_history.append(loss_dict['channel_e'])
             channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
 
@@ -164,6 +168,7 @@ def valid(model, data, criterion, args):
                              loss_dict,
                              channel_e,
                              step_type='Validation',
+                             lr=None,
                              progress_bar=True))
                 q.update()
 
@@ -174,6 +179,7 @@ def valid(model, data, criterion, args):
                                       loss_dict,
                                       channel_e,
                                       step_type='Validation',
+                                      lr=None,
                                       progress_bar=False))
 
     if args.progress_bar:
@@ -291,6 +297,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                                         loss_dict,
                                         channel_e,
                                         step_type='Sub-iter',
+                                        lr=None,
                                         progress_bar=True))
 
                         q_penalty.update()
@@ -307,25 +314,31 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
             sum_loss += sub_step_loss / sub_step
 
-            if (scheduler is not None
-               and 'metrics' not in signature(scheduler.step).parameters):
-                scheduler.step()
-
             # End of training step
             if args.progress_bar:
-                channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
+                if scheduler is not None:
+                    current_lr = scheduler.get_lr()
+                else:
+                    current_lr = None
 
+                channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
                 q.set_description(
                     log_info(None, i + 1, None, model, x, t, output,
                              sum_loss / (i + 1),
                              loss_dict,
                              channel_e,
                              step_type='Training',
+                             lr=current_lr,
                              progress_bar=True))
                 q.update()
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
+                if scheduler is not None:
+                    current_lr = scheduler.get_lr()
+                else:
+                    current_lr = None
+
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
 
                 logger.debug(log_info(step, i + 1, train_data_size, model, x,
@@ -335,6 +348,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                                       loss_dict,
                                       channel_e,
                                       step_type='Training',
+                                      lr=current_lr,
                                       progress_bar=False))
 
             # Checkpoint step
@@ -349,9 +363,15 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 # Evaluate the model with the validation set
                 valid_loss = valid(model, valid_data, criterion, args)
 
-                for k in model.keys():
-                    if k in args.trainable_modules:
-                        model[k].train()
+                for k in args.trainable_modules:
+                    model[k].train()
+
+        
+                if scheduler is not None:
+                    if 'metrics' in signature(scheduler.step).parameters:
+                        scheduler.step(valid_loss)
+                    else:
+                        scheduler.step()
 
                 stopping_info = ';'.join(map(lambda k_sc:\
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
@@ -394,6 +414,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 logging.info('\n**** Stopping criteria met: '
                              'Interrupting training ****')
                 break
+
     else:
         completed = True
 
@@ -584,6 +605,11 @@ def setup_optim(model, args):
 
         elif args.scheduler_type == "StepLR":
             scheduler_args = dict(gamma=0.1, last_epoch=- 1, verbose=False)
+
+        elif args.scheduler_type == "ExponentialLR":
+            scheduler_args = dict(gamma=0.999,
+                                  last_epoch=-1,
+                                  verbose=False)
 
         else:
             scheduler_args = {}
