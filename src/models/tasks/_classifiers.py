@@ -20,6 +20,8 @@ class EmptyClassifierHead(nn.Module):
 
 
 class ViTClassifierHead(vision_transformer.VisionTransformer):
+    """Implementation of the classifier head from the ViT-B-16 architecture.
+    """
     def __init__(self, channels_bn=768, cut_poisition=6, patch_size=128,
                  compression_level=4,
                  num_classes=1000,
@@ -49,6 +51,10 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
         # layers of the ViT. For that reason, the projection layer is not
         # longer needed. And the number of encoder layers are reduced too.
         if cut_poisition > 0:
+            # self.conv_proj = nn.Conv2d(channels_bn, 768, kernel_size=1,
+            #                            stride=1,
+            #                            padding=0,
+            #                            bias=False)
             self.conv_proj = nn.Identity()
 
     def forward(self, x):
@@ -56,9 +62,56 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
         return pred, None
 
 
+class ResNetClassifierHead(resnet.ResNet):
+    """Implementation of the classifier head from the ResNet-152 architecture.
+    """
+    def __init__(self, channels_bn=768, cut_poisition=3, patch_size=128,
+                 compression_level=4,
+                 num_classes=1000,
+                 **kwargs):
+
+        if cut_poisition is None:
+            cut_poisition = compression_level
+
+        super(ResNetClassifierHead, self).__init__(block=resnet.Bottleneck,
+                                                   norm_layer=nn.BatchNorm2d,
+                                                   layers=[3, 8, 36, 3],
+                                                   num_classes=num_classes)
+
+        out_channels = [64, 64 * 4, 128 * 4, 256 * 4, 512 * 4]
+
+        if cut_poisition > 0:
+            self.conv1 = nn.Conv2d(channels_bn,
+                                   out_channels[cut_poisition - 1],
+                                   kernel_size=1,
+                                   stride=1,
+                                   padding=0,
+                                   bias=False)
+            self.bn1 = nn.Identity()
+            self.relu = nn.Identity()
+            self.maxpool = nn.Identity()
+
+        if cut_poisition > 1:
+            self.layer1 = nn.Identity()
+
+        if cut_poisition > 2:
+            self.layer2 = nn.Identity()
+
+        if cut_poisition > 3:
+            self.layer3 = nn.Identity()
+
+        if cut_poisition > 4:
+            self.layer4 = nn.Identity()
+
+    def forward(self, x):
+        y = self._forward_impl(x)
+        return y, None
+
+
 CLASS_MODELS = {
     "Empty": EmptyClassifierHead,
-    "ViT": ViTClassifierHead
+    "ViT": ViTClassifierHead,
+    "ResNet": ResNetClassifierHead,
     }
 
 
@@ -88,7 +141,7 @@ if __name__ == '__main__':
         x.append(im)
     x = torch.cat(x, dim=0)
 
-    net = ViTClassifierHead(cut_poisition=0, patch_size=256)
+    net = ResNetClassifierHead(cut_poisition=0, patch_size=256)
 
     net.eval()
     with torch.no_grad():

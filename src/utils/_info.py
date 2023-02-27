@@ -28,4 +28,5 @@ SCHEDULERS = ['None',
 CAE_MODELS = ['AutoEncoder']
 
 CLASS_MODELS = ['Empty',
-                'ViT']
+                'ViT',
+                'ResNet']

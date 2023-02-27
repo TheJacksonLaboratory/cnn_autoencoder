@@ -59,8 +59,13 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
                                                     targets,
                                                     top_k=5,
                                                     num_classes=num_classes)
-        for k, m in class_metrics.items():
-            log_string += ' {}:{:.3f}'.format(k, m)
+        if progress_bar:
+            log_string += ' acc:{:.3f} top5:{:.3f}'.format(
+                class_metrics['acc'],
+                class_metrics['acc_top'])
+        else:
+            for k, m in class_metrics.items():
+                log_string += ' {}:{:.3f}'.format(k, m)
 
     log_string += ' BN={:.2f},{:.2f} P={:.2f},{:.2f}'.format(
         output['y'].detach().min(),
@@ -268,10 +273,9 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
                 # Clip the gradients to prevent from exploding gradients
                 # problems
-                for k in model.keys():
-                    if k in args.trainable_modules:
-                        nn.utils.clip_grad_norm_(model[k].parameters(),
-                                                 max_norm=1.0)
+                for k in args.trainable_modules:
+                    nn.utils.clip_grad_norm_(model[k].parameters(),
+                                             max_norm=1.0)
 
                 optimizer.step()
 
