@@ -39,6 +39,14 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.01)
 
 
+class EmptyBottleneck(nn.Module):
+    def __init__(self, **kwargs):
+        super(EmptyBottleneck, self).__init__()
+
+    def forward(self, x):
+        return x, x
+
+
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
@@ -312,51 +320,41 @@ class Analyzer(nn.Module):
         else:
             downsampling_op = DownsamplingUnit
 
-        down_track = [downsampling_op(channels_in=channels_org,
-                                      channels_out=channels_net,
-                                      kernel_size=kernel_size,
-                                      groups=groups,
-                                      batch_norm=batch_norm,
-                                      dropout=dropout,
-                                      bias=bias,
-                                      act_layer_type=act_layer_type)]
+        down_track = []
+        prev_channels_out = channels_org
+        curr_channels_out = channels_net
 
-        down_track += [downsampling_op(channels_in=channels_net
-                                       * channels_expansion ** i,
-                                       channels_out=channels_net
-                                       * channels_expansion ** (i+1),
-                                       kernel_size=kernel_size,
-                                       groups=groups,
-                                       batch_norm=batch_norm,
-                                       dropout=dropout,
-                                       bias=bias,
-                                       act_layer_type=act_layer_type)
-                      for i in range(1, compression_level - 1)]
+        for _ in range(compression_level - 1):
+            down_track.append(downsampling_op(channels_in=prev_channels_out,
+                                              channels_out=curr_channels_out,
+                                              kernel_size=kernel_size,
+                                              groups=groups,
+                                              batch_norm=batch_norm,
+                                              dropout=dropout,
+                                              bias=bias,
+                                              act_layer_type=act_layer_type))
 
-        # Final convolution in the analysis track
-        down_track.append(nn.Conv2d(channels_net
-                                    * channels_expansion**compression_level,
-                                    channels_bn,
-                                    kernel_size=kernel_size,
-                                    stride=2,
-                                    padding=kernel_size//2,
-                                    dilation=1,
-                                    groups=channels_bn if groups else 1,
-                                    bias=bias,
-                                    padding_mode='reflect'))
+            prev_channels_out = curr_channels_out
+            curr_channels_out = prev_channels_out * channels_expansion
 
-        # down_track.append(nn.Hardtanh(min_val=-127, max_val=127,
-        #                               inplace=False))
+        if compression_level > 0:
+            down_track.append(downsampling_op(channels_in=prev_channels_out,
+                                              channels_out=channels_bn,
+                                              kernel_size=kernel_size,
+                                              groups=groups,
+                                              batch_norm=batch_norm,
+                                              dropout=dropout,
+                                              bias=bias,
+                                              act_layer_type=None))
+        else:
+            down_track.append(nn.Identity())
 
         self.analysis_track = nn.Sequential(*down_track)
-
-        # self.quantizer = Quantizer()
 
         self.apply(initialize_weights)
 
     def forward(self, x):
         y = self.analysis_track(x)
-        # y_q = self.quantizer(y)
         return y
 
 
@@ -379,37 +377,35 @@ class Synthesizer(nn.Module):
         else:
             upsampling_op = UpsamplingUnit
 
-        # Initial convolution in the synthesis track
-        up_track = [upsampling_op(channels_in=channels_bn,
-                                  channels_out=channels_net
-                                  * channels_expansion**compression_level,
-                                  kernel_size=kernel_size,
-                                  groups=groups,
-                                  batch_norm=batch_norm,
-                                  dropout=dropout,
-                                  bias=bias,
-                                  act_layer_type=act_layer_type)]
+        up_track = []
+        prev_channels_out = channels_bn
+        curr_channels_out = (channels_net
+                             *channels_expansion ** compression_level)
 
-        up_track += [upsampling_op(channels_in=channels_net
-                                   * channels_expansion**(i+1),
-                                   channels_out=channels_net
-                                   * channels_expansion**i,
-                                   kernel_size=kernel_size,
-                                   groups=groups,
-                                   batch_norm=batch_norm,
-                                   dropout=dropout,
-                                   bias=bias,
-                                   act_layer_type=act_layer_type)
-                     for i in reversed(range(1, compression_level - 1))]
+        for _ in range(compression_level - 1):
+            up_track.append(upsampling_op(channels_in=prev_channels_out,
+                                          channels_out=curr_channels_out,
+                                          kernel_size=kernel_size,
+                                          groups=groups,
+                                          batch_norm=batch_norm,
+                                          dropout=dropout,
+                                          bias=bias,
+                                          act_layer_type=act_layer_type))
 
-        up_track += [upsampling_op(channels_in=channels_net,
-                                   channels_out=channels_org,
-                                   kernel_size=kernel_size,
-                                   groups=groups,
-                                   batch_norm=batch_norm,
-                                   dropout=dropout,
-                                   bias=bias,
-                                   act_layer_type=None)]
+            prev_channels_out = curr_channels_out
+            curr_channels_out = prev_channels_out // channels_expansion
+
+        if compression_level > 0:
+            up_track.append(upsampling_op(channels_in=prev_channels_out,
+                                          channels_out=channels_org,
+                                          kernel_size=kernel_size,
+                                          groups=groups,
+                                          batch_norm=batch_norm,
+                                          dropout=dropout,
+                                          bias=bias,
+                                          act_layer_type=None))
+        else:
+            up_track.append(nn.Identity())
 
         # Final color reconvertion
         self.synthesis_track = nn.Sequential(*up_track)
@@ -435,25 +431,9 @@ class Synthesizer(nn.Module):
 
         self.apply(initialize_weights)
 
-    def inflate(self, x, color=True):
-        x_brg = []
-        # DataParallel only sends 'x' to the GPU memory when the forward method
-        # is used and not for other methods
-        fx = x.clone().to(self.synthesis_track[0].weight.device)
-        for layer in self.synthesis_track:
-            fx = layer(fx)
-            x_brg.append(fx)
-
-        if not color:
-            return x_brg
-
-        fx = self.color_layers[-1](fx)
-        return fx, x_brg
-
     def forward(self, x):
         x = self.synthesis_track(x)
         x = self.color_layers[-1](x)
-        # x.clip_(self._min_range, self._max_range)
         return x
 
 
@@ -476,7 +456,6 @@ class SynthesizerInflate(Synthesizer):
                                          self.color_layers):
             fx = up_layer(fx)
             x_r = color_layer(fx)
-            # x_r.clip_(self._min_range, self._max_range)
             x_r_ms.insert(0, x_r)
 
         return x_r_ms
@@ -563,25 +542,30 @@ class AutoEncoder(nn.Module):
         return x_r, y, p_y
 
 
-def setup_autoencoder_modules(channels_bn=16, K=4, r=3,
+def setup_autoencoder_modules(channels_bn=192, compression_level=4, K=4, r=3,
                               multiscale_analysis=False,
                               **kwargs):
 
-    encoder = Analyzer(channels_bn=channels_bn, **kwargs)
+    encoder = Analyzer(channels_bn=channels_bn,
+                       compression_level=compression_level,
+                       **kwargs)
 
     if multiscale_analysis:
         synthesizer_class = SynthesizerInflate
     else:
         synthesizer_class = Synthesizer
 
-    decoder = synthesizer_class(channels_bn=channels_bn, 
+    decoder = synthesizer_class(channels_bn=channels_bn,
+                                compression_level=compression_level,
                                 **kwargs)
 
-    fact_ent = EntropyBottleneck(channels=channels_bn, 
-                                           filters=[r] * K)
+    if compression_level > 0:
+        fact_ent = EntropyBottleneck(channels=channels_bn,
+                                     filters=[r] * K)
+    else:
+        fact_ent = EmptyBottleneck()
 
-    return dict(encoder=encoder, decoder=decoder,
-                fact_ent=fact_ent)
+    return dict(encoder=encoder, decoder=decoder, fact_ent=fact_ent)
 
 
 CAE_MODELS = {

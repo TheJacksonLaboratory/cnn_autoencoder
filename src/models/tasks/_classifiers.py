@@ -87,8 +87,6 @@ class ResNetClassifierHead(resnet.ResNet):
                                    stride=1,
                                    padding=0,
                                    bias=False)
-            self.bn1 = nn.Identity()
-            self.relu = nn.Identity()
             self.maxpool = nn.Identity()
 
         if cut_position > 1:
