@@ -42,7 +42,7 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
             patch_size=vit_patch_size,
             num_layers=12 - cut_position,
             num_heads=12,
-            hidden_dim=channels_bn,
+            hidden_dim=768,
             mlp_dim=3072,
             num_classes=num_classes)
 
@@ -51,11 +51,11 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
         # layers of the ViT. For that reason, the projection layer is not
         # longer needed. And the number of encoder layers are reduced too.
         if cut_position > 0:
-            # self.conv_proj = nn.Conv2d(channels_bn, 768, kernel_size=1,
-            #                            stride=1,
-            #                            padding=0,
-            #                            bias=False)
-            self.conv_proj = nn.Identity()
+            self.conv_proj = nn.Conv2d(channels_bn, 768, kernel_size=1,
+                                       stride=1,
+                                       padding=0,
+                                       bias=False)
+            # self.conv_proj = nn.Identity()
 
     def forward(self, x):
         pred = super().forward(x)

@@ -103,7 +103,7 @@ class ResidualDownsamplingUnit(nn.Module):
         res_model.append(nn.Conv2d(channels_in, channels_in, 
                                     kernel_size=kernel_size,
                                     stride=1,
-                                    pading=kernel_size//2,
+                                    padding=kernel_size//2,
                                     dilation=1,
                                     groups=channels_in if groups else 1,
                                     bias=bias,
@@ -128,8 +128,11 @@ class ResidualDownsamplingUnit(nn.Module):
             if batch_norm:
                 res_model.append(nn.BatchNorm2d(channels_in, affine=True))
 
-        model = [_define_act_layer(act_layer_type, channels_out, 
-                                   track='analysis')]
+        model = []
+        
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
+            model.append(_define_act_layer(act_layer_type, channels_out, 
+                                           track='analysis'))
 
         model.append(nn.Conv2d(channels_in, channels_out, 
                                kernel_size=kernel_size,
@@ -171,14 +174,15 @@ class UpsamplingUnit(nn.Module):
         model = []
 
         if act_layer_type is not None and act_layer_type not in ['GDN']:
-            model.append(nn.Conv2d(channels_in, channels_in,
+            model.append(
+                nn.ConvTranspose2d(channels_in, channels_in,
                                    kernel_size=kernel_size,
                                    stride=1,
                                    padding=kernel_size//2,
+                                   output_padding=0,
                                    dilation=1,
                                    groups=channels_in if groups else 1,
-                                   bias=bias,
-                                   padding_mode='reflect'))
+                                   bias=bias))
 
             if batch_norm:
                 model.append(nn.BatchNorm2d(channels_in, affine=True))
@@ -222,14 +226,15 @@ class ResidualUpsamplingUnit(nn.Module):
 
         res_model = []
 
-        res_model.append(nn.Conv2d(channels_in, channels_in,
-                                   kernel_size=kernel_size,
-                                   stride=1,
-                                   padding=kernel_size//2,
-                                   dilation=1,
-                                   groups=channels_in if groups else 1,
-                                   bias=bias,
-                                   padding_mode='reflect'))
+        res_model.append(
+            nn.ConvTranspose2d(channels_in,channels_in,
+                               kernel_size=kernel_size,
+                               stride=1,
+                               padding=kernel_size//2,
+                               output_padding=0,
+                               dilation=1,
+                               groups=channels_in if groups else 1,
+                               bias=bias))
 
         if batch_norm:
             res_model.append(nn.BatchNorm2d(channels_in, affine=True))
@@ -238,14 +243,15 @@ class ResidualUpsamplingUnit(nn.Module):
                                             track='synthesis'))
 
         if act_layer_type is not None and act_layer_type not in ['GDN']:
-            res_model.append(nn.Conv2d(channels_in, channels_in,
-                                       kernel_size=kernel_size,
-                                       stride=1,
-                                       padding=kernel_size//2,
-                                       dilation=1,
-                                       groups=channels_in if groups else 1,
-                                       bias=bias,
-                                       padding_mode='reflect'))
+            res_model.append(
+                nn.ConvTranspose2d(channels_in, channels_in,
+                                   kernel_size=kernel_size,
+                                   stride=1,
+                                   padding=kernel_size//2,
+                                   output_padding=0,
+                                   dilation=1,
+                                   groups=channels_in if groups else 1,
+                                   bias=bias))
 
             if batch_norm:
                 res_model.append(nn.BatchNorm2d(channels_in, affine=True))
@@ -253,8 +259,10 @@ class ResidualUpsamplingUnit(nn.Module):
             res_model.append(_define_act_layer(act_layer_type, channels_in,
                                                track='synthesis'))
 
-        model = [_define_act_layer(act_layer_type, channels_in,
-                                   track='synthesis')]
+        model = []
+        if act_layer_type is not None and act_layer_type not in ['GDN']:
+            model.append(_define_act_layer(act_layer_type, channels_in,
+                                           track='synthesis'))
 
         model.append(nn.ConvTranspose2d(channels_in, channels_out,
                                         kernel_size=kernel_size,
@@ -281,7 +289,7 @@ class ResidualUpsamplingUnit(nn.Module):
     def forward(self, x):
         fx = self.res_model(x)
         fx = fx + x
-        fx = self.model(x)
+        fx = self.model(fx)
         return fx
 
 

@@ -40,8 +40,7 @@ config_args = [
         'dest': 'scheduler_type',
         'type': str,
         'help': 'Learning rate scheduler for the optimizer method',
-        'default': SCHEDULERS[0],
-        'choices': SCHEDULERS
+        'default': None
         }
     },
     {'tasks': ['all'],
