@@ -19,7 +19,8 @@ optimization_algorithms = {"Adam": optim.Adam,
 scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
                      "StepLR": optim.lr_scheduler.StepLR,
                      "LinearLR": optim.lr_scheduler.LinearLR,
-                     "ExponentialLR": optim.lr_scheduler.ExponentialLR}
+                     "ExponentialLR": optim.lr_scheduler.ExponentialLR,
+                     "CosineAnnealingLR": optim.lr_scheduler.CosineAnnealingLR}
 
 
 def log_info(step, sub_step, len_data, model, inputs, targets, output,

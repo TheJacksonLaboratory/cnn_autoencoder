@@ -35,7 +35,7 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
 
         else:
             image_size = patch_size
-            vit_patch_size = 2**compression_level
+            vit_patch_size = 16
 
         super(ViTClassifierHead, self).__init__(
             image_size=image_size,
