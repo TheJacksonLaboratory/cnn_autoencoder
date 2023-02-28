@@ -73,7 +73,8 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
 class ResNetClassifierHead(resnet.ResNet):
     """Implementation of the classifier head from the ResNet-152 architecture.
     """
-    def __init__(self, channels_bn=768, cut_position=3, patch_size=128,
+    def __init__(self, channels_org=3, channels_bn=768, cut_position=3,
+                 patch_size=128,
                  compression_level=4,
                  num_classes=1000,
                  **kwargs):
@@ -96,6 +97,14 @@ class ResNetClassifierHead(resnet.ResNet):
                                    padding=0,
                                    bias=False)
             self.maxpool = nn.Identity()
+
+        elif channels_org != 3:
+            self.conv1 = nn.Conv2d(channels_org,
+                                   self.conv1.out_channels,
+                                   kernel_size=self.conv1.kernel_size,
+                                   stride=self.conv1.stride,
+                                   padding=self.conv1.padding,
+                                   bias=self.conv1.bias is not None)
 
         if cut_position > 1:
             self.layer1 = nn.Identity()
