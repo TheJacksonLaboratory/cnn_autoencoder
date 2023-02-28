@@ -22,7 +22,8 @@ class EmptyClassifierHead(nn.Module):
 class ViTClassifierHead(vision_transformer.VisionTransformer):
     """Implementation of the classifier head from the ViT-B-16 architecture.
     """
-    def __init__(self, channels_bn=768, cut_position=6, patch_size=128,
+    def __init__(self, channels_org=3, channels_bn=768, cut_position=6,
+                 patch_size=128,
                  compression_level=4,
                  num_classes=1000,
                  **kwargs):
@@ -56,6 +57,13 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
                                        padding=0,
                                        bias=False)
             # self.conv_proj = nn.Identity()
+        elif channels_org != 3:
+            self.conv_proj = nn.Conv2d(channels_org,
+                                       self.conv_proj.out_channels,
+                                       kernel_size=self.conv_proj.kernel_size,
+                                       stride=self.conv_proj.stride,
+                                       padding=self.conv_proj.padding,
+                                       bias=self.conv_proj.bias is not None)
 
     def forward(self, x):
         pred = super().forward(x)
