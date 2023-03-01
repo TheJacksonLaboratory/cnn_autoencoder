@@ -119,12 +119,12 @@ def checkpoint(step, model, mod_optimizers, mod_schedulers, best_valid_loss,
     for k in model.keys():
         training_state[k] = model[k].module.state_dict()
 
-    for k, optim in mod_optimizers:
-        training_state['scheduler_' + k] = sched.state_dict()
+    for k, optim in mod_optimizers.items():
+        training_state['optimizer_' + k] = optim.state_dict()
     else:
-        training_state['scheduler_' + k] = None
+        training_state['optimizer_' + k] = None
 
-    for k, sched in mod_schedulers:
+    for k, sched in mod_schedulers.items():
         training_state['scheduler_' + k] = sched.state_dict()
     else:
         training_state['scheduler_' + k] = None
