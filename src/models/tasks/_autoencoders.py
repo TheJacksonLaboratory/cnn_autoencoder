@@ -43,6 +43,9 @@ class EmptyBottleneck(nn.Module):
     def __init__(self, **kwargs):
         super(EmptyBottleneck, self).__init__()
 
+    def update(self):
+        pass
+
     def forward(self, x):
         return x, x
 

@@ -35,12 +35,44 @@ config_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
+        'flags': ('-mopt', '--mod-optimizer'),
+        'details': {
+        'dest': 'mod_optim_algo',
+        'nargs': '+',
+        'type': str,
+        'help': 'Optimization algorithm for each module of the neural network'
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-mga', '--mod-grad-accum'),
+        'details': {
+        'dest': 'mod_grad_accumulate',
+        'nargs': '+',
+        'type': str,
+        'help': 'Steps to accumulate the gradient for each module of the '
+                'neural network'
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
         'flags': ('-sch', '--scheduler'),
         'details': {
         'dest': 'scheduler_type',
         'type': str,
         'help': 'Learning rate scheduler for the optimizer method',
         'default': None
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-sch', '--scheduler'),
+        'details': {
+        'dest': 'mod_scheduler_algo',
+        'nargs': '+',
+        'type': str,
+        'help': 'Learning rate scheduler for the optimizer method of each '
+                'module of the neural network'
         }
     },
     {'tasks': ['all'],
@@ -71,8 +103,7 @@ config_args = [
         'type': str,
         'nargs': '+',
         'help': 'Optimizer initial learning rate for each specific module (if '
-                'not given, the general learning rate will be used instead)',
-        'default': ['class_model=8e-4']
+                'not given, the general learning rate will be used instead)'
         }
     },
     {'tasks': ['all'],
@@ -83,8 +114,7 @@ config_args = [
         'type': float,
         'help': 'Optimizer initial learning rate for each specific auxiliar '
                 'module (if not given, the general learning rate will be used '
-                'instead)',
-        'default': ['class_model=1e-3']
+                'instead)'
         }
     },
     {'tasks': ['all'],
@@ -116,8 +146,7 @@ config_args = [
         'nargs': '+',
         'help': 'Optimizer weight decay (L2 regularizer) for each specific '
                 'module (if not given, the general learning rate will be used '
-                'instead)',
-        'default': ['class_model=0.1']
+                'instead)'
         }
     },
     {'tasks': ['all'],
@@ -129,8 +158,7 @@ config_args = [
         'nargs': '+',
         'help': 'Optimizer weight decay (L2 regularizer) for each specific '
                 'auxiliar module (if not given, the general learning rate will'
-                ' be used instead)',
-        'default': ['class_model=0.0001']
+                ' be used instead)'
         }
     },
     {'tasks': ['all'],
@@ -179,7 +207,7 @@ config_args = [
         'modes': ['training'],
         'flags': ('-esw', '--early-warmup'),
         'details': {
-        'dest': 'early_patience',
+        'dest': 'early_warmup',
         'type': int,
         'help': 'Early stopping warmup steps, i.e. number of steps to '
                 'perform before starting to count bad evaluations',

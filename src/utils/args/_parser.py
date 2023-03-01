@@ -72,6 +72,9 @@ def get_args(task, mode, parser_only=False):
 
 
 def parse_typed_arguments(args):
+    if args is None:
+        return {}
+
     parsed_args = {}
 
     for arg in args:
@@ -82,9 +85,11 @@ def parse_typed_arguments(args):
             arg_val = int(arg_val)
         elif arg_type == 'float':
             arg_val = float(arg_val)
+        elif arg_type.lower() == 'none':
+            arg_val = None
         else:
             arg_val = arg_val
-    
+
         parsed_args[arg_name] = arg_val
 
     return parsed_args

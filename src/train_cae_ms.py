@@ -16,7 +16,7 @@ from tqdm import tqdm
 optimization_algorithms = {"Adam": optim.Adam,
                            "SGD": optim.SGD}
 
-scheduler_options = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
+scheduler_algorithms = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
                      "StepLR": optim.lr_scheduler.StepLR,
                      "LinearLR": optim.lr_scheduler.LinearLR,
                      "ExponentialLR": optim.lr_scheduler.ExponentialLR,
@@ -192,8 +192,9 @@ def valid(model, data, criterion, args):
 
 
 def train(model, train_data, valid_data, criterion, stopping_criteria,
-          optimizer,
-          scheduler,
+          mod_optimizers,
+          mod_schedulers,
+          mod_grad_accumulate,
           args):
     """Training loop by steps.
     This loop involves validation and network training checkpoint creation.
@@ -241,6 +242,9 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
         q = tqdm(total=stopping_criteria['early_stopping']._max_iterations,
                  desc="Training", position=0)
 
+    for k in args.trainable_modules:
+        model[k].train()
+
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
@@ -260,7 +264,11 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             while True:
                 sub_step += 1
                 # Start of training step
-                optimizer.zero_grad()
+                for k, opt in mod_optimizers.items():
+                    # Accumulate gradients on different steps according to the
+                    # network module type.
+                    if step % mod_grad_accumulate[k] == 0:
+                        opt.zero_grad()
 
                 output = forward_step(x, model)
                 t = t.to(output['y_q'].device)
@@ -275,13 +283,14 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                     aux_loss = torch.mean(loss_dict['entropy_loss'])
                     aux_loss.backward()
 
-                # Clip the gradients to prevent from exploding gradients
-                # problems
-                for k in args.trainable_modules:
-                    nn.utils.clip_grad_norm_(model[k].parameters(),
-                                             max_norm=1.0)
-
-                optimizer.step()
+                for k, opt in mod_optimizers.items():
+                    if step % mod_grad_accumulate[k] == 0:
+                        # Clip the gradients to prevent the exploding gradients
+                        # problem
+                        nn.utils.clip_grad_norm_(model[k].parameters(),
+                                                max_norm=1.0)
+                        # Update each network's module by separate
+                        opt.step()
 
                 step_loss = loss.item()
                 sub_step_loss += step_loss
@@ -317,9 +326,11 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
             # End of training step
             if args.progress_bar:
-                if scheduler is not None:
-                    current_lr = scheduler.get_last_lr()
-                else:
+                current_lr = ''
+                for _, sched in mod_schedulers.items():
+                    current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
+
+                if len(current_lr) == 0:
                     current_lr = None
 
                 channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
@@ -335,9 +346,11 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
-                if scheduler is not None:
-                    current_lr = scheduler.get_last_lr()
-                else:
+                current_lr = ''
+                for _, sched in mod_schedulers.items():
+                    current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
+
+                if len(current_lr) == 0:
                     current_lr = None
 
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
@@ -366,13 +379,12 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
                 for k in args.trainable_modules:
                     model[k].train()
-
-        
-                if scheduler is not None:
-                    if 'metrics' in signature(scheduler.step).parameters:
-                        scheduler.step(valid_loss)
-                    else:
-                        scheduler.step()
+                    sched = mod_schedulers.get(k, None)
+                    if sched is not None:
+                        if 'metrics' in signature(sched.step).parameters:
+                            sched.step(valid_loss)
+                        else:
+                            sched.step()
 
                 stopping_info = ';'.join(map(lambda k_sc:\
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
@@ -380,15 +392,22 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
+                current_lr = ''
+                for _, sched in mod_schedulers.items():
+                    current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
+
+                if len(current_lr) == 0:
+                    current_lr = None
+
                 logger.info(
                     '[Step {:06d} ({})] Training loss {:0.4f}, validation '
                     'loss {:.4f}, best validation loss {:.4f}, learning '
-                    'rate {:e}, stopping criteria: {}'.format(
+                    'rate {}, stopping criteria: {}'.format(
                         step, 'training' if keep_training else 'stopping',
                         train_loss,
                         valid_loss,
                         best_valid_loss,
-                        optimizer.param_groups[0]['lr'],
+                        current_lr,
                         stopping_info)
                 )
 
@@ -397,8 +416,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
                 # Save the current training state in a checkpoint file
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
-                best_valid_loss = utils.checkpoint(step, model, optimizer,
-                                                   scheduler,
+                best_valid_loss = utils.checkpoint(step, model, mod_optimizers,
+                                                   mod_schedulers,
                                                    best_valid_loss,
                                                    train_loss_history,
                                                    valid_loss_history,
@@ -517,96 +536,100 @@ def setup_optim(model, args):
     scheduler : torch.optim.lr_scheduler
         The learning rate scheduler for the optimizer
     """
-    optim_algo = optimization_algorithms[args.optim_algo]
+    optim_algos = utils.parse_typed_arguments(args.mod_optim_algo)
+
+    scheduler_algos = {}
+    for mod_pars in args.mod_scheduler_algo:
+        mod = mod_pars[:mod_pars.find('=')]
+        sched_type_args = mod_pars[mod_pars.find('=') + 1:]
+        sched_type = sched_type_args.split(',')[0]
+        sched_args = sched_type_args.split(',')[1:]
+        scheduler_algos[mod] = (sched_type,
+                                utils.parse_typed_arguments(sched_args))
 
     # Parse the values of learning rate and weight decay for each module. These
     # must be passed in the form `--mod-lrate class_model=0.1`, e.g. to assign
     # an initial learning rate to the weights update of the `class` module of
     # the neural network.
-    modules_learning_rate = dict([(mlr.split('=')[0], float(mlr.split('=')[1]))
-                                  for mlr in args.mod_learning_rate])
+    mod_grad_accumulate = utils.parse_typed_arguments(
+        args.mod_grad_accumulate)
 
-    modules_weight_decay = dict([(mwd.split('=')[0], float(mwd.split('=')[1]))
-                                  for mwd in args.mod_weight_decay])
+    mod_learning_rate = utils.parse_typed_arguments(
+        args.mod_learning_rate)
 
-    modules_aux_learning_rate = dict([(mlr.split('=')[0],
-                                       float(mlr.split('=')[1]))
-                                      for mlr in args.mod_aux_learning_rate])
+    mod_weight_decay = utils.parse_typed_arguments(args.mod_weight_decay)
 
-    modules_aux_weight_decay = dict([(mwd.split('=')[0],
-                                      float(mwd.split('=')[1]))
-                                     for mwd in args.mod_aux_weight_decay])
+    mod_aux_learning_rate = utils.parse_typed_arguments(
+        args.mod_aux_learning_rate)
 
-    optim_groups = []
-    for k in model.keys():
+    mod_aux_weight_decay = utils.parse_typed_arguments(
+        args.mod_aux_weight_decay)
+
+    mod_optimizers = {}
+    mod_schedulers = {}
+    for k in args.trainable_modules:
+        if mod_grad_accumulate.get(k, None) is None:
+            mod_grad_accumulate[k] = 1
+
         optim_aux_pars = {}
         optim_pars = {}
         pars = []
         aux_pars = []
 
-        if k in args.trainable_modules:
-            for par_name, par in model[k].named_parameters():
-                if 'quantiles' in par_name or 'aux' in par_name:
-                    aux_pars.append(par)
-                else:
-                    pars.append(par)
+        for par_name, par in model[k].named_parameters():
+            if 'quantiles' in par_name.lower() or 'aux' in par_name.lower():
+                aux_pars.append(par)
+            else:
+                pars.append(par)
 
-            optim_pars['params'] = pars
-            module_lr = modules_learning_rate.get(k, None)
-            module_wd = modules_weight_decay.get(k, None)
+        optim_pars['params'] = pars
+        module_lr = mod_learning_rate.get(k, None)
+        module_wd = mod_weight_decay.get(k, None)
 
-            if module_lr is not None:
-                optim_pars['lr'] = module_lr
-                optim_pars['initial_lr'] = module_lr
+        if module_lr is not None:
+            optim_pars['lr'] = module_lr
+            optim_pars['initial_lr'] = module_lr
+
+        if module_wd is not None:
+            optim_pars['weight_decay'] = module_wd
+
+        mod_optimizers[k] = optimization_algorithms[optim_algos[k]](
+            [optim_pars])
+
+        (mod_scheduler_algo,
+         mod_scheduler_args) = scheduler_algos.get(k, (None, None))
+
+        if mod_scheduler_algo is not None:
+            mod_schedulers[k] = scheduler_algorithms[mod_scheduler_algo](
+                optimizer=mod_optimizers[k],
+                **mod_scheduler_args)
+
+        if len(aux_pars) > 0:
+            optim_aux_pars['params'] = aux_pars
+            module_aux_lr = mod_aux_learning_rate.get(k, None)
+            module_aux_wd = mod_aux_weight_decay.get(k, None)
+
+            if module_aux_lr is not None:
+                optim_aux_pars['lr'] = module_aux_lr
+                optim_aux_pars['initial_lr'] = module_aux_lr
 
             if module_wd is not None:
-                optim_pars['weight_decay'] = module_wd
+                optim_aux_pars['weight_decay'] = module_aux_wd
 
-            optim_groups.append(optim_pars)
+            mod_optimizers[k + '_aux'] = \
+                optimization_algorithms[optim_algos[k]]([optim_aux_pars])
 
-            if len(aux_pars) > 0:
-                optim_aux_pars['params'] = aux_pars
-                module_aux_lr = modules_aux_learning_rate.get(k, None)
-                module_aux_wd = modules_aux_weight_decay.get(k, None)
+            if mod_scheduler_algo is not None:
+                mod_schedulers[k + '_aux'] = \
+                    scheduler_algorithms[mod_scheduler_algo](
+                        optimizer=mod_optimizers[k + '_aux'],
+                        **mod_scheduler_args)
 
-                if module_aux_lr is not None:
-                    optim_aux_pars['lr'] = module_aux_lr
-                    optim_aux_pars['initial_lr'] = module_aux_lr
-
-                if module_wd is not None:
-                    optim_aux_pars['weight_decay'] = module_aux_wd
-
-                optim_groups.append(optim_aux_pars)
-
-        else:
-            model[k].eval()
-
-    optimizer = optim_algo(optim_groups,
-                           lr=args.learning_rate,
-                           weight_decay=args.weight_decay)
-
-    # Only the the reduce on plateau, or none at all scheduler are used
-    if args.scheduler_type is None or args.scheduler_type.lower() == 'none':
-        scheduler = None
-
-    else:
-        scheduler_type = args.scheduler_type.split(',')
-        scheduler_type, scheduler_args = scheduler_type[0], scheduler_type[1:]
+    return mod_optimizers, mod_schedulers, mod_grad_accumulate
 
 
-        if scheduler_type in scheduler_options:
-            scheduler_args = utils.parse_typed_arguments(scheduler_args)
-
-            scheduler = scheduler_options[scheduler_type](
-                optimizer=optimizer, **scheduler_args)
-        else:
-            raise ValueError('Scheduler \"%s\" ' % scheduler_type
-                             + 'is not implemented')
-
-    return optimizer, scheduler
-
-
-def resume_checkpoint(model, optimizer, scheduler, checkpoint, gpu=True,
+def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
+                      gpu=True,
                       resume_optimizer=False):
     """Resume training from a previous checkpoint
 
@@ -645,10 +668,11 @@ def resume_checkpoint(model, optimizer, scheduler, checkpoint, gpu=True,
     model['fact_ent'].module.update(force=True)
 
     if resume_optimizer:
-        optimizer.load_state_dict(checkpoint_state['optimizer'])
+        for k in mod_optimizers.keys():
+            mod_optimizers.load_state_dict(checkpoint_state[k + '_optimizer'])
 
-        if scheduler is not None and checkpoint_state['scheduler'] is not None:
-            scheduler.load_state_dict(checkpoint_state['scheduler'])
+        for k in mod_schedulers.keys():
+            mod_schedulers.load_state_dict(checkpoint_state[k + '_scheduler'])
 
 
 def main(args):
@@ -667,10 +691,12 @@ def main(args):
 
     model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args, checkpoint=args.resume)
-    optimizer, scheduler = setup_optim(model, args)
+    (mod_optimizers,
+     mod_schedulers,
+     mod_grad_accumulate) = setup_optim(model, args)
 
     if args.resume is not None:
-        resume_checkpoint(model, optimizer, scheduler, args.resume,
+        resume_checkpoint(model, mod_optimizers, mod_schedulers, args.resume,
                           gpu=args.gpu)
 
     # Log the training setup
@@ -690,14 +716,19 @@ def main(args):
         logger.info(crit)
 
     logger.info('\nOptimization parameters:')
-    logger.info(optimizer)
+    for k in mod_optimizers.keys():
+        logger.info('\n{}'.format(k))
+        logger.info(mod_optimizers[k])
 
     logger.info('\nScheduler parameters:')
-    logger.info(scheduler)
+    for k in mod_schedulers.keys():
+        logger.info('\n{}'.format(k))
+        logger.info(mod_schedulers[k])
 
     train(model, train_data, valid_data, criterion, stopping_criteria,
-          optimizer,
-          scheduler,
+          mod_optimizers,
+          mod_schedulers,
+          mod_grad_accumulate,
           args)
 
 
