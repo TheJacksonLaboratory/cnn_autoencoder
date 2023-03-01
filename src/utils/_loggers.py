@@ -70,7 +70,7 @@ def save_state(name, model_state, args):
     logger.info('Saved model in %s' % save_fn)
 
 
-def checkpoint(step, model, optimizer, scheduler, best_valid_loss,
+def checkpoint(step, model, mod_optimizers, mod_schedulers, best_valid_loss,
                train_loss_history,
                valid_loss_history,
                args,
@@ -105,7 +105,6 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss,
 
     # Create a dictionary with the current state as checkpoint
     training_state = dict(
-        optimizer=optimizer.state_dict() if optimizer is not None else None,
         args=args.__dict__,
         best_val=best_valid_loss,
         step=step,
@@ -120,13 +119,15 @@ def checkpoint(step, model, optimizer, scheduler, best_valid_loss,
     for k in model.keys():
         training_state[k] = model[k].module.state_dict()
 
-    if scheduler is not None:
-        if 'metrics' in dict(signature(scheduler.step).parameters).keys():
-            scheduler.step(metrics=valid_loss_history[-1])
-
-        training_state['scheduler'] = scheduler.state_dict()
+    for k, optim in mod_optimizers:
+        training_state['scheduler_' + k] = sched.state_dict()
     else:
-        training_state['scheduler'] = None
+        training_state['scheduler_' + k] = None
+
+    for k, sched in mod_schedulers:
+        training_state['scheduler_' + k] = sched.state_dict()
+    else:
+        training_state['scheduler_' + k] = None
 
     save_state('last', training_state, args)
 

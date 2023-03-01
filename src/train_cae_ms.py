@@ -287,8 +287,9 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                     if step % mod_grad_accumulate[k] == 0:
                         # Clip the gradients to prevent the exploding gradients
                         # problem
-                        nn.utils.clip_grad_norm_(model[k].parameters(),
-                                                max_norm=1.0)
+                        nn.utils.clip_grad_norm_(opt.param_groups[0]['params'],
+                                                 max_norm=1.0)
+
                         # Update each network's module by separate
                         opt.step()
 
@@ -543,6 +544,8 @@ def setup_optim(model, args):
         mod = mod_pars[:mod_pars.find('=')]
         sched_type_args = mod_pars[mod_pars.find('=') + 1:]
         sched_type = sched_type_args.split(',')[0]
+        if sched_type.lower() == 'none':
+            sched_type = None
         sched_args = sched_type_args.split(',')[1:]
         scheduler_algos[mod] = (sched_type,
                                 utils.parse_typed_arguments(sched_args))
@@ -605,6 +608,8 @@ def setup_optim(model, args):
                 **mod_scheduler_args)
 
         if len(aux_pars) > 0:
+            mod_grad_accumulate[k + '_aux'] = mod_grad_accumulate[k]
+
             optim_aux_pars['params'] = aux_pars
             module_aux_lr = mod_aux_learning_rate.get(k, None)
             module_aux_wd = mod_aux_weight_decay.get(k, None)
