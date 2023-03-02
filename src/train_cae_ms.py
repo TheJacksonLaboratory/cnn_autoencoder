@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 
 optimization_algorithms = {"Adam": optim.Adam,
+                           "AdamW": optim.AdamW,
                            "SGD": optim.SGD}
 
 scheduler_algorithms = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
@@ -245,6 +246,11 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
     for k in args.trainable_modules:
         model[k].train()
 
+    for k, opt in mod_optimizers.items():
+        # Accumulate gradients on different steps according to the network
+        # module type.
+        opt.zero_grad()
+
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
@@ -264,11 +270,6 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             while True:
                 sub_step += 1
                 # Start of training step
-                for k, opt in mod_optimizers.items():
-                    # Accumulate gradients on different steps according to the
-                    # network module type.
-                    if step % mod_grad_accumulate[k] == 0:
-                        opt.zero_grad()
 
                 output = forward_step(x, model)
                 t = t.to(output['y_q'].device)
@@ -292,6 +293,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
 
                         # Update each network's module by separate
                         opt.step()
+                        opt.zero_grad()
 
                 step_loss = loss.item()
                 sub_step_loss += step_loss

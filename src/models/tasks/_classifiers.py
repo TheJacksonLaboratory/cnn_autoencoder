@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# TODO: Implement a version of the Inception V3, Mobilenet, and ResNet
+# TODO: Implement a version of the Inception V3, Mobilenet
 
 
 class EmptyClassifierHead(nn.Module):
@@ -82,10 +82,11 @@ class ResNetClassifierHead(resnet.ResNet):
         if cut_position is None:
             cut_position = compression_level
 
-        super(ResNetClassifierHead, self).__init__(block=resnet.Bottleneck,
-                                                   norm_layer=nn.BatchNorm2d,
-                                                   layers=[3, 8, 36, 3],
-                                                   num_classes=num_classes)
+        super(ResNetClassifierHead, self).__init__(
+            block=resnet.Bottleneck,
+            norm_layer=lambda ch: nn.GroupNorm(num_groups=ch, num_channels=ch),
+            layers=[3, 8, 36, 3],
+            num_classes=num_classes)
 
         out_channels = [64, 64 * 4, 128 * 4, 256 * 4, 512 * 4]
 
@@ -96,6 +97,8 @@ class ResNetClassifierHead(resnet.ResNet):
                                    stride=1,
                                    padding=0,
                                    bias=False)
+            self.bn1 = nn.GroupNorm(out_channels[cut_position - 1],
+                                    out_channels[cut_position - 1])
             self.maxpool = nn.Identity()
 
         elif channels_org != 3:
