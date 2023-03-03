@@ -9,8 +9,13 @@ class ClassLoss(object):
 
 class ClassLossWithAux(object):
     def __call__(self, pred, t, aux_pred, **kwargs):
-        return dict(class_error=self._loss(pred, t),
-                    aux_class_error=self._aux_loss(aux_pred, t))
+        class_error = self._loss(pred, t)
+        if aux_pred is not None:
+            aux_class_error = self._aux_loss(aux_pred, t)
+        else:
+            aux_class_error = 0
+
+        return dict(class_error=class_error, aux_class_error=aux_class_error)
 
 
 class CEClassLoss(ClassLoss):
