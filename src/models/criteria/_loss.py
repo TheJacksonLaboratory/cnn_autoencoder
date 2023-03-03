@@ -89,8 +89,9 @@ class GeneralLoss(nn.Module):
 
         if self.class_loss is not None:
             dist_dict.update(self.class_loss(pred=output['t_pred'],
-                                    aux_pred=output['t_aux_pred'],
-                                    t=target, **kwargs))
+                                             aux_pred=output['t_aux_pred'],
+                                             t=target,
+                                             **kwargs))
 
             dist_dict['loss'] += (self._class_error_mu
                                   * dist_dict['class_error']

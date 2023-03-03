@@ -100,7 +100,7 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
     if channel_e >= 0:
         log_string += ' Ch={}'.format(int(channel_e))
 
-    if lr is not None:
+    if lr is not None and len(lr) > 0:
         log_string += ' lr={}'.format(lr)
 
     return log_string
@@ -330,11 +330,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             # End of training step
             if args.progress_bar:
                 current_lr = ''
-                for _, sched in mod_schedulers.items():
+                for k, sched in mod_schedulers.items():
                     current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
-
-                if len(current_lr) == 0:
-                    current_lr = None
 
                 channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
                 q.set_description(
@@ -350,11 +347,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             # Log the training performance every 10% of the training set
             if i % max(1, int(0.01 * len(train_data))) == 0:
                 current_lr = ''
-                for _, sched in mod_schedulers.items():
+                for k, sched in mod_schedulers.items():
                     current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
-
-                if len(current_lr) == 0:
-                    current_lr = None
 
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
 
@@ -389,6 +383,13 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                         else:
                             sched.step()
 
+                    aux_sched = mod_schedulers.get(k + '_aux', None)
+                    if aux_sched is not None:
+                        if 'metrics' in signature(aux_sched.step).parameters:
+                            aux_sched.step(valid_loss)
+                        else:
+                            aux_sched.step()
+
                 stopping_info = ';'.join(map(lambda k_sc:\
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
                                              stopping_criteria.items()))
@@ -396,11 +397,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 # If there is a learning rate scheduler, perform a step
                 # Log the overall network performance every checkpoint step
                 current_lr = ''
-                for _, sched in mod_schedulers.items():
+                for k, sched in mod_schedulers.items():
                     current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
-
-                if len(current_lr) == 0:
-                    current_lr = None
 
                 logger.info(
                     '[Step {:06d} ({})] Training loss {:0.4f}, validation '
@@ -432,6 +430,14 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                                                            metric=valid_loss)
             else:
                 stopping_criteria['early_stopping'].update(iteration=step)
+
+            if step <= args.early_warmup:
+                for k, sched in mod_schedulers.items():
+                    if 'warmup' in k:
+                        if 'metrics' in signature(sched.step).parameters:
+                            sched.step(valid_loss)
+                        else:
+                            sched.step()
 
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: '
@@ -631,6 +637,18 @@ def setup_optim(model, args):
                     scheduler_algorithms[mod_scheduler_algo](
                         optimizer=mod_optimizers[k + '_aux'],
                         **mod_scheduler_args)
+
+    # Setup warmup schedulers:
+    if args.early_warmup > 0:
+        warmup_schedulers = {}
+        for k in mod_schedulers.keys():
+            warmup_schedulers[k + '_warmup'] = optim.lr_scheduler.LinearLR(
+                optimizer=mod_optimizers[k],
+                start_factor=1/args.early_warmup,
+                end_factor=1.0,
+                total_iters=args.early_warmup)
+
+        mod_schedulers.update(warmup_schedulers)
 
     return mod_optimizers, mod_schedulers, mod_grad_accumulate
 

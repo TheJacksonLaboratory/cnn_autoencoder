@@ -30,4 +30,5 @@ CAE_MODELS = ['AutoEncoder']
 
 CLASS_MODELS = ['Empty',
                 'ViT',
-                'ResNet']
+                'ResNet',
+                'InceptionV3']

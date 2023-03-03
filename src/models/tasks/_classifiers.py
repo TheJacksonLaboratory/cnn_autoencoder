@@ -26,6 +26,7 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
                  patch_size=128,
                  compression_level=4,
                  num_classes=1000,
+                 dropout=0.0,
                  **kwargs):
         if cut_position is None:
             cut_position = 6
@@ -45,7 +46,8 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
             num_heads=12,
             hidden_dim=768,
             mlp_dim=3072,
-            num_classes=num_classes)
+            num_classes=num_classes,
+            dropout=dropout)
 
         # The input `x` is the output of several convolution layers, and the
         # number of channels is already the required as input for the encoder
@@ -56,7 +58,6 @@ class ViTClassifierHead(vision_transformer.VisionTransformer):
                                        stride=1,
                                        padding=0,
                                        bias=False)
-            # self.conv_proj = nn.Identity()
         elif channels_org != 3:
             self.conv_proj = nn.Conv2d(channels_org,
                                        self.conv_proj.out_channels,
@@ -126,10 +127,98 @@ class ResNetClassifierHead(resnet.ResNet):
         return y, None
 
 
+class InceptionV3ClassifierHead(inception.Inception3):
+    def __init__(self, channels_org=3, channels_bn=768, cut_position=6,
+                 patch_size=128,
+                 compression_level=4,
+                 num_classes=1000,
+                 dropout=0.0,
+                 **kwargs):
+
+        super(InceptionV3ClassifierHead, self).__init__(
+                    num_classes=num_classes,
+                    aux_logits=True,
+                    transform_input=False,
+                    inception_blocks=None,
+                    init_weights=True,
+                    dropout=dropout)
+
+        out_channels = [32, 64, 192, 768, 1280, 2048]
+        in_shapes = [299, 149, 73, 35, 17, 8, 1]
+
+        bn_shape = patch_size // 2 ** compression_level
+        if cut_position is None:
+            cut_position = min(map(lambda si: (abs(si[1] - bn_shape), si[0]),
+                                   enumerate(in_shapes)))[1]
+        
+        pad_left_top = (in_shapes[cut_position] - bn_shape) // 2
+        pad_right_bottom = in_shapes[cut_position] - bn_shape - pad_left_top
+        
+        if pad_left_top > 0 or pad_right_bottom > 0:
+            self._pre_padding = nn.ReplicationPad2d((pad_left_top,
+                                                     pad_right_bottom,
+                                                     pad_left_top,
+                                                     pad_right_bottom))
+        else:
+            self._pre_padding = nn.Identity()
+
+        if cut_position > 0:
+            self.Conv2d_1a_3x3 = nn.Conv2d(channels_bn,
+                                           out_channels[cut_position - 1],
+                                           kernel_size=1,
+                                           stride=1,
+                                           padding=0,
+                                           bias=False)
+
+        elif channels_org != 3:
+            self.Conv2d_1a_3x3 = inception.BasicConv2d(channels_org, 32,
+                                                       kernel_size=3,
+                                                       stride=2)
+
+        if cut_position > 1:
+            self.Conv2d_2a_3x3 = nn.Identity()
+            self.Conv2d_2b_3x3 = nn.Identity()
+            self.maxpool1 = nn.Identity()
+
+        if cut_position > 2:
+            self.Conv2d_3b_1x1 = nn.Identity()
+            self.Conv2d_4a_3x3 = nn.Identity()
+            self.maxpool2 = nn.Identity()
+
+        if cut_position > 3:
+            self.Mixed_5b = nn.Identity()
+            self.Mixed_5c = nn.Identity()
+            self.Mixed_5d = nn.Identity()
+            self.Mixed_6a = nn.Identity()
+    
+        if cut_position > 4:
+            self.AuxLogits.conv0 = nn.Identity()
+            self.AuxLogits.conv1 = nn.Conv2d(out_channels[cut_position - 1],
+                                             768,
+                                             kernel_size=1,
+                                             stride=1)
+
+            self.Mixed_6b = nn.Identity()
+            self.Mixed_6c = nn.Identity()
+            self.Mixed_6d = nn.Identity()
+            self.Mixed_6e = nn.Identity()
+            self.Mixed_7a = nn.Identity()
+
+        if cut_position > 5:
+            self.Mixed_7b = nn.Identity()
+            self.Mixed_7c = nn.Identity()
+
+    def forward(self, x):
+        x = self._pre_padding(x)
+        y, y_aux = self._forward(x)
+        return y, y_aux
+
+
 CLASS_MODELS = {
     "Empty": EmptyClassifierHead,
     "ViT": ViTClassifierHead,
     "ResNet": ResNetClassifierHead,
+    "InceptionV3": InceptionV3ClassifierHead,
     }
 
 
