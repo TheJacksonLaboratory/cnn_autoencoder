@@ -432,12 +432,17 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 stopping_criteria['early_stopping'].update(iteration=step)
 
             if step <= args.early_warmup:
-                for k, sched in mod_schedulers.items():
-                    if 'warmup' in k:
-                        if 'metrics' in signature(sched.step).parameters:
-                            sched.step(valid_loss)
-                        else:
-                            sched.step()
+                for k in args.trainable_modules:
+                    if step < mod_grad_accumulate[k]:
+                        continue
+
+                    sched = mod_schedulers.get(k + '_warmup', None)
+                    if sched is not None:
+                        sched.step()
+
+                    aux_sched = mod_schedulers.get(k + '_aux_warmup', None)
+                    if aux_sched is not None:
+                        aux_sched.step()
 
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: '
