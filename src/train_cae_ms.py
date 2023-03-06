@@ -106,11 +106,25 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
     return log_string
 
 
-def forward_step(x, model):
-    y = model["encoder"](x)
-    y_q, p_y = model["fact_ent"](y)
-    x_r = model["decoder"](y_q)
-    t_pred, t_aux_pred = model["class_model"](y_q)
+def forward_step(x, model, trainable_modules=None):
+    if trainable_modules is None:
+        trainable_modules = []
+
+    torch.set_grad_enabled('enocder' in trainable_modules)
+    y = model['encoder'](x)
+    torch.enable_grad()
+
+    torch.set_grad_enabled('fact_ent' in trainable_modules)
+    y_q, p_y = model['fact_ent'](y)
+    torch.enable_grad()
+
+    torch.set_grad_enabled('decoder' in trainable_modules)
+    x_r = model['decoder'](y_q)
+    torch.enable_grad()
+
+    torch.set_grad_enabled('class_model' in trainable_modules)
+    t_pred, t_aux_pred = model['class_model'](y_q)
+    torch.enable_grad()
 
     return dict(x_r=x_r, y=y, y_q=y_q, p_y=p_y, t_pred=t_pred,
                 t_aux_pred=t_aux_pred)
@@ -152,7 +166,7 @@ def valid(model, data, criterion, args):
 
     with torch.no_grad():
         for i, (x, t) in enumerate(data):
-            output = forward_step(x, model)
+            output = forward_step(x, model, trainable_modules=None)
             t = t.to(output['y_q'].device)
 
             loss_dict = criterion(input=x, output=output, target=t,
@@ -243,8 +257,11 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
         q = tqdm(total=stopping_criteria['early_stopping']._max_iterations,
                  desc="Training", position=0)
 
-    for k in args.trainable_modules:
-        model[k].train()
+    for k in model.keys():
+        if k in args.trainable_modules:
+            model[k].train()
+        else:
+            model[k].eval()
 
     for k, opt in mod_optimizers.items():
         # Accumulate gradients on different steps according to the network
@@ -271,7 +288,8 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 sub_step += 1
                 # Start of training step
 
-                output = forward_step(x, model)
+                output = forward_step(x, model,
+                                      trainable_modules=args.trainable_modules)
                 t = t.to(output['y_q'].device)
 
                 loss_dict = criterion(input=x, output=output, target=t,
@@ -686,9 +704,9 @@ def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
         checkpoint_state = torch.load(checkpoint)
 
     for k in model.keys():
-        assert k in checkpoint_state
-        model[k].module.load_state_dict(checkpoint_state[k],
-                                                  strict=False)
+        if k in checkpoint_state:
+            model[k].module.load_state_dict(checkpoint_state[k],
+                                            strict=False)
 
     if checkpoint_state['args']['version'] == '0.5.5':
         for color_layer in model['decoder'].module.color_layers:
