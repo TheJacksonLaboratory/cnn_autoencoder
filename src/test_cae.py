@@ -12,6 +12,7 @@ from pytorch_msssim import ms_ssim
 import numpy as np
 import zarr
 import torch
+import math
 
 import models
 import utils
@@ -46,11 +47,11 @@ def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
 
 
 def compute_ms_ssim(x=None, x_r=None, **kwargs):
-    ms_ssim = ms_ssim(
+    ms_ssim_res = ms_ssim(
         torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float(),
         torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float(),
         data_range=255)
-    return ms_ssim, None
+    return ms_ssim_res, None
 
 
 def compute_ssim(x=None, x_r=None, **kwargs):
@@ -58,8 +59,9 @@ def compute_ssim(x=None, x_r=None, **kwargs):
     return ssim, None
 
 
-def compute_psnr(x=None, x_r=None, **kwargs):
-    psnr = peak_signal_noise_ratio(x, x_r)
+def compute_psnr(x=None, x_r=None, max_val=255, **kwargs):
+    # psnr = peak_signal_noise_ratio(x, x_r)
+    psnr = 20 * math.log10(max_val) - 10 * torch.log10((x - x_r).pow(2).mean())
     return psnr, None
 
 
@@ -232,6 +234,9 @@ def test_cae(args):
     all_metrics_stats['execution_time'] = []
     all_metrics_stats['evaluation_time'] = []
 
+    if isinstance(args.output_dir, list):
+        args.output_dir = args.output_dir[0]
+
     if not args.output_dir.lower().endswith(".zarr"):
         args.output_dir += ".zarr"
 
@@ -292,7 +297,7 @@ def test_cae(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_args(task='autoencoder', mode='test')
+    args = utils.get_args(task='encoder', mode='test')
 
     utils.setup_logger(args)
 

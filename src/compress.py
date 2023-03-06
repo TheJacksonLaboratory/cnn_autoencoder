@@ -33,8 +33,8 @@ def encode(x, comp_model, transform, offset=0):
     H, W = x_t.shape[-2:]
 
     with torch.set_grad_enabled(comp_model.training):
-        fx = comp_model['embedding'](x_t)
-        y = comp_model['analysis'](fx)
+        # fx = comp_model['embedding'](x_t)
+        y = comp_model['analysis'](x_t)
         y_q, _ = comp_model['fact_ent'](y)
         y_cmp = comp_model['fact_ent'].module.compress(y)
 
@@ -250,7 +250,7 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
 
     cae_model_base = models.AutoEncoder(**state['args'])
 
-    cae_model_base.embedding.load_state_dict(state['embedding'])
+    # cae_model_base.embedding.load_state_dict(state['embedding'])
     cae_model_base.analysis.load_state_dict(state['encoder'])
     cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
     cae_model_base.fact_ent.update()
@@ -271,9 +271,10 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
         cae_model_base = cae_model_base.module
 
     comp_model = nn.ModuleDict(
-        dict(embedding=nn.DataParallel(cae_model_base.embedding),
-             analysis=nn.DataParallel(cae_model_base.analysis),
-             fact_ent=nn.DataParallel(cae_model_base.fact_ent)))
+        dict(
+            # embedding=nn.DataParallel(cae_model_base.embedding),
+            analysis=nn.DataParallel(cae_model_base.analysis),
+            fact_ent=nn.DataParallel(cae_model_base.fact_ent)))
 
     if use_gpu:
         comp_model.cuda()
