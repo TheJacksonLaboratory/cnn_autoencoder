@@ -4,19 +4,9 @@ from .._info import CAE_MODELS, CLASS_MODELS, CAE_ACT_LAYERS
 task_args = [
     {'tasks': ['all'],
         'modes': ['all'],
-        'flags': ('-m', '--model'),
-        'details': {
-        'dest': 'trained_model',
-        'type': str,
-        'help': 'The checkpoint of the model to be used',
-        'default': None
-        }
-    },
-    {'tasks': ['all'],
-        'modes': ['all'],
         'flags': ('-cm', '--compressed-model'),
         'details': {
-        'dest': 'trained_model',
+        'dest': 'compressed_trained_model',
         'type': str,
         'help': 'The checkpoint of the model to be used',
         'default': None

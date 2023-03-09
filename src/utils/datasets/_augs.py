@@ -130,6 +130,8 @@ def get_zarr_transform(data_mode='test', normalize=False,
     if data_mode == 'training':
         prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size),
                                                      pad_if_needed=True))
+    else:
+        prep_trans_list.append(transforms.CenterCrop((patch_size, patch_size)))
 
     # The ToTensor transforms the input into the range [0, 1]. However, if
     # the input is compressed, it is required in the range [-127.5, 127.5].
@@ -166,7 +168,8 @@ def get_zarr_transform(data_mode='test', normalize=False,
     return prep_trans, input_target_trans, target_trans
 
 
-def get_imagenet_transform(data_mode='training', normalize=False, patch_size=128):
+def get_imagenet_transform(data_mode='training', normalize=False,
+                           patch_size=128):
     prep_trans_list = [
          transforms.PILToTensor(),
          transforms.ConvertImageDtype(torch.float32)
@@ -174,8 +177,11 @@ def get_imagenet_transform(data_mode='training', normalize=False, patch_size=128
 
     if 'train' in data_mode:
         prep_trans_list.append(AddGaussianNoise(0., 0.01))
+    
         prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size),
-                                                     pad_if_needed=True))
+                                                        pad_if_needed=True))
+    else:
+        prep_trans_list.append(transforms.CenterCrop((patch_size, patch_size)))
 
     if normalize:
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))

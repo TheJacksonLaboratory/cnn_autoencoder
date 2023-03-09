@@ -252,9 +252,14 @@ def setup_network(state, use_gpu=False, lc_pretrained_model=None,
 
     # cae_model_base.embedding.load_state_dict(state['embedding'])
     cae_model_base.analysis.load_state_dict(state['encoder'])
+    
+    cae_model_base.fact_ent.update(force=True)
+    cae_model_base.fact_ent._quantized_cdf = state['fact_ent']['_quantized_cdf']
+    cae_model_base.fact_ent._offset = state['fact_ent']['_offset']
+    cae_model_base.fact_ent._cdf_length = state['fact_ent']['_cdf_length']
     cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
-    cae_model_base.fact_ent.update()
-
+    cae_model_base.fact_ent.update(force=True)
+    
     if lc_pretrained_model is not None and ft_pretrained_model is not None:
 
         # Load the model checkpoint from its compressed version

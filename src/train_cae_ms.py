@@ -477,7 +477,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
     return completed
 
 
-def setup_network(args):
+def setup_network(args, use_gpu=False):
     """Setup a nerual network for image compression/decompression.
 
     Parameters
@@ -494,16 +494,22 @@ def setup_network(args):
     """
 
     # The autoencoder model contains all the modules
-    args.multiscale_analysis = 'Multiscale' in args.criterion
-    model = models.setup_autoencoder_modules(**args.__dict__)
-    model.update(models.setup_classifier_modules(**args.__dict__))
+    if isinstance(args, dict):
+        args['multiscale_analysis'] = 'Multiscale' in args['criterion']
+        args_dict = args
+    else:
+        args.multiscale_analysis = 'Multiscale' in args.criterion
+        args_dict = args.__dict__
+
+    model = models.setup_autoencoder_modules(**args_dict)
+    model.update(models.setup_classifier_modules(**args_dict))
 
     # If there are more than one GPU, DataParallel handles automatically the
     # distribution of the work.
     for k in model.keys():
         model[k] = nn.DataParallel(model[k])
 
-        if args.gpu:
+        if use_gpu:
             model[k].cuda()
 
     return model
@@ -705,15 +711,18 @@ def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
 
     for k in model.keys():
         if k in checkpoint_state:
-            model[k].module.load_state_dict(checkpoint_state[k],
-                                            strict=False)
+            if k == 'fact_ent':
+                model['fact_ent'].module.update(force=True)
+                model['fact_ent'].module._quantized_cdf = checkpoint_state[k]['_quantized_cdf']
+                model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
+                model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
+
+            model[k].module.load_state_dict(checkpoint_state[k], strict=False)
 
     if checkpoint_state['args']['version'] == '0.5.5':
         for color_layer in model['decoder'].module.color_layers:
             color_layer[0].weight.data.copy_(
                 checkpoint_state['decoder']['synthesis_track.4.weight'])
-
-    model['fact_ent'].module.update(force=True)
 
     if resume_optimizer:
         for k in mod_optimizers.keys():
@@ -737,14 +746,14 @@ def main(args):
     train_data, valid_data, num_classes = utils.get_data(args)
     args.num_classes = num_classes
 
-    model = setup_network(args)
-    criterion, stopping_criteria = setup_criteria(args, checkpoint=args.resume)
+    model = setup_network(args, use_gpu=args.gpu)
+    criterion, stopping_criteria = setup_criteria(args, checkpoint=args.checkpoint)
     (mod_optimizers,
      mod_schedulers,
      mod_grad_accumulate) = setup_optim(model, args)
 
-    if args.resume is not None:
-        resume_checkpoint(model, mod_optimizers, mod_schedulers, args.resume,
+    if args.checkpoint is not None:
+        resume_checkpoint(model, mod_optimizers, mod_schedulers, args.checkpoint,
                           gpu=args.gpu)
 
     # Log the training setup

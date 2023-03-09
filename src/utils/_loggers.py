@@ -156,7 +156,7 @@ def load_state(args):
     if args.mode in ['training']:
         save_fn = os.path.join(args.log_dir, 'last_ver%s_%s.pth' % (args.version, args.seed))
     else:
-        save_fn = args.trained_model
+        save_fn = args.checkpoint
 
     if not os.path.exists(save_fn):
         raise ValueError('The checkpoint %s does not exist' % save_fn)

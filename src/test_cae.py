@@ -61,7 +61,7 @@ def compute_ssim(x=None, x_r=None, **kwargs):
 
 def compute_psnr(x=None, x_r=None, max_val=255, **kwargs):
     # psnr = peak_signal_noise_ratio(x, x_r)
-    psnr = 20 * math.log10(max_val) - 10 * torch.log10((x - x_r).pow(2).mean())
+    psnr = 20 * math.log10(max_val) - 10 * math.log10(((x - x_r)**2).mean())
     return psnr, None
 
 

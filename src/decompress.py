@@ -355,7 +355,13 @@ def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
                                                              **state['args'])
 
     cae_model_base.synthesis.load_state_dict(state['decoder'], strict=False)
+
+    cae_model_base.fact_ent.update(force=True)
+    cae_model_base.fact_ent._quantized_cdf = state['fact_ent']['_quantized_cdf']
+    cae_model_base.fact_ent._offset = state['fact_ent']['_offset']
+    cae_model_base.fact_ent._cdf_length = state['fact_ent']['_cdf_length']
     cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
+    cae_model_base.fact_ent.update(force=True)
 
     if state['args']['version'] == '0.5.5':
         for color_layer in cae_model_base.color_layers:

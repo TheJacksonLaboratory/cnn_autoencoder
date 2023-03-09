@@ -216,9 +216,9 @@ config_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
-        'flags': ('-chk', '--resume-checkpoint'),
+        'flags': ('-chk', '--checkpoint'),
         'details': {
-        'dest': 'resume',
+        'dest': 'checkpoint',
         'type': str,
         'help': 'Resume training from an existing checkpoint',
         'default': None

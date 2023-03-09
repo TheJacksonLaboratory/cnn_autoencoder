@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from time import perf_counter
 from PIL import Image
+
 from skimage.color import deltaE_cie76, rgb2lab
 from skimage.metrics import (mean_squared_error,
                              peak_signal_noise_ratio,
@@ -14,7 +15,8 @@ from skimage.metrics import (mean_squared_error,
 # from torchmetrics import MultiScaleStructuralSimilarityIndexMeasure
 from pytorch_msssim import ms_ssim
 
-format_dict = {'JPEG2000': 'jp2', 'JPEG': 'jpeg', 'PNG': 'png'}
+
+format_dict = {'JPEG': 'jpeg', 'PNG': 'png'}
 
 
 def compute_deltaCIELAB(x=None, x_r=None, **kwargs):
@@ -37,11 +39,11 @@ def compute_ms_ssim(x=None, x_r=None, **kwargs):
     #     betas=(0.0448, 0.2856, 0.3001, 0.2363, 0.1333),
     #     normalize='relu'
     # )
-    ms_ssim = ms_ssim(
+    ms_ssim_res = ms_ssim(
         torch.from_numpy(np.moveaxis(x_r, -1, 0)[np.newaxis]).float(),
         torch.from_numpy(np.moveaxis(x, -1, 0)[np.newaxis]).float(),
         data_range=255)
-    return ms_ssim
+    return ms_ssim_res
 
 
 def compute_ssim(x=None, x_r=None, **kwargs):
@@ -55,7 +57,7 @@ def compute_psnr(x=None, x_r=None, **kwargs):
 
 
 def compute_rmse(x=None, x_r=None, **kwargs):
-    rmse = np.sqrt(mean_squared_error(x / 255.0, x_r / 255.0))
+    rmse = np.sqrt(mean_squared_error(x, x_r))
     return rmse
 
 
@@ -128,8 +130,7 @@ if __name__ == '__main__':
 
     in_filenames = ['.'.join(fn.split('.')[:-1]) for fn in os.listdir(args.src_dir) if fn.lower().endswith(format_dict[args.src_format])]
 
-    all_metrics = {'codec': args.dst_format, 'quality': args.comp_quality,
-                   'time': []}
+    all_metrics = {'time': []}
 
     if 'JPEG' in args.dst_format:
         quality_opts = {'quality': args.comp_quality}
@@ -178,6 +179,9 @@ if __name__ == '__main__':
                                                  max=max_metric)
 
     all_metrics.update(all_metrics_stats)
+
+    all_metrics['codec'] = args.dst_format
+    all_metrics['quality'] = args.comp_quality
 
     torch.save(
         all_metrics,
