@@ -127,10 +127,10 @@ def get_zarr_transform(data_mode='test', normalize=False,
     if add_noise:
         prep_trans_list.append(AddGaussianNoise(0., 0.001))
 
-    if data_mode == 'training':
+    if 'train' in data_mode:
         prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size),
                                                      pad_if_needed=True))
-    else:
+    elif 'test' in data_mode:
         prep_trans_list.append(transforms.CenterCrop((patch_size, patch_size)))
 
     # The ToTensor transforms the input into the range [0, 1]. However, if
@@ -180,7 +180,7 @@ def get_imagenet_transform(data_mode='training', normalize=False,
     
         prep_trans_list.append(transforms.RandomCrop((patch_size, patch_size),
                                                         pad_if_needed=True))
-    else:
+    elif 'test' in data_mode:
         prep_trans_list.append(transforms.CenterCrop((patch_size, patch_size)))
 
     if normalize:

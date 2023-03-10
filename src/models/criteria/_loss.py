@@ -112,7 +112,6 @@ def setup_loss(criterion, **kwargs):
 
     elif 'msssim' in criterion.lower() or 'ms-ssim' in criterion.lower():
         dist_loss_type = 'MSSSIM'
-
     else:
         dist_loss_type = None
 

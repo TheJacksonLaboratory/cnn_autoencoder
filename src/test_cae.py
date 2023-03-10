@@ -221,7 +221,8 @@ def test_cae(args):
     logger.info(decomp_model)
 
     transform_comp, _, _ = utils.get_zarr_transform(**args.__dict__)
-    transform_decomp, _, _ = utils.get_zarr_transform(compressed_input=True, 
+    transform_decomp, _, _ = utils.get_zarr_transform(data_mode='all',
+                                                      compressed_input=True, 
                                                       normalize=False)
 
     # Get the compression level from the model checkpoint

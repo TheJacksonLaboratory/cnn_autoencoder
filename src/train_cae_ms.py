@@ -13,15 +13,17 @@ from inspect import signature
 from tqdm import tqdm
 
 
-optimization_algorithms = {"Adam": optim.Adam,
-                           "AdamW": optim.AdamW,
-                           "SGD": optim.SGD}
+optimization_algorithms = {
+    "Adam": optim.Adam,
+    "AdamW": optim.AdamW,
+    "SGD": optim.SGD}
 
-scheduler_algorithms = {"ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
-                     "StepLR": optim.lr_scheduler.StepLR,
-                     "LinearLR": optim.lr_scheduler.LinearLR,
-                     "ExponentialLR": optim.lr_scheduler.ExponentialLR,
-                     "CosineAnnealingLR": optim.lr_scheduler.CosineAnnealingLR}
+scheduler_algorithms = {
+    "ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
+    "StepLR": optim.lr_scheduler.StepLR,
+    "LinearLR": optim.lr_scheduler.LinearLR,
+    "ExponentialLR": optim.lr_scheduler.ExponentialLR,
+    "CosineAnnealingLR": optim.lr_scheduler.CosineAnnealingLR}
 
 
 def log_info(step, sub_step, len_data, model, inputs, targets, output,
