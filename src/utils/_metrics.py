@@ -11,7 +11,7 @@ from sklearn.metrics import (accuracy_score,
 
 
 def compute_class_metrics(pred, target, top_k=5, num_classes=None):
-    if pred.shape == 2:
+    if pred.ndim == 2:
         if num_classes is None:
             num_classes = pred.size(1)
         labels = range(num_classes)

@@ -1,4 +1,4 @@
-from .._info import OPTIMIZERS, SCHEDULERS
+from .._info import OPTIMIZERS
 
 
 config_args = [

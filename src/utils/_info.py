@@ -21,11 +21,6 @@ CAE_ACT_LAYERS = ['LeakyReLU',
 OPTIMIZERS = ['Adam',
               'SGD']
 
-SCHEDULERS = ['None',
-              'ReduceOnPlateau',
-              'StepLR',
-              'ExponentialLR']
-
 CAE_MODELS = ['AutoEncoder']
 
 CLASS_MODELS = ['Empty',

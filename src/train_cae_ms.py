@@ -19,7 +19,7 @@ optimization_algorithms = {
     "SGD": optim.SGD}
 
 scheduler_algorithms = {
-    "ReduceOnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
+    "ReduceLROnPlateau": optim.lr_scheduler.ReduceLROnPlateau,
     "StepLR": optim.lr_scheduler.StepLR,
     "LinearLR": optim.lr_scheduler.LinearLR,
     "ExponentialLR": optim.lr_scheduler.ExponentialLR,
@@ -351,7 +351,10 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             if args.progress_bar:
                 current_lr = ''
                 for k, sched in mod_schedulers.items():
-                    current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
+                    if hasattr(sched, '_last_lr'):
+                        current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
+                    else:
+                        current_lr += '{}=None '.format(k)
 
                 channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
                 q.set_description(
@@ -368,7 +371,10 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
             if i % max(1, int(0.01 * len(train_data))) == 0:
                 current_lr = ''
                 for k, sched in mod_schedulers.items():
-                    current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
+                    if hasattr(sched, '_last_lr'):
+                        current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
+                    else:
+                        current_lr += '{}=None '.format(k)
 
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
 
@@ -418,7 +424,10 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 # Log the overall network performance every checkpoint step
                 current_lr = ''
                 for k, sched in mod_schedulers.items():
-                    current_lr += '{}={:.2e} '.format(k, sched.get_last_lr()[0])
+                    if hasattr(sched, '_last_lr'):
+                        current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
+                    else:
+                        current_lr += '{}=None '.format(k)
 
                 logger.info(
                     '[Step {:06d} ({})] Training loss {:0.4f}, validation '
@@ -715,9 +724,14 @@ def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
         if k in checkpoint_state:
             if k == 'fact_ent':
                 model['fact_ent'].module.update(force=True)
-                model['fact_ent'].module._quantized_cdf = checkpoint_state[k]['_quantized_cdf']
-                model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
-                model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
+                if '_quantized_cdf' in checkpoint_state[k]:
+                    model['fact_ent'].module._quantized_cdf = checkpoint_state[k]['_quantized_cdf']
+                if '_offset' in checkpoint_state[k]:
+                    model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
+                if '_cdf_length' in checkpoint_state[k]:
+                    model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
+                model['fact_ent'].module.update(force=True)
+
 
             model[k].module.load_state_dict(checkpoint_state[k], strict=False)
 
@@ -749,13 +763,15 @@ def main(args):
     args.num_classes = num_classes
 
     model = setup_network(args, use_gpu=args.gpu)
-    criterion, stopping_criteria = setup_criteria(args, checkpoint=args.checkpoint)
+    criterion, stopping_criteria = setup_criteria(args,
+                                                  checkpoint=args.checkpoint)
     (mod_optimizers,
      mod_schedulers,
      mod_grad_accumulate) = setup_optim(model, args)
 
     if args.checkpoint is not None:
-        resume_checkpoint(model, mod_optimizers, mod_schedulers, args.checkpoint,
+        resume_checkpoint(model, mod_optimizers, mod_schedulers,
+                          args.checkpoint,
                           gpu=args.gpu)
 
     # Log the training setup
