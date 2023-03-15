@@ -50,7 +50,7 @@ def encode(x, comp_model, transform, offset=0):
 
     return y_q
 
-
+"""
 def compress_image_old(comp_model, input_filename, output_filename, channels_bn,
                    compression_level,
                    patch_size=512,
@@ -226,7 +226,7 @@ def compress_image_old(comp_model, input_filename, output_filename, channels_bn,
             shutil.copytree(os.path.join(fn, 'OME'),
                             os.path.join(output_filename, 'OME'),
                             dirs_exist_ok=True)
-
+"""
 
 def compress_image(checkpoint, input_filename, output_filename, channels_bn,
                    compression_level,
@@ -277,12 +277,15 @@ def compress_image(checkpoint, input_filename, output_filename, channels_bn,
     comp_W = math.ceil(in_W / 2**compression_level)
 
     if len(rois):
-        z = da.from_zarr(z_arr)[rois[0]]
+        z = da.from_zarr(z_arr)[rois[0]].squeeze()
         rois = rois[0]
     else:
-        z = da.from_zarr(z_arr)
+        z = da.from_zarr(z_arr).squeeze()
         rois = None
 
+    data_axes = [a for a in data_axes if a in 'YXC']
+    tran_axes = [data_axes.index(a) for a in 'YXC']
+    z = z.transpose(tran_axes)
     z = z.rechunk(chunks=(patch_size, patch_size, 3))
 
     with ProgressBar():
@@ -327,7 +330,9 @@ def compress_image(checkpoint, input_filename, output_filename, channels_bn,
         if isinstance(z_arr.store, zarr.storage.FSStore):
             metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
             if metadata_resp.status_code == 200:
-                os.mkdir(os.path.join(output_filename, 'OME'))
+                if not os.path.isdir(os.path.join(output_filename, 'OME')):
+                    os.mkdir(os.path.join(output_filename, 'OME'))
+
                 # Download METADATA.ome.xml into the creted output dir
                 with open(os.path.join(output_filename,
                                        'OME',

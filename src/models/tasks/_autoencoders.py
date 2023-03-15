@@ -29,7 +29,8 @@ class ConvolutionalAutoencoder(Codec):
 
     def encode(self, buf):
         h, w, c = buf.shape
-        buf_x = torch.from_numpy(buf).permute(1, 2, 0).reshape(1, c, h, w).float() / 255.0
+
+        buf_x = torch.from_numpy(buf).permute(2, 0, 1).view(1, c, h, w).float() / 255.0
 
         buf_y = self._model['encoder'](buf_x)
         if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
@@ -43,8 +44,6 @@ class ConvolutionalAutoencoder(Codec):
         if out is not None:
             h, w, c = out.shape
             out = ensure_contiguous_ndarray(out)
-        else:
-            h, w = 512, 512
 
         compression_level = len(self._model['decoder'].module.synthesis_track)
         buf_shape = (h // 2 ** compression_level,
@@ -57,9 +56,13 @@ class ConvolutionalAutoencoder(Codec):
 
         buf_x_r = self._model['decoder'](buf_y_q)
 
-        buf_x_r = buf_x_r.cpu().detach().clip(0, 1) * 255.0
-        buf_x_r = buf_x_r.to(torch.uint8).squeeze().numpy()
-
+        buf_x_r = buf_x_r.cpu().detach()[0]
+        buf_x_r = buf_x_r * 255.0
+        buf_x_r = buf_x_r.clip(0, 255).to(torch.uint8)
+        buf_x_r = buf_x_r.permute(1, 2, 0)
+        buf_x_r = buf_x_r.numpy()
+        buf_x_r = np.ascontiguousarray(buf_x_r)
+        buf_x_r = ensure_contiguous_ndarray(buf_x_r)
         return ndarray_copy(buf_x_r, out)
 
 

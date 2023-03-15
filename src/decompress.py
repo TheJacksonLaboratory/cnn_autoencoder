@@ -81,7 +81,7 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
 
     return x_rec_pyr
 
-
+"""
 def decompress_image_old(decomp_model, input_filename, output_filename,
                      patch_size=512,
                      add_offset=False,
@@ -316,11 +316,10 @@ def decompress_image_old(decomp_model, input_filename, output_filename,
             fn_out = (fn_out_base + '_%i' % (reconstruction_level - r)
                       + destination_format)
             with ProgressBar():
-                im = Image.fromarray(
-                    y_r.squeeze().transpose(1, 2, 0).compute())
+                im = Image.fromarray(y_r.compute())
             im.save(fn_out, quality_opts={'compress_level': 9,
                                           'optimize': False})
-
+"""
 
 def decompress_image(checkpoint, input_filename, output_filename,
                      patch_size=512,
@@ -338,7 +337,7 @@ def decompress_image(checkpoint, input_filename, output_filename,
                      range_offset=0.0,
                      range_scale=1.0):
 
-    compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint)
+    compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
 
     fn, rois = utils.parse_roi(input_filename, '.zarr')
     src_group = zarr.open(fn, mode='r')
