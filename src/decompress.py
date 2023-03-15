@@ -15,11 +15,12 @@ import dask
 import dask.array as da
 
 from PIL import Image
-from numcodecs import Blosc
+from numcodecs import Blosc, register_codec
 
 import models
 import utils
 
+register_codec(models.ConvolutionalAutoencoder)
 
 DECOMP_VERSION = '0.1.3'
 
@@ -32,7 +33,7 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
                range_scale=1.0):
 
     y_q_t = torch.from_numpy(y_q.squeeze()).unsqueeze(0).permute(0, 3, 1, 2).float()
-    y_q_t = y_q_t + decomp_model['fact_ent'].quantiles[..., 0].unsqueeze(-1)
+
     with torch.set_grad_enabled(decomp_model.training):
         x_rec = decomp_model['synthesis'](y_q_t)
 
@@ -81,7 +82,7 @@ def decode_pyr(y_q, decomp_model, transform, offset=0, compute_pyramids=False,
     return x_rec_pyr
 
 
-def decompress_image(decomp_model, input_filename, output_filename,
+def decompress_image_old(decomp_model, input_filename, output_filename,
                      patch_size=512,
                      add_offset=False,
                      transform=None,
@@ -321,76 +322,80 @@ def decompress_image(decomp_model, input_filename, output_filename,
                                           'optimize': False})
 
 
-def setup_network(state, rec_level=-1, compute_pyramids=False, use_gpu=False,
-                  lc_pretrained_model=None,
-                  ft_pretrained_model=None):
-    """ Setup a neural network-based image decompression model.
+def decompress_image(checkpoint, input_filename, output_filename,
+                     patch_size=512,
+                     add_offset=False,
+                     transform=None,
+                     compute_pyramids=False,
+                     reconstruction_level=-1,
+                     destination_format='zarr',
+                     data_group='0/0',
+                     data_axes='TCZYX',
+                     seed=None,
+                     decomp_label='reconstruction',
+                     min_range=0.0,
+                     max_range=1.0,
+                     range_offset=0.0,
+                     range_scale=1.0):
 
-    Parameters
-    ----------
-    state : Dictionary
-        A checkpoint state saved during the network training
-    lc_pretrained_model : path to model or None
-        Path to where the model that has been compressed using the LC algorithm is stored.
-    ft_pretrained_model : path to model or None
-        Path to where the model that has been fine tuned using the LC algorithm is stored.
+    compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint)
 
-    Returns
-    -------
-    decomp_model : torch.nn.Module
-        The decompressor model
+    fn, rois = utils.parse_roi(input_filename, '.zarr')
+    src_group = zarr.open(fn, mode='r')
+    z_arr = src_group[data_group]
+    z = da.from_zarr(z_arr)
+    rois = None
 
-    channels_bn : int
-        The number of channels in the compressed representation
-    """
-    if state['args']['version'] in ['0.5.5', '0.5.6']:
-        state['args']['act_layer_type'] = 'LeakyReLU'
+    if len(decomp_label):
+        component = '%s/%s' % (decomp_label, data_group)
+    else:
+        component = data_group
 
-    compression_level = state['args']['compression_level']
+    if 'zarr' in destination_format:
+        comp_pyr = '/'.join(component.split('/')[:-1])
+        comp_r = comp_pyr + '/%i' % 0
+        with ProgressBar():
+            z.to_zarr(output_filename, component=comp_r, overwrite=True,
+                      compressor=compressor)
 
-    cae_model_base = models.AutoEncoder(**state['args'])
+        group = zarr.open(output_filename)
 
-    if compute_pyramids or rec_level < compression_level:
-        cae_model_base.synthesis = models.SynthesizerInflate(rec_level=rec_level,
-                                                             **state['args'])
+        # Copy the labels of the original image
+        if (isinstance(z_arr.store, zarr.storage.FSStore)
+           or not os.path.samefile(output_filename, input_filename)):
+            z_org = zarr.open(output_filename, mode="rw")
+            if 'labels' in z_org.keys() and 'labels' not in group.keys():
+                zarr.copy(z_org['labels'], group)
 
-    cae_model_base.synthesis.load_state_dict(state['decoder'], strict=False)
+            # If the source file has metadata (e.g. extracted by
+            # bioformats2raw) copy that the destination zarr file.
+            if isinstance(z_arr.store, zarr.storage.FSStore):
+                metadata_resp = requests.get(input_filename
+                                             + '/OME/METADATA.ome.xml')
+                if metadata_resp.status_code == 200:
+                    os.mkdir(os.path.join(output_filename, 'OME'))
+                    # Download METADATA.ome.xml into the creted output dir
+                    with open(os.path.join(output_filename,
+                                           'OME',
+                                           'METADATA.ome.xml'),
+                              'wb') as fp:
+                        fp.write(metadata_resp.content)
 
-    cae_model_base.fact_ent.update(force=True)
-    cae_model_base.fact_ent._quantized_cdf = state['fact_ent']['_quantized_cdf']
-    cae_model_base.fact_ent._offset = state['fact_ent']['_offset']
-    cae_model_base.fact_ent._cdf_length = state['fact_ent']['_cdf_length']
-    cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
-    cae_model_base.fact_ent.update(force=True)
+            elif os.path.isdir(os.path.join(input_filename, 'OME')):
+                shutil.copytree(os.path.join(input_filename, 'OME'),
+                                os.path.join(output_filename, 'OME'),
+                                dirs_exist_ok=True)
+    else:
+        # Note that the image should have a number of classes that can be
+        # interpreted as a GRAYSCALE image, RGB image or RBGA image.
+        fn_out_base = output_filename.split(destination_format)[0]
 
-    if state['args']['version'] == '0.5.5':
-        for color_layer in cae_model_base.color_layers:
-            color_layer[0].weight.data.copy_(state['decoder']['synthesis_track.4.weight'])
+        fn_out = fn_out_base + destination_format
+        with ProgressBar():
+            im = Image.fromarray(z.compute())
 
-    if lc_pretrained_model is not None and ft_pretrained_model is not None:
-        # Load the model checkpoint from its compressed version
-        lc_compressed_model_state = torch.load(lc_pretrained_model,
-                                               map_location='cpu')
-        ft_compressed_model_state = torch.load(ft_pretrained_model,
-                                               map_location='cpu')['model_state']
-
-        cae_model_base = nn.DataParallel(cae_model_base)
-        cae_model_base = utils.load_compressed_dict(cae_model_base,
-                                                    lc_compressed_model_state,
-                                                    ft_compressed_model_state,
-                                                    conv_scheme='scheme_2')
-        cae_model_base = cae_model_base.module
-
-    decomp_model = nn.ModuleDict(
-        dict(synthesis=nn.DataParallel(cae_model_base.synthesis),
-             fact_ent=cae_model_base.fact_ent))
-
-    if use_gpu:
-        decomp_model.cuda()
-
-    decomp_model.eval()
-
-    return decomp_model
+        im.save(fn_out, quality_opts={'compress_level': 9,
+                                        'optimize': False})
 
 
 def decompress(args):
@@ -413,11 +418,6 @@ def decompress(args):
         range_scale = 1.0
         range_offset = 0.0
 
-    decomp_model = setup_network(state, rec_level=args.reconstruction_level,
-                                 compute_pyramids=args.compute_pyramids,
-                                 use_gpu=args.gpu,
-                                 lc_pretrained_model=args.lc_pretrained_model,
-                                 ft_pretrained_model=args.ft_pretrained_model)
     transform, _, _ = utils.get_zarr_transform(normalize=False,
                                                compressed_input=False)
 
@@ -445,7 +445,7 @@ def decompress(args):
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
         with torch.no_grad():
             decompress_image(
-                decomp_model=decomp_model,
+                checkpoint=args.checkpoint,
                 input_filename=in_fn,
                 output_filename=out_fn,
                 patch_size=args.patch_size,

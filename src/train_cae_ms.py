@@ -730,8 +730,6 @@ def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
                     model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
                 if '_cdf_length' in checkpoint_state[k]:
                     model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
-                model['fact_ent'].module.update(force=True)
-
 
             model[k].module.load_state_dict(checkpoint_state[k], strict=False)
 

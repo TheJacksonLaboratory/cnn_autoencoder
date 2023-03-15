@@ -15,13 +15,15 @@ import zarr
 import dask
 import dask.array as da
 
-from numcodecs import Blosc
+from numcodecs import Blosc, register_codec
+
 
 import models
-from compressai.entropy_models import EntropyBottleneck
 import utils
+from compressai.entropy_models import EntropyBottleneck
 from lc import Algorithm
 
+register_codec(models.ConvolutionalAutoencoder)
 
 COMP_VERSION = '0.1.3'
 
@@ -43,15 +45,13 @@ def encode(x, comp_model, transform, offset=0):
         y_q = y_q.cpu()
         h, w = y_q.shape[-2:]
         y_q = y_q[..., offset:h-offset, offset:w-offset]
-
-        y_q = y_q - comp_model['fact_ent'].module.quantiles[..., 0].unsqueeze(-1)
         y_q = y_q.round().to(torch.int16)
         y_q = y_q.unsqueeze(2).numpy()
 
     return y_q
 
 
-def compress_image(comp_model, input_filename, output_filename, channels_bn,
+def compress_image_old(comp_model, input_filename, output_filename, channels_bn,
                    compression_level,
                    patch_size=512,
                    add_offset=False,
@@ -63,6 +63,7 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                    comp_label='compressed'):
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
+
     fn, rois = utils.parse_roi(input_filename, source_format)
 
     s3_obj = utils.connect_s3(fn)
@@ -227,66 +228,117 @@ def compress_image(comp_model, input_filename, output_filename, channels_bn,
                             dirs_exist_ok=True)
 
 
-def setup_network(state, use_gpu=False, lc_pretrained_model=None,
-                  ft_pretrained_model=None):
-    """ Setup a neural network-based image compression model.
+def compress_image(checkpoint, input_filename, output_filename, channels_bn,
+                   compression_level,
+                   patch_size=512,
+                   add_offset=False,
+                   transform=None,
+                   source_format='zarr',
+                   data_group='0/0',
+                   data_axes='TCZYX',
+                   seed=None,
+                   comp_label='compressed'):
 
-    Parameters
-    ----------
-    state : Dictionary
-        A checkpoint state saved during the network training
-    lc_pretrained_model : path to model or None
-        Path to where the model that has been compressed using the LC algorithm is stored.
-    ft_pretrained_model : path to model or None
-        Path to where the model that has been fine tuned using the LC algorithm is stored.
+    compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint)
+    # compressor = Blosc()
 
-    Returns
-    -------
-    comp_model : torch.nn.Module
-        The compressor model
-    """
-    if state['args']['version'] in ['0.5.5', '0.5.6']:
-        state['args']['act_layer_type'] = 'LeakyReLU'
+    fn, rois = utils.parse_roi(input_filename, source_format)
 
-    cae_model_base = models.AutoEncoder(**state['args'])
+    s3_obj = utils.connect_s3(fn)
+    z_arr, _, _ = utils.image_to_zarr(fn, patch_size, source_format,
+                                      data_group, s3_obj=s3_obj)
 
-    # cae_model_base.embedding.load_state_dict(state['embedding'])
-    cae_model_base.analysis.load_state_dict(state['encoder'])
-    
-    cae_model_base.fact_ent.update(force=True)
-    cae_model_base.fact_ent._quantized_cdf = state['fact_ent']['_quantized_cdf']
-    cae_model_base.fact_ent._offset = state['fact_ent']['_offset']
-    cae_model_base.fact_ent._cdf_length = state['fact_ent']['_cdf_length']
-    cae_model_base.fact_ent.load_state_dict(state['fact_ent'], strict=False)
-    cae_model_base.fact_ent.update(force=True)
-    
-    if lc_pretrained_model is not None and ft_pretrained_model is not None:
+    if not isinstance(z_arr, zarr.core.Array):
+        z_arr = zarr.array(data=z_arr[:])
 
-        # Load the model checkpoint from its compressed version
-        lc_compressed_model_state = torch.load(lc_pretrained_model,
-                                               map_location='cpu')
-        ft_compressed_model_state = torch.load(ft_pretrained_model,
-                                               map_location='cpu')['model_state']
+    a_ch, a_H, a_W = [data_axes.index(a) for a in "CYX"]
+    in_channels = z_arr.shape[a_ch]
+    if len(rois):
+        in_H = (rois[0][a_H].stop - rois[0][a_H].start) // rois[0][a_H].step
+        in_W = (rois[0][a_W].stop - rois[0][a_W].start) // rois[0][a_W].step
+    else:
+        in_H = z_arr.shape[a_H]
+        in_W = z_arr.shape[a_W]
 
-        cae_model_base = nn.DataParallel(cae_model_base)
-        cae_model_base = utils.load_compressed_dict(cae_model_base,
-                                                    lc_compressed_model_state,
-                                                    ft_compressed_model_state,
-                                                    conv_scheme='scheme_2')
-        cae_model_base = cae_model_base.module
+    in_offset = 0
+    out_patch_size = patch_size // 2 ** compression_level
+    if add_offset:
+        in_offset = 2 ** compression_level
 
-    comp_model = nn.ModuleDict(
-        dict(
-            # embedding=nn.DataParallel(cae_model_base.embedding),
-            analysis=nn.DataParallel(cae_model_base.analysis),
-            fact_ent=nn.DataParallel(cae_model_base.fact_ent)))
+    np_H_prior = utils.compute_num_patches(in_H, patch_size, 0, patch_size)
+    np_H_prior += (np_H_prior * patch_size - in_H) < 0
+    pad_y = np_H_prior * patch_size - in_H
 
-    if use_gpu:
-        comp_model.cuda()
+    np_W_prior = utils.compute_num_patches(in_W, patch_size, 0, patch_size)
+    np_W_prior += (np_W_prior * patch_size - in_W) < 0
+    pad_x = np_W_prior * patch_size - in_W
 
-    comp_model.eval()
+    comp_H = math.ceil(in_H / 2**compression_level)
+    comp_W = math.ceil(in_W / 2**compression_level)
 
-    return comp_model
+    if len(rois):
+        z = da.from_zarr(z_arr)[rois[0]]
+        rois = rois[0]
+    else:
+        z = da.from_zarr(z_arr)
+        rois = None
+
+    z = z.rechunk(chunks=(patch_size, patch_size, 3))
+
+    with ProgressBar():
+        z.to_zarr(output_filename, component='comp', overwrite=True,
+                  compressor=compressor)
+
+    # Add metadata to the compressed zarr file
+    group = zarr.open(output_filename)
+    if len(comp_label):
+        comp_group = group[comp_label]
+    else:
+        comp_group = group
+
+    comp_group.attrs['compression_metadata'] = dict(
+        height=in_H,
+        width=in_W,
+        compressed_height=comp_H,
+        compressed_width=comp_W,
+        channels=in_channels,
+        compressed_channels=channels_bn,
+        axes='TCZYX',
+        compression_level=compression_level,
+        patch_size=patch_size,
+        offset=add_offset,
+        model_seed=seed,
+        original=data_group,
+        group=comp_label,
+        rois=str(rois),
+        version=COMP_VERSION
+    )
+
+    # Copy the labels of the original image
+    if ('zarr' in source_format
+       and (isinstance(z_arr.store, zarr.storage.FSStore)
+            or not os.path.samefile(output_filename, fn))):
+        z_org = zarr.open(output_filename, mode="rw")
+        if 'labels' in z_org.keys() and 'labels' not in group.keys():
+            zarr.copy(z_org['labels'], group)
+
+        # If the source file has metadata (e.g. extracted by bioformats2raw)
+        # copy that the destination zarr file.
+        if isinstance(z_arr.store, zarr.storage.FSStore):
+            metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
+            if metadata_resp.status_code == 200:
+                os.mkdir(os.path.join(output_filename, 'OME'))
+                # Download METADATA.ome.xml into the creted output dir
+                with open(os.path.join(output_filename,
+                                       'OME',
+                                       'METADATA.ome.xml'),
+                          'wb') as fp:
+                    fp.write(metadata_resp.content)
+
+        elif os.path.isdir(os.path.join(fn, 'OME')):
+            shutil.copytree(os.path.join(fn, 'OME'),
+                            os.path.join(output_filename, 'OME'),
+                            dirs_exist_ok=True)
 
 
 def compress(args):
@@ -297,10 +349,6 @@ def compress(args):
 
     # Open checkpoint from trained model state
     state = utils.load_state(args)
-
-    comp_model = setup_network(state, args.gpu,
-                               lc_pretrained_model=args.lc_pretrained_model,
-                               ft_pretrained_model=args.ft_pretrained_model)
     transform, _, _ = utils.get_zarr_transform(**args.__dict__)
 
     # Get the compression level from the model checkpoint
@@ -328,7 +376,7 @@ def compress(args):
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
         compress_image(
-            comp_model=comp_model,
+            checkpoint=args.checkpoint,
             input_filename=in_fn,
             output_filename=out_fn,
             channels_bn=state['args']['channels_bn'],

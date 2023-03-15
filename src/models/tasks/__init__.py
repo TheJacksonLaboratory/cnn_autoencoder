@@ -3,6 +3,7 @@ from ._autoencoders import (setup_autoencoder_modules,
                             Synthesizer,
                             SynthesizerInflate,
                             AutoEncoder,
+                            ConvolutionalAutoencoder,
                             CAE_ACT_LAYERS,
                             CAE_MODELS)
 

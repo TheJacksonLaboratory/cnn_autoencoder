@@ -37,18 +37,23 @@ def test(model, test_data, args):
     if args.progress_bar:
         q = tqdm(total=len(test_data), desc="Testing", position=0)
 
-    all_targets = []
-    all_predictions = []
+    n_samples = 0
+    true_pos = 0
+    true_pos_top = 0
 
     for x, t in test_data:
         output = forward_step(x, model, trainable_modules=None)
         pred = output['t_pred'].detach().cpu().argmax(dim=1)
+        pred_top = torch.topk(output['t_pred'].detach().cpu(), k=5)[1]
 
-        all_targets.append(t)
-        all_predictions.append(pred)
+        true_pos += (pred == t).sum().item()
+        true_pos_top += (pred_top == t.view(-1, 1)).any(dim=1).sum().item()
+        n_samples += x.size(0)
 
         # End of training step
         if args.progress_bar:
+            q.set_description('Test metrics acc:{:.3f} acc_top:{:.3f}'.format(
+                true_pos / n_samples, true_pos_top / n_samples))
             q.update()
 
     else:
@@ -57,15 +62,9 @@ def test(model, test_data, args):
     if args.progress_bar:
         q.close()
 
-    all_targets = torch.cat(all_targets).numpy()
-    all_predictions = torch.cat(all_predictions).numpy()
-
-    class_metrics = utils.compute_class_metrics(all_predictions, all_targets,
-                                                num_classes=args.num_classes)
-
-    log_string = 'Test metrics'
-    for k, m in class_metrics.items():
-        log_string += ' {}:{:.3f}'.format(k, m)
+    acc = true_pos / n_samples
+    acc_top = true_pos_top / n_samples
+    log_string = 'Test metrics acc:{:.3f} acc_top:{:.3f}'.format(acc, acc_top)
 
     logger.info(log_string)
 

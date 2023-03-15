@@ -42,7 +42,7 @@ data_args = [
         'dest': 'data_group',
         'type': str,
         'help': 'For Zarr datasets, the group from where the data is retrieved',
-        'default': '0/0'
+        'default': ''
         }
     },
     {'tasks': ['all'],

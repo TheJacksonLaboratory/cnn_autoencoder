@@ -7,6 +7,61 @@ import torch.nn.functional as F
 from compressai.layers import GDN
 from compressai.entropy_models import EntropyBottleneck
 
+import torch
+from numcodecs.abc import Codec
+from numcodecs.compat import ndarray_copy, ensure_contiguous_ndarray
+
+
+
+class ConvolutionalAutoencoder(Codec):
+    codec_id = 'cae'
+    def __init__(self, checkpoint):
+        self.checkpoint = checkpoint
+        checkpoint_state = torch.load(checkpoint, map_location='cpu')
+        self._model = setup_autoencoder_modules(**checkpoint_state['args'])
+
+        # If there are more than one GPU, DataParallel handles automatically the
+        # distribution of the work.
+        for k in self._model.keys():
+            self._model[k] = nn.DataParallel(self._model[k])
+
+        load_state_dict(self._model, checkpoint_state=checkpoint_state)
+
+    def encode(self, buf):
+        h, w, c = buf.shape
+        buf_x = torch.from_numpy(buf).permute(1, 2, 0).reshape(1, c, h, w).float() / 255.0
+
+        buf_y = self._model['encoder'](buf_x)
+        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
+            buf = self._model['fact_ent'].module.compress(buf_y)
+        else:
+            buf = self._model['fact_ent'].compress(buf_y)
+
+        return buf[0]
+
+    def decode(self, buf, out=None):
+        if out is not None:
+            h, w, c = out.shape
+            out = ensure_contiguous_ndarray(out)
+        else:
+            h, w = 512, 512
+
+        compression_level = len(self._model['decoder'].module.synthesis_track)
+        buf_shape = (h // 2 ** compression_level,
+                        w // 2 ** compression_level)
+
+        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
+            buf_y_q = self._model['fact_ent'].module.decompress([buf], size=buf_shape)
+        else:
+            buf_y_q = self._model['fact_ent'].decompress([buf], size=buf_shape)
+
+        buf_x_r = self._model['decoder'](buf_y_q)
+
+        buf_x_r = buf_x_r.cpu().detach().clip(0, 1) * 255.0
+        buf_x_r = buf_x_r.to(torch.uint8).squeeze().numpy()
+
+        return ndarray_copy(buf_x_r, out)
+
 
 CAE_ACT_LAYERS = ['LeakyReLU',
                   'ReLU',
@@ -569,6 +624,24 @@ def setup_autoencoder_modules(channels_bn=192, compression_level=4, K=4, r=3,
         fact_ent = EmptyBottleneck()
 
     return dict(encoder=encoder, decoder=decoder, fact_ent=fact_ent)
+
+
+def load_state_dict(model, checkpoint_state):
+    for k in model.keys():
+        if k in checkpoint_state:
+            if k == 'fact_ent':
+                model['fact_ent'].module.update(force=True)
+                if '_quantized_cdf' in checkpoint_state[k]:
+                    model['fact_ent'].module._quantized_cdf = checkpoint_state[k]['_quantized_cdf']
+                if '_offset' in checkpoint_state[k]:
+                    model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
+                if '_cdf_length' in checkpoint_state[k]:
+                    model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
+
+            model[k].module.load_state_dict(checkpoint_state[k], strict=False)
+
+    if 'fact_ent' in model.keys():
+        model['fact_ent'].module.update(force=True)
 
 
 CAE_MODELS = {

@@ -3,7 +3,7 @@ from .._info import OPTIMIZERS
 
 config_args = [
     {'tasks': ['all'],
-        'modes': ['training'],
+        'modes': ['training', 'test'],
         'flags': ('-bs', '--batch'),
         'details': {
         'dest': 'batch_size',
@@ -215,7 +215,7 @@ config_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['training'],
+        'modes': ['all'],
         'flags': ('-chk', '--checkpoint'),
         'details': {
         'dest': 'checkpoint',
