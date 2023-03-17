@@ -4,6 +4,10 @@ import torch
 
 cae_replace_keys = [
     ('quantiles', '', 0),
+    ('_offset', '', 0),
+    ('_quantized_cdf', '', 0),
+    ('_cdf_length', '', 0),
+    ('likelihood_lower_bound.bound', '', 0),
     ('_matrices.', '_matrix%i', 1),
     ('_biases.', '_bias%i', 1),
     ('_factors.', '_factor%i', 1),
@@ -15,6 +19,10 @@ cae_replace_keys = [
 
 cai_replace_keys = [
     ('quantiles', '', 0),
+    ('_offset', '', 0),
+    ('_quantized_cdf', '', 0),
+    ('_cdf_length', '', 0),
+    ('likelihood_lower_bound.bound', '', 0),
     ('_matrix', '', 0),
     ('_bias', '', 0),
     ('_factor', '', 0),
@@ -43,10 +51,11 @@ def ext_idx_cae(k, k_s, n_idx):
         idx = rem
         rem = ''
 
-    if n_idx == 1:
-        idx = int(idx)
-    else:
-        idx = (int(idx), int(idx))
+    idx = int(idx)
+    if n_idx > 1:
+        idx1 = int(idx / 2)
+        idx2 = idx % 2
+        idx = (idx1, idx2)
     return idx, rem
 
 
@@ -88,11 +97,12 @@ def transfer_weights(chk_src, cai2cae=True):
                     if n_idx == 0:
                         new_key = m_dst + k
                         trans_w = chk_new.pop(k)
+                        print(k, k_s, new_key)
 
                     elif n_idx > 0:
-                        print(k, k_s, k.split(k_s), len(k.split(k_s)))
                         idx, rem = ext_idx(k, k_s, n_idx)
                         new_key = m_dst + k_d % idx + rem
+                        print(k, k_s, k.split(k_s), len(k.split(k_s)), new_key)
                         trans_w = chk_new.pop(k)
 
                     break

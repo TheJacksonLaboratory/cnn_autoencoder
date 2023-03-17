@@ -201,7 +201,7 @@ def get_ImageNet(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
     return train_queue, valid_queue, 1000
 
 
-def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
+def get_zarr_dataset(data_dir='.', batch_size=1,
                      val_batch_size=1,
                      workers=0,
                      data_mode='training',
@@ -214,6 +214,7 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
                      gpu=False,
                      mode='training',
                      num_classes=None,
+                     criterion='',
                      **kwargs):
     """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
@@ -223,20 +224,10 @@ def get_zarr_dataset(data_dir='.', task='autoencoder', batch_size=1,
      input_target_trans,
      target_trans) = get_zarr_transform(data_mode=data_mode, **kwargs)
 
-    if task == 'autoencoder':
+    if 'ce' in criterion.lower() and mode in ['training', 'test']:
+        histo_dataset = LabeledZarrDataset
+    else:
         histo_dataset = ZarrDataset
-
-    elif task == 'segmentation':
-        if mode in ['training', 'test']:
-            histo_dataset = LabeledZarrDataset
-        else:
-            histo_dataset = ZarrDataset
-
-    elif task == 'classification':
-        if mode in ['training', 'test']:
-            histo_dataset = LabeledZarrDataset
-        else:
-            histo_dataset = ZarrDataset
 
     # Modes can vary from testing, segmentation, compress, decompress, etc.
     # For this reason, only when it is properly training, two data queues are

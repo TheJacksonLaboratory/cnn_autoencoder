@@ -91,7 +91,7 @@ metric_fun = {'dist': compute_rmse,
               'delta_cielab': compute_deltaCIELAB}
 
 
-def test_image(comp_model, decomp_model, input_filename,
+def test_image(checkpoint, input_filename,
                channels_bn,
                compression_level,
                patch_size=512,
@@ -109,7 +109,7 @@ def test_image(comp_model, decomp_model, input_filename,
                range_scale=1.0):
 
     e_time = perf_counter()
-    compress.compress_image(comp_model, input_filename, temp_output_filename,
+    compress.compress_image(checkpoint, input_filename, temp_output_filename,
                             channels_bn,
                             compression_level,
                             patch_size=patch_size,
@@ -120,7 +120,7 @@ def test_image(comp_model, decomp_model, input_filename,
                             data_axes=data_axes,
                             seed=seed,
                             comp_label='compressed')
-    decompress.decompress_image(decomp_model, temp_output_filename,
+    decompress.decompress_image(checkpoint, temp_output_filename,
                                 temp_output_filename,
                                 patch_size=patch_size,
                                 add_offset=add_offset,
@@ -158,7 +158,7 @@ def test_image(comp_model, decomp_model, input_filename,
     x_r = zarr.open(temp_output_filename, mode="r")['decompressed/0']
 
     x = np.transpose(x, transpose_order).squeeze()
-    x_r = np.transpose(x_r, (3, 4, 1, 0, 2)).squeeze()
+    x_r = np.transpose(x_r, transpose_order).squeeze()
 
     all_metrics = {}
     all_extra_info = {}
@@ -210,21 +210,6 @@ def test_cae(args):
         range_scale = 1.0
         range_offset = 0.0
 
-    comp_model = compress.setup_network(state, args.use_gpu)
-    decomp_model = decompress.setup_network(state, rec_level=-1,
-                                            compute_pyramids=False,
-                                            use_gpu=args.use_gpu)
-
-    # Log the training setup
-    logger.info('Network architecture:')
-    logger.info(comp_model)
-    logger.info(decomp_model)
-
-    transform_comp, _, _ = utils.get_zarr_transform(**args.__dict__)
-    transform_decomp, _, _ = utils.get_zarr_transform(data_mode='all',
-                                                      compressed_input=True, 
-                                                      normalize=False)
-
     # Get the compression level from the model checkpoint
     compression_level = state['args']['compression_level']
 
@@ -242,15 +227,14 @@ def test_cae(args):
         args.output_dir += ".zarr"
 
     for i, in_fn in enumerate(input_fn_list):
-        all_metrics = test_image(comp_model=comp_model,
-                                 decomp_model=decomp_model,
+        all_metrics = test_image(checkpoint=args.checkpoint,
                                  input_filename=in_fn,
                                  channels_bn=state['args']['channels_bn'],
                                  compression_level=compression_level,
                                  patch_size=args.patch_size,
                                  add_offset=args.add_offset,
-                                 transform_comp=transform_comp,
-                                 transform_decomp=transform_decomp,
+                                 transform_comp=None,
+                                 transform_decomp=None,
                                  source_format=args.source_format,
                                  data_axes=args.data_axes,
                                  data_group=args.data_group,

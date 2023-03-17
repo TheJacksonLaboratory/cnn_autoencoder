@@ -1,3 +1,4 @@
+import struct
 import math
 import numpy as np
 import torch
@@ -10,60 +11,6 @@ from compressai.entropy_models import EntropyBottleneck
 import torch
 from numcodecs.abc import Codec
 from numcodecs.compat import ndarray_copy, ensure_contiguous_ndarray
-
-
-
-class ConvolutionalAutoencoder(Codec):
-    codec_id = 'cae'
-    def __init__(self, checkpoint):
-        self.checkpoint = checkpoint
-        checkpoint_state = torch.load(checkpoint, map_location='cpu')
-        self._model = setup_autoencoder_modules(**checkpoint_state['args'])
-
-        # If there are more than one GPU, DataParallel handles automatically the
-        # distribution of the work.
-        for k in self._model.keys():
-            self._model[k] = nn.DataParallel(self._model[k])
-
-        load_state_dict(self._model, checkpoint_state=checkpoint_state)
-
-    def encode(self, buf):
-        h, w, c = buf.shape
-
-        buf_x = torch.from_numpy(buf).permute(2, 0, 1).view(1, c, h, w).float() / 255.0
-
-        buf_y = self._model['encoder'](buf_x)
-        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
-            buf = self._model['fact_ent'].module.compress(buf_y)
-        else:
-            buf = self._model['fact_ent'].compress(buf_y)
-
-        return buf[0]
-
-    def decode(self, buf, out=None):
-        if out is not None:
-            h, w, c = out.shape
-            out = ensure_contiguous_ndarray(out)
-
-        compression_level = len(self._model['decoder'].module.synthesis_track)
-        buf_shape = (h // 2 ** compression_level,
-                        w // 2 ** compression_level)
-
-        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
-            buf_y_q = self._model['fact_ent'].module.decompress([buf], size=buf_shape)
-        else:
-            buf_y_q = self._model['fact_ent'].decompress([buf], size=buf_shape)
-
-        buf_x_r = self._model['decoder'](buf_y_q)
-
-        buf_x_r = buf_x_r.cpu().detach()[0]
-        buf_x_r = buf_x_r * 255.0
-        buf_x_r = buf_x_r.clip(0, 255).to(torch.uint8)
-        buf_x_r = buf_x_r.permute(1, 2, 0)
-        buf_x_r = buf_x_r.numpy()
-        buf_x_r = np.ascontiguousarray(buf_x_r)
-        buf_x_r = ensure_contiguous_ndarray(buf_x_r)
-        return ndarray_copy(buf_x_r, out)
 
 
 CAE_ACT_LAYERS = ['LeakyReLU',
@@ -603,43 +550,57 @@ class AutoEncoder(nn.Module):
         return x_r, y, p_y
 
 
+CAE_MODELS = {
+    "AutoEncoder": AutoEncoder
+}
+
+
 def setup_autoencoder_modules(channels_bn=192, compression_level=4, K=4, r=3,
                               multiscale_analysis=False,
+                              enabled_modules=None,
                               **kwargs):
+    if enabled_modules is None:
+        enabled_modules = ['encoder', 'decoder', 'fact_ent']
 
-    encoder = Analyzer(channels_bn=channels_bn,
-                       compression_level=compression_level,
-                       **kwargs)
+    model = {}
+    if 'encoder' in enabled_modules:
+        model['encoder'] = Analyzer(channels_bn=channels_bn,
+                                    compression_level=compression_level,
+                                    **kwargs)
 
-    if multiscale_analysis:
-        synthesizer_class = SynthesizerInflate
-    else:
-        synthesizer_class = Synthesizer
+    if 'decoder' in enabled_modules:
+        if multiscale_analysis:
+            synth_class = SynthesizerInflate
+        else:
+            synth_class = Synthesizer
 
-    decoder = synthesizer_class(channels_bn=channels_bn,
-                                compression_level=compression_level,
-                                **kwargs)
+        model['decoder'] = synth_class(channels_bn=channels_bn,
+                                       compression_level=compression_level,
+                                       **kwargs)
 
-    if compression_level > 0:
-        fact_ent = EntropyBottleneck(channels=channels_bn,
-                                     filters=[r] * K)
-    else:
-        fact_ent = EmptyBottleneck()
+    if 'fact_ent' in enabled_modules:
+        if compression_level > 0:
+            model['fact_ent'] = EntropyBottleneck(channels=channels_bn,
+                                                  filters=[r] * K)
+        else:
+            model['fact_ent'] = EmptyBottleneck()
 
-    return dict(encoder=encoder, decoder=decoder, fact_ent=fact_ent)
+    return model
 
 
 def load_state_dict(model, checkpoint_state):
     for k in model.keys():
         if k in checkpoint_state:
             if k == 'fact_ent':
-                model['fact_ent'].module.update(force=True)
                 if '_quantized_cdf' in checkpoint_state[k]:
-                    model['fact_ent'].module._quantized_cdf = checkpoint_state[k]['_quantized_cdf']
+                    model['fact_ent'].module._quantized_cdf = \
+                        checkpoint_state[k]['_quantized_cdf']
                 if '_offset' in checkpoint_state[k]:
-                    model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
+                    model['fact_ent'].module._offset = \
+                        checkpoint_state[k]['_offset']
                 if '_cdf_length' in checkpoint_state[k]:
-                    model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
+                    model['fact_ent'].module._cdf_length = \
+                        checkpoint_state[k]['_cdf_length']
 
             model[k].module.load_state_dict(checkpoint_state[k], strict=False)
 
@@ -647,6 +608,76 @@ def load_state_dict(model, checkpoint_state):
         model['fact_ent'].module.update(force=True)
 
 
-CAE_MODELS = {
-    "AutoEncoder": AutoEncoder
-}
+def from_state_dict(checkpoint_state):
+    model = setup_autoencoder_modules(**checkpoint_state['args'])
+
+    # If there are more than one GPU, DataParallel handles automatically the
+    # distribution of the work.
+    for k in model.keys():
+        model[k] = nn.DataParallel(model[k])
+
+    load_state_dict(model, checkpoint_state)
+
+    return model
+
+
+class ConvolutionalAutoencoder(Codec):
+    codec_id = 'cae'
+    def __init__(self, checkpoint, gpu=False):
+        self.checkpoint = checkpoint
+        self.gpu = gpu
+
+        checkpoint_state = torch.load(checkpoint, map_location='cpu')
+        self._model = from_state_dict(checkpoint_state)
+
+        for k in self._model.keys():
+            self._model[k].eval()
+            if gpu and torch.cuda.is_available():
+                self._model[k].cuda()
+
+    def encode(self, buf):
+        h, w, c = buf.shape
+
+        buf_x = torch.from_numpy(buf)
+        buf_x = buf_x.permute(2, 0, 1)
+        buf_x = buf_x.view(1, c, h, w)
+        buf_x = buf_x.float() / 255.0
+
+        buf_y = self._model['encoder'](buf_x)
+        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
+            buf_ae = self._model['fact_ent'].module.compress(buf_y)
+        else:
+            buf_ae = self._model['fact_ent'].compress(buf_y)
+
+        chunk_size_code = struct.pack('>QQ', h, w)
+
+        return chunk_size_code + buf_ae[0]
+
+    def decode(self, buf, out=None):
+        if out is not None:
+            out = ensure_contiguous_ndarray(out)
+
+        compression_level = len(self._model['decoder'].module.synthesis_track)
+
+        h, w = struct.unpack('>QQ', buf[:16])
+
+        buf_shape = (h // 2 ** compression_level, w // 2 ** compression_level)
+
+        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
+            buf_y_q = self._model['fact_ent'].module.decompress([buf[16:]],
+                                                                size=buf_shape)
+        else:
+            buf_y_q = self._model['fact_ent'].decompress([buf[16:]],
+                                                         size=buf_shape)
+
+        buf_x_r = self._model['decoder'](buf_y_q)
+
+        buf_x_r = buf_x_r.cpu().detach()[0]
+        buf_x_r = buf_x_r * 255.0
+        buf_x_r = buf_x_r.clip(0, 255).to(torch.uint8)
+        buf_x_r = buf_x_r.permute(1, 2, 0)
+        buf_x_r = buf_x_r.numpy()
+        buf_x_r = np.ascontiguousarray(buf_x_r)
+        buf_x_r = ensure_contiguous_ndarray(buf_x_r)
+
+        return ndarray_copy(buf_x_r, out)

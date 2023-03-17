@@ -87,9 +87,11 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
     if 'class_error' in loss_dict:
         log_string += ' C={:.3f}'.format(loss_dict['class_error'].item())
         num_classes = output['t_pred'].size(1)
+        top_k = min(5, num_classes)
+
         class_metrics = utils.compute_class_metrics(output['t_pred'],
                                                     targets,
-                                                    top_k=5,
+                                                    top_k=top_k,
                                                     num_classes=num_classes)
         if progress_bar:
             log_string += ' acc:{:.3f} top5:{:.3f}'.format(
@@ -112,7 +114,7 @@ def forward_step(x, model, trainable_modules=None):
     if trainable_modules is None:
         trainable_modules = []
 
-    torch.set_grad_enabled('enocder' in trainable_modules)
+    torch.set_grad_enabled('encoder' in trainable_modules)
     y = model['encoder'](x)
     torch.enable_grad()
 
@@ -513,7 +515,11 @@ def setup_network(args, use_gpu=False):
         args_dict = args.__dict__
 
     model = models.setup_autoencoder_modules(**args_dict)
-    model.update(models.setup_classifier_modules(**args_dict))
+
+    if args_dict.get('class_model_type', '') in models.CLASS_MODELS.keys():
+        model.update(models.setup_classifier_modules(**args_dict))
+    elif args_dict.get('class_model_type', '') in models.SEG_MODELS.keys():
+        model.update(models.setup_segmenter_modules(**args_dict))
 
     # If there are more than one GPU, DataParallel handles automatically the
     # distribution of the work.

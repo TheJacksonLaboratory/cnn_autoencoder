@@ -6,9 +6,9 @@ from .._info import DATASETS
 data_args = [
     {'tasks': ['all'],
         'modes': ['training'],
-        'flags': ('-lg', '--labels-group'),
+        'flags': ('-ldg', '--labels-data-group'),
         'details': {
-        'dest': 'labels_group',
+        'dest': 'label_data_group',
         'type': str,
         'help': 'For Zarr datasets, the group from where the lables are '
                 'retrieved',

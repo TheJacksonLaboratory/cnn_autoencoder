@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# TODO: Implement a version of the Inception V3, Mobilenet
+# TODO: Implement a version of the Mobilenet
 
 
 class EmptyClassifierHead(nn.Module):

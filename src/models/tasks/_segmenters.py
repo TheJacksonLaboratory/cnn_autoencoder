@@ -3,6 +3,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+
+class EmptySegmenterHead(nn.Module):
+    """This empty segmenter is intended for debug the main training process.
+    """
+    def __init__(self, **kwargs):
+        super(EmptySegmenterHead, self).__init__()
+
+    def forward(self, x):
+        return None
+
+
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3,
                  downsample_op=nn.MaxPool2d):
@@ -218,7 +229,7 @@ class UNet(nn.Module):
 
         # Pixel-wise class prediction
         y = self.fc(fx)
-        return y
+        return y, None
 
 
 class JNet(UNet):
@@ -243,6 +254,18 @@ class JNet(UNet):
             stride=2,
             padding=0,
             bias=False)
+
+
+SEG_MODELS = {
+    "Empty": EmptySegmenterHead,
+    "UNet": UNet,
+    "JNet": JNet,
+    }
+
+
+def setup_segmenter_modules(class_model_type, **kwargs):
+    seg_model = SEG_MODELS[class_model_type](**kwargs)
+    return dict(class_model=seg_model)
 
 
 if __name__ == "__main__":

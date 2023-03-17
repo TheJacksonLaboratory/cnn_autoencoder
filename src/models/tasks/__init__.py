@@ -9,4 +9,11 @@ from ._autoencoders import (setup_autoencoder_modules,
 
 from ._classifiers import (setup_classifier_modules,
                            ViTClassifierHead,
-                           EmptyClassifierHead)
+                           EmptyClassifierHead,
+                           CLASS_MODELS)
+
+from ._segmenters import (setup_segmenter_modules,
+                          EmptySegmenterHead,
+                          UNet,
+                          JNet,
+                          SEG_MODELS)

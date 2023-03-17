@@ -11,16 +11,21 @@ from sklearn.metrics import (accuracy_score,
 
 
 def compute_class_metrics(pred, target, top_k=5, num_classes=None):
-    if pred.ndim == 2:
-        if num_classes is None:
-            num_classes = pred.size(1)
+    if num_classes is None:
+        num_classes = pred.size(1)
+
+    if pred.ndim == 4:
+        target = target.cpu().permute(0, 2, 3, 1).reshape(-1, num_classes)
+        pred = pred.cpu().detach().permute(0, 2, 3, 1).reshape(-1, num_classes)
+
+    if num_classes > 1:
         labels = range(num_classes)
         pred_scores = torch.softmax(pred.detach(), dim=1).cpu().numpy()
         pred_class = torch.argmax(pred.detach(), dim=1).cpu().numpy()
         one_hot_target = F.one_hot(target.cpu(), num_classes).numpy()
+
     else:
-        pred_class = pred
-        labels = None
+        pred_class = torch.sigmoid(pred.detach()).cpu().numpy() > 0.5
 
     if isinstance(target, torch.Tensor):
         target = target.cpu().numpy()
@@ -32,7 +37,7 @@ def compute_class_metrics(pred, target, top_k=5, num_classes=None):
     metrics_dict['prec'] = precision_score(target, pred_class, average='micro')
     metrics_dict['f1'] = f1_score(target, pred_class, average='micro')
 
-    if labels is not None:
+    if num_classes > 1:
         metrics_dict['acc_top'] = top_k_accuracy_score(target, pred_scores,
                                                        k=top_k,
                                                        labels=labels)
