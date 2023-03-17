@@ -730,12 +730,16 @@ def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
         if k in checkpoint_state:
             if k == 'fact_ent':
                 model['fact_ent'].module.update(force=True)
+                device = model['fact_ent'].module.quantiles.device
                 if '_quantized_cdf' in checkpoint_state[k]:
-                    model['fact_ent'].module._quantized_cdf = checkpoint_state[k]['_quantized_cdf']
+                    model['fact_ent'].module._quantized_cdf = \
+                         checkpoint_state[k]['_quantized_cdf'].to(device)
                 if '_offset' in checkpoint_state[k]:
-                    model['fact_ent'].module._offset = checkpoint_state[k]['_offset']
+                    model['fact_ent'].module._offset = \
+                        checkpoint_state[k]['_offset'].to(device)
                 if '_cdf_length' in checkpoint_state[k]:
-                    model['fact_ent'].module._cdf_length = checkpoint_state[k]['_cdf_length']
+                    model['fact_ent'].module._cdf_length = \
+                        checkpoint_state[k]['_cdf_length'].to(device)
 
             model[k].module.load_state_dict(checkpoint_state[k], strict=False)
 
