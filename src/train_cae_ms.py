@@ -100,9 +100,9 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
                                                     top_k=5,
                                                     num_classes=None)
         if progress_bar:
-            log_string += ' acc:{:.3f} top5:{:.3f}'.format(
-                class_metrics['acc'],
-                class_metrics['acc_top'])
+            log_string += ' acc:{:.3f}'.format(class_metrics['acc'])
+            if 'acc_top' in class_metrics:
+                log_string += ' top5:{:.3f}'.format(class_metrics['acc_top'])
         else:
             for k, m in class_metrics.items():
                 log_string += ' {}:{:.3f}'.format(k, m)
