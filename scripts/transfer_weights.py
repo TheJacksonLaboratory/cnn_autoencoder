@@ -124,23 +124,24 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--destination", help="CAE model checkpoint")
     parser.add_argument("-s", "--source", help="Compress AI model checkpoint")
     parser.add_argument("-o", "--output", help="Output model filename")
-    parser.add_argument("-cai", "--cae2cai", dest="cai2cae",
-                        help="Convert CAE to Compress AI",
-                        action="store_false",
-                        default=True)
+    parser.add_argument("-m", "--mode", dest="transfer_mode",
+                        help="Convert CAE to Compress AI, Compress AI to CAE,"
+                        " or update CAE checkpoint to the most recent version",
+                        type=str,
+                        choices=['cae2cai', 'cai2cae', 'cae2cae'])
 
     args = parser.parse_args()
 
     chk_dst = torch.load(args.destination, map_location='cpu')
     chk_src = torch.load(args.source, map_location='cpu')
 
-    if args.cai2cae:
+    if args.transfer_mode == 'cai2cae':
         chk_transfer = transfer_weights(chk_src, cai2cae=True)
 
         chk_dst["fact_ent"] = chk_transfer["fact_entropy"]
         chk_dst["encoder"] = chk_transfer["encoder"]
         chk_dst["decoder"] = chk_transfer["decoder"]
-    else:
+    elif args.transfer_mode == 'cae2cai':
         chk_src_model = {}
         chk_src_model.update(chk_src["decoder"])
         chk_src_model.update(chk_src["encoder"])
@@ -152,5 +153,9 @@ if __name__ == "__main__":
         chk_dst.update(chk_transfer["fact_entropy"])
         chk_dst.update(chk_transfer["encoder"])
         chk_dst.update(chk_transfer["decoder"])
+
+    elif args.transfer_mode == 'cae2cae':
+        del chk_dst['args']
+        chk_dst.update(chk_src['args'])
 
     torch.save(chk_dst, args.output)

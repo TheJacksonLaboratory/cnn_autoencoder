@@ -38,6 +38,8 @@ def compute_class_metrics(pred, target, top_k=5, num_classes=None):
     metrics_dict['f1'] = f1_score(target, pred_class, average='micro')
 
     if num_classes > 1:
+        top_k = min(top_k, num_classes)
+
         metrics_dict['acc_top'] = top_k_accuracy_score(target, pred_scores,
                                                        k=top_k,
                                                        labels=labels)

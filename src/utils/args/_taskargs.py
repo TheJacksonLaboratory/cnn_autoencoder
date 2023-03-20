@@ -1,6 +1,3 @@
-from .._info import CAE_MODELS, CLASS_MODELS, CAE_ACT_LAYERS
-
-
 task_args = [
     {'tasks': ['all'],
         'modes': ['all'],
@@ -52,8 +49,7 @@ task_args = [
         'type': str,
         'help': 'Type of activation layer used for the Convolutional '
                 'Autoencoder architecture',
-        'choices': CAE_ACT_LAYERS,
-        'default': CAE_ACT_LAYERS[0]
+        'default': 'LeakyRelU'
         }
     },
     {'tasks': ['all'],
@@ -114,8 +110,7 @@ task_args = [
         'dest': 'model_type',
         'type': str,
         'help': 'Convoutional Autoencoder model type',
-        'choices': CAE_MODELS,
-        'default': CAE_MODELS[0],
+        'default': 'AutoEncoder',
         }
     },
     {'tasks': ['all'],
@@ -125,8 +120,7 @@ task_args = [
         'dest': 'class_model_type',
         'type': str,
         'help': 'Classifier model type',
-        'choices': CLASS_MODELS,
-        'default': CLASS_MODELS[0],
+        'default': None,
         }
     },
     {'tasks': ['all'],
@@ -137,6 +131,16 @@ task_args = [
         'type': int,
         'help': 'Position on the architecture where to insert the bottleneck',
         'default': None
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-smt', '--seg-model-type'),
+        'details': {
+        'dest': 'seg_model_type',
+        'type': str,
+        'help': 'Segmentation model type',
+        'default': None,
         }
     },
     {'tasks': ['all'],

@@ -224,4 +224,14 @@ config_args = [
         'default': None
         }
     },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-reso', '--resume-optimizers'),
+        'details': {
+        'dest': 'resume_optimizer',
+        'type': str,
+        'help': 'Resume training from an existing checkpoint',
+        'default': None
+        }
+    }
 ]

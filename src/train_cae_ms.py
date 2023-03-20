@@ -85,14 +85,20 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
         log_string += ' E={:.3f}'.format(loss_dict['energy'].item())
 
     if 'class_error' in loss_dict:
-        log_string += ' C={:.3f}'.format(loss_dict['class_error'].item())
-        num_classes = output['t_pred'].size(1)
-        top_k = min(5, num_classes)
+        if output.get('t_pred', None) is not None:
+            class_task_type='C'
+            class_task_key = 't_pred'
+        else:
+            class_task_type='S'
+            class_task_key = 's_pred'
 
-        class_metrics = utils.compute_class_metrics(output['t_pred'],
+        log_string += ' {}={:.3f}'.format(class_task_type, 
+                                          loss_dict['class_error'].item())
+
+        class_metrics = utils.compute_class_metrics(output[class_task_key],
                                                     targets,
-                                                    top_k=top_k,
-                                                    num_classes=num_classes)
+                                                    top_k=5,
+                                                    num_classes=None)
         if progress_bar:
             log_string += ' acc:{:.3f} top5:{:.3f}'.format(
                 class_metrics['acc'],
@@ -109,29 +115,6 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
 
     return log_string
 
-
-def forward_step(x, model, trainable_modules=None):
-    if trainable_modules is None:
-        trainable_modules = []
-
-    torch.set_grad_enabled('encoder' in trainable_modules)
-    y = model['encoder'](x)
-    torch.enable_grad()
-
-    torch.set_grad_enabled('fact_ent' in trainable_modules)
-    y_q, p_y = model['fact_ent'](y)
-    torch.enable_grad()
-
-    torch.set_grad_enabled('decoder' in trainable_modules)
-    x_r = model['decoder'](y_q)
-    torch.enable_grad()
-
-    torch.set_grad_enabled('class_model' in trainable_modules)
-    t_pred, t_aux_pred = model['class_model'](y_q)
-    torch.enable_grad()
-
-    return dict(x_r=x_r, y=y, y_q=y_q, p_y=p_y, t_pred=t_pred,
-                t_aux_pred=t_aux_pred)
 
 
 def valid(model, data, criterion, args):
@@ -159,6 +142,8 @@ def valid(model, data, criterion, args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
+    valid_forward_step = models.decorate_trainable_modules(None)
+
     for k in model.keys():
         model[k].eval()
 
@@ -170,7 +155,7 @@ def valid(model, data, criterion, args):
 
     with torch.no_grad():
         for i, (x, t) in enumerate(data):
-            output = forward_step(x, model, trainable_modules=None)
+            output = valid_forward_step(x, model)
             t = t.to(output['y_q'].device)
 
             loss_dict = criterion(input=x, output=output, target=t,
@@ -210,7 +195,10 @@ def valid(model, data, criterion, args):
     return mean_loss
 
 
-def train(model, train_data, valid_data, criterion, stopping_criteria,
+def train(model, train_data,
+          valid_data,
+          criterion,
+          stopping_criteria,
           mod_optimizers,
           mod_schedulers,
           mod_grad_accumulate,
@@ -245,6 +233,9 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
         Whether the training was sucessfully completed or it was interrupted
     """
     logger = logging.getLogger(args.mode + '_log')
+
+    train_forward_step = models.decorate_trainable_modules(
+        args.trainable_modules)
 
     completed = False
     keep_training = True
@@ -292,8 +283,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
                 sub_step += 1
                 # Start of training step
 
-                output = forward_step(x, model,
-                                      trainable_modules=args.trainable_modules)
+                output = train_forward_step(x, model)
                 t = t.to(output['y_q'].device)
 
                 loss_dict = criterion(input=x, output=output, target=t,
@@ -490,7 +480,7 @@ def train(model, train_data, valid_data, criterion, stopping_criteria,
     return completed
 
 
-def setup_network(args, use_gpu=False):
+def setup_network(args):
     """Setup a nerual network for image compression/decompression.
 
     Parameters
@@ -508,26 +498,32 @@ def setup_network(args, use_gpu=False):
 
     # The autoencoder model contains all the modules
     if isinstance(args, dict):
-        args['multiscale_analysis'] = 'Multiscale' in args['criterion']
         args_dict = args
     else:
-        args.multiscale_analysis = 'Multiscale' in args.criterion
         args_dict = args.__dict__
 
-    model = models.setup_autoencoder_modules(**args_dict)
+    args_dict['multiscale_analysis'] = 'Multiscale' in args_dict['criterion']
 
-    if args_dict.get('class_model_type', '') in models.CLASS_MODELS.keys():
-        model.update(models.setup_classifier_modules(**args_dict))
-    elif args_dict.get('class_model_type', '') in models.SEG_MODELS.keys():
-        model.update(models.setup_segmenter_modules(**args_dict))
+    if args.checkpoint is not None:
+        checkpoint_state = torch.load(args.checkpoint, map_location='cpu')
+        checkpoint_state.update(args_dict)
+        args_dict = checkpoint_state
 
-    # If there are more than one GPU, DataParallel handles automatically the
-    # distribution of the work.
-    for k in model.keys():
-        model[k] = nn.DataParallel(model[k])
+    model = models.autoencoder_from_state_dict(args_dict, gpu=args.gpu,
+                                               train=True)
 
-        if use_gpu:
-            model[k].cuda()
+    model['class_model'] = models.classifier_from_state_dict(args_dict,
+                                                             gpu=args.gpu,
+                                                             train=True)
+
+    if model['class_model'] is None:
+        model['class_model'] = models.ModelEmptyTask()
+
+    model['seg_model'] = models.segmenter_from_state_dict(args_dict,
+                                                          gpu=args.gpu,
+                                                          train=True)
+    if model['seg_model'] is None:
+        model['seg_model'] = models.ModelEmptyTask()
 
     return model
 
@@ -699,61 +695,30 @@ def setup_optim(model, args):
     return mod_optimizers, mod_schedulers, mod_grad_accumulate
 
 
-def resume_checkpoint(model, mod_optimizers, mod_schedulers, checkpoint,
-                      gpu=True,
-                      resume_optimizer=False):
-    """Resume training from a previous checkpoint
+def resume_optimizer(mod_optimizers, mod_schedulers, checkpoint, gpu=True):
+    """Resume training optimizers and schedulers from a previous checkpoint
 
     Parameters
     ----------
-    cae_model : torch.nn.Module
-        The convolutional autoencoder model to be optimized
-    optimizer : torch.optim.Optimizer
+    mod_optimizers : list of torch.optim.Optimizer
         The neurla network optimizer method
-    scheduler : torch.optim.lr_scheduler or None
+    mod_schedulers : list of torch.optim.lr_scheduler or None
         The learning rate scheduler for the optimizer
     checkpoint : str
         Path to a previous training checkpoint
     gpu : bool
         Wether use GPUs to train the neural network or not
-    resume_optimizer : bool
-        Wether use the optimizer from the checkpoint or not. This only works
-        for resume training rather than starting from pre-trained models
     """
     if not gpu:
-        checkpoint_state = torch.load(checkpoint,
-                                      map_location='cpu')
+        checkpoint_state = torch.load(checkpoint, map_location='cpu')
     else:
         checkpoint_state = torch.load(checkpoint)
 
-    for k in model.keys():
-        if k in checkpoint_state:
-            if k == 'fact_ent':
-                model['fact_ent'].module.update(force=True)
-                device = model['fact_ent'].module.quantiles.device
-                if '_quantized_cdf' in checkpoint_state[k]:
-                    model['fact_ent'].module._quantized_cdf = \
-                         checkpoint_state[k]['_quantized_cdf'].to(device)
-                if '_offset' in checkpoint_state[k]:
-                    model['fact_ent'].module._offset = \
-                        checkpoint_state[k]['_offset'].to(device)
-                if '_cdf_length' in checkpoint_state[k]:
-                    model['fact_ent'].module._cdf_length = \
-                        checkpoint_state[k]['_cdf_length'].to(device)
+    for k in mod_optimizers.keys():
+        mod_optimizers.load_state_dict(checkpoint_state[k + '_optimizer'])
 
-            model[k].module.load_state_dict(checkpoint_state[k], strict=False)
-
-    if checkpoint_state['args']['version'] == '0.5.5':
-        for color_layer in model['decoder'].module.color_layers:
-            color_layer[0].weight.data.copy_(
-                checkpoint_state['decoder']['synthesis_track.4.weight'])
-
-    if resume_optimizer:
-        for k in mod_optimizers.keys():
-            mod_optimizers.load_state_dict(checkpoint_state[k + '_optimizer'])
-
-        for k in mod_schedulers.keys():
-            mod_schedulers.load_state_dict(checkpoint_state[k + '_scheduler'])
+    for k in mod_schedulers.keys():
+        mod_schedulers.load_state_dict(checkpoint_state[k + '_scheduler'])
 
 
 def main(args):
@@ -770,17 +735,17 @@ def main(args):
     train_data, valid_data, num_classes = utils.get_data(args)
     args.num_classes = num_classes
 
-    model = setup_network(args, use_gpu=args.gpu)
+    model = setup_network(args)
     criterion, stopping_criteria = setup_criteria(args,
                                                   checkpoint=args.checkpoint)
+
     (mod_optimizers,
      mod_schedulers,
      mod_grad_accumulate) = setup_optim(model, args)
 
-    if args.checkpoint is not None:
-        resume_checkpoint(model, mod_optimizers, mod_schedulers,
-                          args.checkpoint,
-                          gpu=args.gpu)
+    if args.resume_optimizer:
+        resume_optimizer(mod_optimizers, mod_schedulers, args.checkpoint,
+                         gpu=args.gpu)
 
     # Log the training setup
     logger.info('Network architecture:')

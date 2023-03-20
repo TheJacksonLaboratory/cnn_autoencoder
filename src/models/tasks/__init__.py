@@ -1,19 +1,17 @@
-from ._autoencoders import (setup_autoencoder_modules, 
-                            Analyzer,
+from ._taskutils import *
+
+from ._autoencoders import (Analyzer,
                             Synthesizer,
                             SynthesizerInflate,
                             AutoEncoder,
                             ConvolutionalAutoencoder,
-                            CAE_ACT_LAYERS,
-                            CAE_MODELS)
+                            autoencoder_from_state_dict)
 
-from ._classifiers import (setup_classifier_modules,
-                           ViTClassifierHead,
-                           EmptyClassifierHead,
-                           CLASS_MODELS)
+from ._classifiers import (ViTClassifierHead,
+                           InceptionV3ClassifierHead,
+                           classifier_from_state_dict)
 
-from ._segmenters import (setup_segmenter_modules,
-                          EmptySegmenterHead,
-                          UNet,
+from ._segmenters import (UNet,
                           JNet,
-                          SEG_MODELS)
+                          segmenter_from_state_dict)
+

@@ -88,8 +88,14 @@ class GeneralLoss(nn.Module):
             dist_dict['channel_e'] = torch.LongTensor([-1])
 
         if self.class_loss is not None:
-            dist_dict.update(self.class_loss(pred=output['t_pred'],
-                                             aux_pred=output['t_aux_pred'],
+            if output.get('t_pred', None) is not None:
+                pred = output['t_pred']
+                aux_pred = output.get('t_aux_pred', None)
+            else:
+                pred = output['s_pred']
+                aux_pred = output.get('s_aux_pred', None)
+
+            dist_dict.update(self.class_loss(pred=pred, aux_pred=aux_pred,
                                              t=target,
                                              **kwargs))
 

@@ -3,17 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
-class EmptySegmenterHead(nn.Module):
-    """This empty segmenter is intended for debug the main training process.
-    """
-    def __init__(self, **kwargs):
-        super(EmptySegmenterHead, self).__init__()
-
-    def forward(self, x):
-        return None
-
-
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3,
                  downsample_op=nn.MaxPool2d):
@@ -257,15 +246,46 @@ class JNet(UNet):
 
 
 SEG_MODELS = {
-    "Empty": EmptySegmenterHead,
     "UNet": UNet,
     "JNet": JNet,
     }
 
 
-def setup_segmenter_modules(class_model_type, **kwargs):
-    seg_model = SEG_MODELS[class_model_type](**kwargs)
-    return dict(class_model=seg_model)
+def setup_modules(segment_model_type, **kwargs):
+    seg_model = SEG_MODELS[segment_model_type](**kwargs)
+    return seg_model
+
+
+def load_state_dict(model, checkpoint_state):
+    if 'seg_model' in checkpoint_state.keys():
+        model.load_state_dict(checkpoint_state['seg_model'])
+
+
+def segmenter_from_state_dict(checkpoint, gpu=False, train=False):
+    if isinstance(checkpoint, str):
+        checkpoint_state = torch.load(checkpoint, map_location='cpu')
+    else:
+        checkpoint_state = checkpoint
+
+    if checkpoint_state.get('segment_model_type', None) not in SEG_MODELS:
+        return None
+
+    model = setup_modules(**checkpoint_state)
+    load_state_dict(model, checkpoint_state)
+
+    # If there are more than one GPU, DataParallel handles automatically the
+    # distribution of the work.
+    model = nn.DataParallel(model)
+
+    if gpu and torch.cuda.is_available():
+        model.cuda()
+
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    return model
 
 
 if __name__ == "__main__":

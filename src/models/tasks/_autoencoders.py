@@ -13,11 +13,6 @@ from numcodecs.abc import Codec
 from numcodecs.compat import ndarray_copy, ensure_contiguous_ndarray
 
 
-CAE_ACT_LAYERS = ['LeakyReLU',
-                  'ReLU',
-                  'GDN',
-                  'Identiy']
-
 def _define_act_layer(act_layer_type, channels_in=None, track='analysis'):
     if act_layer_type is None:
         act_layer_type = 'Identity'
@@ -420,16 +415,15 @@ class Synthesizer(nn.Module):
 
         color_layers = [
             nn.Sequential(
-                 nn.Conv2d(channels_net * channels_expansion**i, channels_org,
-                           kernel_size=kernel_size,
-                           stride=1,
-                           padding=kernel_size//2,
-                           dilation=1,
-                           groups=channels_org if groups else 1,
-                           bias=bias,
-                           padding_mode='reflect')
-                )
-             for i in reversed(range(compression_level - 1))]
+                nn.Conv2d(channels_net * channels_expansion**i, channels_org,
+                          kernel_size=kernel_size,
+                          stride=1,
+                          padding=kernel_size//2,
+                          dilation=1,
+                          groups=channels_org if groups else 1,
+                          bias=bias,
+                          padding_mode='reflect'))
+                        for i in reversed(range(compression_level - 1))]
 
         color_layers += [nn.Identity()]
 
@@ -438,23 +432,6 @@ class Synthesizer(nn.Module):
         self.rec_level = compression_level
 
         self.apply(initialize_weights)
-
-    def forward(self, x):
-        x = self.synthesis_track(x)
-        x = self.color_layers[-1](x)
-        return x
-
-
-class SynthesizerInflate(Synthesizer):
-    def __init__(self, rec_level=-1, color=True, **kwargs):
-        super(SynthesizerInflate, self).__init__(**kwargs)
-        if rec_level < 1:
-            rec_level = len(self.synthesis_track)
-
-        if not color:
-            self.color_layers = nn.ModuleList([nn.Identity()] * rec_level)
-
-        self.rec_level = rec_level
 
     def forward(self, x):
         fx = x
@@ -466,7 +443,23 @@ class SynthesizerInflate(Synthesizer):
             x_r = color_layer(fx)
             x_r_ms.insert(0, x_r)
 
-        return x_r_ms
+        x_r = self.color_layers[-1](fx)
+        return x_r, x_r_ms
+
+
+
+class SynthesizerInflate(Synthesizer):
+    def __init__(self, rec_level=-1, color=True, **kwargs):
+        super(SynthesizerInflate, self).__init__(**kwargs)
+        if rec_level < 1:
+            rec_level = len(self.synthesis_track)
+
+        if not color:
+            for r in range(rec_level - 1):
+                self.color_layers[r] = nn.Identity()
+
+        self.rec_level = rec_level
+
 
 
 class AutoEncoder(nn.Module):
@@ -555,10 +548,10 @@ CAE_MODELS = {
 }
 
 
-def setup_autoencoder_modules(channels_bn=192, compression_level=4, K=4, r=3,
-                              multiscale_analysis=False,
-                              enabled_modules=None,
-                              **kwargs):
+def setup_modules(channels_bn=192, compression_level=4, K=4, r=3,
+                  multiscale_analysis=False,
+                  enabled_modules=None,
+                  **kwargs):
     if enabled_modules is None:
         enabled_modules = ['encoder', 'decoder', 'fact_ent']
 
@@ -589,34 +582,51 @@ def setup_autoencoder_modules(channels_bn=192, compression_level=4, K=4, r=3,
 
 
 def load_state_dict(model, checkpoint_state):
-    for k in model.keys():
-        if k in checkpoint_state:
-            if k == 'fact_ent':
-                if '_quantized_cdf' in checkpoint_state[k]:
-                    model['fact_ent'].module._quantized_cdf = \
-                        checkpoint_state[k]['_quantized_cdf']
-                if '_offset' in checkpoint_state[k]:
-                    model['fact_ent'].module._offset = \
-                        checkpoint_state[k]['_offset']
-                if '_cdf_length' in checkpoint_state[k]:
-                    model['fact_ent'].module._cdf_length = \
-                        checkpoint_state[k]['_cdf_length']
+    if 'encoder' in checkpoint_state.keys():
+        model['encoder'].load_state_dict(checkpoint_state['encoder'])
 
-            model[k].module.load_state_dict(checkpoint_state[k], strict=False)
+    if 'decoder' in checkpoint_state.keys():
+        model['decoder'].load_state_dict(checkpoint_state['decoder'])
 
-    if 'fact_ent' in model.keys():
-        model['fact_ent'].module.update(force=True)
+    if 'fact_ent' in checkpoint_state.keys():
+        model['fact_ent'].update(force=True)
+
+        if '_quantized_cdf' in checkpoint_state['fact_ent']:
+            model['fact_ent']._quantized_cdf = \
+                checkpoint_state['fact_ent']['_quantized_cdf']
+
+        if '_offset' in checkpoint_state['fact_ent']:
+            model['fact_ent']._offset = \
+                checkpoint_state['fact_ent']['_offset']
+
+        if '_cdf_length' in checkpoint_state['fact_ent']:
+            model['fact_ent']._cdf_length = \
+                checkpoint_state['fact_ent']['_cdf_length']
+
+        model['fact_ent'].load_state_dict(checkpoint_state['fact_ent'])
 
 
-def from_state_dict(checkpoint_state):
-    model = setup_autoencoder_modules(**checkpoint_state['args'])
+def autoencoder_from_state_dict(checkpoint, gpu=False, train=False):
+    if isinstance(checkpoint, str):
+        checkpoint_state = torch.load(checkpoint, map_location='cpu')
+    else:
+        checkpoint_state = checkpoint
+
+    model = setup_modules(**checkpoint_state)
+    load_state_dict(model, checkpoint_state)
 
     # If there are more than one GPU, DataParallel handles automatically the
     # distribution of the work.
-    for k in model.keys():
+    for k in ['encoder', 'decoder', 'fact_ent']:
         model[k] = nn.DataParallel(model[k])
 
-    load_state_dict(model, checkpoint_state)
+        if gpu and torch.cuda.is_available():
+            model[k].cuda()
+
+        if train:
+            model[k].train()
+        else:
+            model[k].eval()
 
     return model
 
@@ -627,13 +637,8 @@ class ConvolutionalAutoencoder(Codec):
         self.checkpoint = checkpoint
         self.gpu = gpu
 
-        checkpoint_state = torch.load(checkpoint, map_location='cpu')
-        self._model = from_state_dict(checkpoint_state)
-
-        for k in self._model.keys():
-            self._model[k].eval()
-            if gpu and torch.cuda.is_available():
-                self._model[k].cuda()
+        self._model = autoencoder_from_state_dict(checkpoint, gpu=gpu,
+                                                  train=False)
 
     def encode(self, buf):
         h, w, c = buf.shape

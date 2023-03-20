@@ -9,16 +9,6 @@ import torch.nn.functional as F
 # TODO: Implement a version of the Mobilenet
 
 
-class EmptyClassifierHead(nn.Module):
-    """This empty classifier is intended for debug the main training process.
-    """
-    def __init__(self, **kwargs):
-        super(EmptyClassifierHead, self).__init__()
-
-    def forward(self, x):
-        return None, None
-
-
 class ViTClassifierHead(vision_transformer.VisionTransformer):
     """Implementation of the classifier head from the ViT-B-16 architecture.
     """
@@ -215,16 +205,48 @@ class InceptionV3ClassifierHead(inception.Inception3):
 
 
 CLASS_MODELS = {
-    "Empty": EmptyClassifierHead,
     "ViT": ViTClassifierHead,
     "ResNet": ResNetClassifierHead,
     "InceptionV3": InceptionV3ClassifierHead,
     }
 
 
-def setup_classifier_modules(class_model_type, **kwargs):
+def setup_modules(class_model_type, **kwargs):
     class_model = CLASS_MODELS[class_model_type](**kwargs)
-    return dict(class_model=class_model)
+    return class_model
+
+
+def load_state_dict(model, checkpoint_state):
+    if 'class_model' in checkpoint_state.keys():
+        model.load_state_dict(checkpoint_state['class_model'])
+
+
+def classifier_from_state_dict(checkpoint, gpu=False, train=False):
+    if isinstance(checkpoint, str):
+        checkpoint_state = torch.load(checkpoint, map_location='cpu')
+    else:
+        checkpoint_state = checkpoint
+
+    if checkpoint_state.get('class_model_type', None) not in CLASS_MODELS:
+        return None
+
+    model = setup_modules(**checkpoint_state)
+
+    load_state_dict(model, checkpoint_state)
+
+    # If there are more than one GPU, DataParallel handles automatically the
+    # distribution of the work.
+    model = nn.DataParallel(model)
+
+    if gpu and torch.cuda.is_available():
+        model.cuda()
+
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    return model
 
 
 if __name__ == '__main__':

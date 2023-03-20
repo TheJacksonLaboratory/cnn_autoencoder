@@ -13,17 +13,5 @@ CLASS_CRITERIONS = ['CELoss',
                     'CELossWithAux',
                     'BCELossWithAux']
 
-CAE_ACT_LAYERS = ['LeakyReLU',
-                  'ReLU',
-                  'GDN',
-                  'Identiy']
-
 OPTIMIZERS = ['Adam',
               'SGD']
-
-CAE_MODELS = ['AutoEncoder']
-
-CLASS_MODELS = ['Empty',
-                'ViT',
-                'ResNet',
-                'InceptionV3']

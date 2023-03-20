@@ -4,6 +4,7 @@ from functools import reduce
 
 import numpy as np
 import zarr
+from tqdm import tqdm
 
 from PIL import Image
 import boto3
@@ -529,6 +530,7 @@ class ZarrDataset(Dataset):
                  split_train=0.7,
                  split_val=0.1,
                  workers=0,
+                 progress_bar=False,
                  **kwargs):
 
         if padding is None:
@@ -564,8 +566,12 @@ class ZarrDataset(Dataset):
         self._filenames = self._split_dataset(root)
 
         self._initialized = False
-        if workers == 0:
-            self.__iter__()
+        self._progress_bar = progress_bar
+        self.__iter__()
+
+        if workers > 0:
+            del self.z_list
+            self.z_list = []
 
     def __iter__(self):
         if self._initialized:
@@ -652,6 +658,9 @@ class ZarrDataset(Dataset):
         rois_list = []
         compression_level = 0
 
+        if self._progress_bar:
+            q = tqdm(total=len(filenames_rois))
+
         for id, (arr_src, rois) in enumerate(filenames_rois):
             arr, arr_shape, compression_level = \
                 image_to_zarr(arr_src, self._patch_size, self._source_format,
@@ -671,6 +680,12 @@ class ZarrDataset(Dataset):
                 roi = tuple([slice(0, s, 1) for s in arr_shape])
                 rois_list.append((id, roi))
 
+            if self._progress_bar:
+                q.update()
+    
+        if self._progress_bar:
+            q.close()
+        
         return z_list, rois_list, compression_level
 
     def _compute_size(self, z_list, rois_list):

@@ -104,14 +104,13 @@ def checkpoint(step, model, mod_optimizers, mod_schedulers, best_valid_loss,
     """
 
     # Create a dictionary with the current state as checkpoint
-    training_state = dict(
-        args=args.__dict__,
-        best_val=best_valid_loss,
-        step=step,
-        train_loss=train_loss_history,
-        valid_loss=valid_loss_history,
-        code_version=args.version
-    )
+    training_state = dict(args.__dict__)
+
+    training_state['best_val'] = best_valid_loss
+    training_state['step'] = step
+    training_state['train_loss'] = train_loss_history
+    training_state['valid_loss'] = valid_loss_history
+    training_state['code_version'] = args.version
 
     # Append any extra information passed by the training loop
     training_state.update(extra_info)
