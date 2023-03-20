@@ -128,7 +128,7 @@ if __name__ == "__main__":
                         help="Convert CAE to Compress AI, Compress AI to CAE,"
                         " or update CAE checkpoint to the most recent version",
                         type=str,
-                        choices=['cae2cai', 'cai2cae', 'cae2cae'])
+                        choices=['cae2cai', 'cai2cae', 'cae2cae', 'last2best'])
 
     args = parser.parse_args()
 
@@ -157,5 +157,14 @@ if __name__ == "__main__":
     elif args.transfer_mode == 'cae2cae':
         del chk_dst['args']
         chk_dst.update(chk_src['args'])
+
+    elif args.transfer_mode == 'last2best':
+        for k, v in chk_src.items():
+            if k not in ['encoder',
+                         'decoder',
+                         'fact_ent',
+                         'seg_model',
+                         'class_model']:
+                chk_dst[k] = v
 
     torch.save(chk_dst, args.output)
