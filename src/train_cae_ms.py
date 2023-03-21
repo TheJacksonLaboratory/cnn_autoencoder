@@ -9,6 +9,7 @@ import models
 import utils
 
 from inspect import signature
+from itertools import chain
 
 from tqdm import tqdm
 
@@ -45,44 +46,69 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
             log_string += '[{:04d}/{:04d}] '.format(sub_step, len_data)
 
     log_string += '{} Loss {:.4f}'.format(step_type, avg_loss)
+    recorded_metrics = {'loss': avg_loss}
 
     if 'dist' in loss_dict:
         log_string += ' D=[{}]'.format(','.join(['%0.4f' % d.item()
                                                 for d in loss_dict['dist']]))
+        recorded_metrics['D'] = [d.item() for d in loss_dict['dist']]
+
         log_string += ' Xo={:.2f},{:.2f},std={:.2f}'.format(
             inputs.min(),
             inputs.max(),
             inputs.std())
 
         if isinstance(output['x_r'], list):
-            log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(
-                output['x_r'][0].detach().min(),
-                output['x_r'][0].detach().max())
+            x_r = output['x_r'][0].detach().cpu()
         else:
-            log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(
-                output['x_r'].detach().min(),
-                output['x_r'].detach().max(),
-                output['x_r'].detach().std())
+            x_r = output['x_r'].detach().cpu()
+
+        x_r_min = x_r.min()
+        x_r_max = x_r.max()
+        x_r_std = x_r.std()
+        log_string += ' Xr={:.2f},{:.2f},std={:.2f}'.format(x_r_min, x_r_max,
+                                                            x_r_std)
+        recorded_metrics['x_r_min'] = x_r_min
+        recorded_metrics['x_r_max'] = x_r_max
+        recorded_metrics['x_r_std'] = x_r_std
 
     if 'rate_loss' in loss_dict:
         log_string += ' R={:.2f}'.format(loss_dict['rate_loss'].item())
+        recorded_metrics['R'] = loss_dict['rate_loss'].item()
 
-        log_string += ' BN={:.2f},{:.2f} P={:.2f},{:.2f}'.format(
-            output['y'].detach().min(),
-            output['y'].detach().max(),
-            output['p_y'].detach().min(),
-            output['p_y'].detach().max())
+        y = output['y'].detach().cpu()
+        p_y = output['p_y'].detach().cpu()
+
+        y_min = y.min()
+        y_max = y.max()
+        p_y_min = p_y.min()
+        p_y_max = p_y.max()
+
+        log_string += ' BN={:.2f},{:.2f} P={:.2f},{:.2f}'.format(y_min, y_max,
+                                                                 p_y_min,
+                                                                 p_y_max)
+        recorded_metrics['y_min'] = y_min
+        recorded_metrics['y_max'] = y_max
+        recorded_metrics['p_y_min'] = p_y_min
+        recorded_metrics['p_y_max'] = p_y_max
 
     if 'entropy_loss' in loss_dict:
         log_string += ' A={:.3f}'.format(loss_dict['entropy_loss'].item())
-        quantiles = model['fact_ent'].module.quantiles.detach()
-        quantiles_info = (quantiles[:, 0, 0].median(),
-                        quantiles[:, 0, 1].median(),
-                        quantiles[:, 0, 2].median())
-        log_string += ' QP={:.2f},{:.2f},{:.2f}'.format(*quantiles_info)
+        recorded_metrics['A'] = loss_dict['entropy_loss'].item()
+
+        quantiles = model['fact_ent'].module.quantiles.detach().cpu()
+        q1 = quantiles[:, 0, 0].median()
+        q2 = quantiles[:, 0, 1].median()
+        q3 = quantiles[:, 0, 2].median()
+
+        log_string += ' QP={:.2f},{:.2f},{:.2f}'.format(q1, q2, q3)
+        recorded_metrics['q1'] = q1
+        recorded_metrics['q2'] = q2
+        recorded_metrics['q3'] = q3
 
     if 'energy' in loss_dict:
         log_string += ' E={:.3f}'.format(loss_dict['energy'].item())
+        recorded_metrics['E'] = loss_dict['energy'].item()
 
     if 'class_error' in loss_dict:
         if output.get('t_pred', None) is not None:
@@ -94,27 +120,25 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
 
         log_string += ' {}={:.3f}'.format(class_task_type, 
                                           loss_dict['class_error'].item())
+        recorded_metrics[class_task_type] = loss_dict['class_error'].item()
 
         class_metrics = utils.compute_class_metrics(output[class_task_key],
                                                     targets,
                                                     top_k=5,
                                                     num_classes=None)
-        if progress_bar:
-            log_string += ' acc:{:.3f}'.format(class_metrics['acc'])
-            if 'acc_top' in class_metrics:
-                log_string += ' top5:{:.3f}'.format(class_metrics['acc_top'])
-        else:
-            for k, m in class_metrics.items():
-                log_string += ' {}:{:.3f}'.format(k, m)
+
+        for k, m in class_metrics.items():
+            log_string += ' {}:{:.3f}'.format(k, m)
+            recorded_metrics[k] = m
 
     if channel_e >= 0:
         log_string += ' Ch={}'.format(int(channel_e))
+        recorded_metrics['Ch'] = channel_e
 
     if lr is not None and len(lr) > 0:
         log_string += ' lr={}'.format(lr)
 
-    return log_string
-
+    return log_string, recorded_metrics
 
 
 def valid(model, data, criterion, args):
@@ -148,51 +172,62 @@ def valid(model, data, criterion, args):
         model[k].eval()
 
     sum_loss = 0
+    rec_metrics = None
     channel_e_history = []
 
     if args.progress_bar:
         q = tqdm(total=len(data), desc='Validating', position=1, leave=None)
 
-    with torch.no_grad():
-        for i, (x, t) in enumerate(data):
-            output = valid_forward_step(x, model)
-            t = t.to(output['y_q'].device)
+    for i, (x, t) in enumerate(data):
+        output = valid_forward_step(x, model)
+        t = t.to(output['y_q'].device)
 
-            loss_dict = criterion(input=x, output=output, target=t,
-                                  net=model)
-            loss = torch.mean(loss_dict['loss'])
-            sum_loss += loss.item()
+        loss_dict = criterion(inputs=x, outputs=output, targets=t, net=model)
+        loss = torch.mean(loss_dict['loss'])
+        sum_loss += loss.item()
 
-            channel_e_history.append(loss_dict['channel_e'])
-            channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
+        channel_e_history.append(loss_dict['channel_e'])
+        channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
 
-            if args.progress_bar:
-                q.set_description(
-                    log_info(None, i + 1, None, model, x, t, output,
-                             sum_loss / (i + 1),
-                             loss_dict,
-                             channel_e,
-                             step_type='Validation',
-                             lr=None,
-                             progress_bar=True))
-                q.update()
+        if args.progress_bar:
+            log_str, _ = log_info(None, i + 1, None, model, x, t, output, 
+                                  sum_loss / (i + 1),
+                                  loss_dict,
+                                  channel_e,
+                                  step_type='Validation',
+                                  lr=None,
+                                  progress_bar=True)
+            q.set_description(log_str)
+            q.update()
 
-            if i % max(1, int(0.1 * len(data))) == 0:
-                logger.debug(log_info(None, i + 1, len(data), model, x, t,
-                                      output,
-                                      sum_loss / (i + 1),
-                                      loss_dict,
-                                      channel_e,
-                                      step_type='Validation',
-                                      lr=None,
-                                      progress_bar=False))
+        if i % max(1, int(0.1 * len(data))) == 0:
+            (log_str,
+             curr_rec_metrics) = log_info(None, i + 1, None, model, x, t,
+                                          output,
+                                          sum_loss / (i + 1),
+                                          loss_dict,
+                                          channel_e,
+                                          step_type='Validation',
+                                          lr=None,
+                                          progress_bar=True)
+
+            logger.debug(log_str)
+            if rec_metrics is None:
+                rec_metrics = dict((m, []) for m in curr_rec_metrics.keys())
+            
+            for m, v in curr_rec_metrics.items():
+                rec_metrics[m].append(v)
 
     if args.progress_bar:
         q.close()
 
+    avg_rec_metrics = {}
+    for m, v in rec_metrics.items():
+        avg_rec_metrics['val_' + m] = np.mean(v)
+
     mean_loss = sum_loss / len(data)
 
-    return mean_loss
+    return mean_loss, avg_rec_metrics
 
 
 def train(model, train_data,
@@ -263,6 +298,8 @@ def train(model, train_data,
         # module type.
         opt.zero_grad()
 
+    rec_metrics = None
+    extra_metrics = None
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
@@ -286,7 +323,7 @@ def train(model, train_data,
                 output = train_forward_step(x, model)
                 t = t.to(output['y_q'].device)
 
-                loss_dict = criterion(input=x, output=output, target=t,
+                loss_dict = criterion(inputs=x, outputs=output, targets=t,
                                       net=model)
 
                 loss = torch.mean(loss_dict['loss'])
@@ -370,15 +407,27 @@ def train(model, train_data,
 
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
 
-                logger.debug(log_info(step, i + 1, train_data_size, model, x,
-                                      t,
-                                      output,
-                                      sum_loss / (i + 1),
-                                      loss_dict,
-                                      channel_e,
-                                      step_type='Training',
-                                      lr=current_lr,
-                                      progress_bar=False))
+                (log_str,
+                 curr_rec_metrics) = log_info(step, i + 1, train_data_size,
+                                              model,
+                                              x,
+                                              t,
+                                              output,
+                                              sum_loss / (i + 1),
+                                              loss_dict,
+                                              channel_e,
+                                              step_type='Training',
+                                              lr=current_lr,
+                                              progress_bar=False)
+
+                logger.debug(log_str)
+
+                if rec_metrics is None:
+                    rec_metrics = dict((m, [])
+                                       for m in curr_rec_metrics.keys())
+                
+                for m, v in curr_rec_metrics.items():
+                    rec_metrics[m].append(v)
 
             # Checkpoint step
             keep_training = stopping_criteria['early_stopping'].check()
@@ -390,8 +439,10 @@ def train(model, train_data,
                 train_loss = sum_loss / (i+1)
 
                 # Evaluate the model with the validation set
-                valid_loss = valid(model, valid_data, criterion, args)
+                (valid_loss,
+                 val_avg_metrics) = valid(model, valid_data, criterion, args)
 
+                # Update the learning rate of the trainable modules
                 for k in args.trainable_modules:
                     model[k].train()
                     sched = mod_schedulers.get(k, None)
@@ -408,12 +459,11 @@ def train(model, train_data,
                         else:
                             aux_sched.step()
 
+                # If there is a learning rate scheduler, perform a step
+                # Log the overall network performance every checkpoint step
                 stopping_info = ';'.join(map(lambda k_sc:\
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
                                              stopping_criteria.items()))
-
-                # If there is a learning rate scheduler, perform a step
-                # Log the overall network performance every checkpoint step
                 current_lr = ''
                 for k, sched in mod_schedulers.items():
                     if hasattr(sched, '_last_lr'):
@@ -436,22 +486,42 @@ def train(model, train_data,
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
 
-                # Save the current training state in a checkpoint file
+                # Compute the mean value of the metrics recorded every 10% of
+                # the steps within each epoch.
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
+                trn_avg_metrics = {}
+                for m, v in rec_metrics.items():
+                    trn_avg_metrics['trn_' + m] = np.mean(v)
+
+                if extra_metrics is None:
+                    extra_metrics = {'channel_e': []}
+                    for m in chain(trn_avg_metrics.keys(),
+                                   val_avg_metrics.keys()):
+                        extra_metrics[m] = []
+
+                extra_metrics['channel_e'].append(channel_e)
+                for m, v in chain(trn_avg_metrics.items(),
+                                  val_avg_metrics.items()):
+                    extra_metrics[m].append(v)
+
+                # Save the current training state in a checkpoint file
                 best_valid_loss = utils.checkpoint(step, model, mod_optimizers,
                                                    mod_schedulers,
                                                    best_valid_loss,
                                                    train_loss_history,
                                                    valid_loss_history,
                                                    args,
-                                                   {'channel_e': channel_e})
+                                                   extra_metrics)
                 channel_e_history = []
+                rec_metrics = None
 
+                # Update the state of the stopping criteria
                 stopping_criteria['early_stopping'].update(iteration=step,
                                                            metric=valid_loss)
             else:
                 stopping_criteria['early_stopping'].update(iteration=step)
 
+            # Update the warming learning rate of the trainable modules
             if step <= args.early_warmup:
                 for k in args.trainable_modules:
                     if step < mod_grad_accumulate[k]:

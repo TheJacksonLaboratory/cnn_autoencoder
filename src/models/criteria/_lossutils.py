@@ -22,89 +22,91 @@ class GeneralLoss(nn.Module):
                 distortion_lambda = [distortion_lambda]
 
             self._distortion_lambda = distortion_lambda
+            self.dist_loss_func = self._dist_loss
         else:
-            self.dist_loss = None
+            self.dist_loss_func = self._empty_task_loss
 
         if rate_loss_type is not None:
             assert rate_loss_type in RATE_LOSS_LIST
             self.rate_loss = RATE_LOSS_LIST[rate_loss_type](**kwargs)
+            self.rate_loss_func = self._rate_loss
         else:
-            self.rate_loss = None
+            self.rate_loss_func = self._empty_task_loss
 
         if (penalty_loss_type is not None
           and penalty_loss_type.lower() != "none"):
             assert penalty_loss_type in PENALTY_LOSS_LIST
             self.penalty_loss = PENALTY_LOSS_LIST[dist_loss_type](**kwargs)
             self._penalty_beta = penalty_beta
-
+            self.penalty_loss_func = self._penalty_loss
         else:
-            self.penalty_loss = None
+            self.penalty_loss_func = self._empty_task_loss
 
         if class_loss_type is not None and class_loss_type.lower() != "none":
             assert class_loss_type in CLASSLOSS_LIST
             self.class_loss = CLASSLOSS_LIST[class_loss_type](**kwargs)
             self._class_error_mu = class_error_mu
             self._class_error_aux_mu = class_error_aux_mu
-
+            self.class_loss_func = self._class_loss
         else:
-            self.class_loss = None
+            self.class_loss_func = self._empty_task_loss
 
-        assert (self.dist_loss is not None
-                or self.rate_loss is not None
-                or self.penalty_loss is not None
-                or self.class_loss is not None), "No active criterion was given"
+    def _dist_loss(self, loss_dict, inputs, outputs, **kwargs):
+        loss_dict.update(self.dist_loss(x=inputs, x_r=outputs['x_r'],
+                                        **kwargs))
 
-    def forward(self, input, output, target=None, net=None, **kwargs):
-        dist_dict = {'loss': 0}
+        loss_dict['dist'] = [self._multiplier * d for d in loss_dict['dist']]
 
-        if self.dist_loss is not None:
-            dist_dict.update(self.dist_loss(x=input, x_r=output['x_r'], 
-                                            **kwargs))
-            dist_dict['dist'] = [self._multiplier * d
-                                 for d in dist_dict['dist']]
+        loss_dict['dist_loss'] = reduce(lambda d1, d2: d1 + d2,
+                                        map(lambda wd: wd[0] * wd[1],
+                                            zip(loss_dict['dist'],
+                                                self._distortion_lambda)))
 
-            dist_dict['dist_loss'] = reduce(lambda d1, d2: d1 + d2,
-                                            map(lambda wd: wd[0] * wd[1],
-                                                zip(dist_dict['dist'],
-                                                    self._distortion_lambda)))
-            dist_dict['loss'] += dist_dict['dist_loss']
+        loss_dict['loss'] += loss_dict['dist_loss']
 
-        if self.rate_loss is not None:
-            dist_dict.update(self.rate_loss(x=input, p_y=output['p_y'],
-                                            **kwargs))
+    def _rate_loss(self, loss_dict, inputs, outputs, net, **kwargs):
+        loss_dict.update(self.rate_loss(x=inputs, p_y=outputs['p_y'],
+                                        **kwargs))
+        loss_dict['entropy_loss'] = net['fact_ent'].module.loss()
 
-            dist_dict['entropy_loss'] = net['fact_ent'].module.loss()
+        loss_dict['loss'] += loss_dict['rate_loss']
 
-            dist_dict['loss'] += dist_dict['rate_loss']
+    def _penalty_loss(self, loss_dict, inputs, outputs, net, **kwargs):
+        loss_dict.update(self.penalty_loss(x=inputs, y=outputs['y'], 
+                                           net=net['decoder'],
+                                           **kwargs))
 
-        if self.penalty_loss is not None:
-            dist_dict.update(self.penalty_loss(x=input, y=output['y'],
-                                    net=net['decoder'],
-                                    **kwargs))
+        loss_dict['loss'] += self._penalty_beta * loss_dict['weighted_penalty']
 
-            dist_dict['loss'] += (self._penalty_beta
-                                  * dist_dict['weighted_penalty'])
+    def _class_loss(self, loss_dict, targets, outputs, **kwargs):
+        if outputs.get('t_pred', None) is not None:
+            pred = outputs['t_pred']
+            aux_pred = outputs.get('t_aux_pred', None)
         else:
-            dist_dict['channel_e'] = torch.LongTensor([-1])
+            pred = outputs['s_pred']
+            aux_pred = outputs.get('s_aux_pred', None)
 
-        if self.class_loss is not None:
-            if output.get('t_pred', None) is not None:
-                pred = output['t_pred']
-                aux_pred = output.get('t_aux_pred', None)
-            else:
-                pred = output['s_pred']
-                aux_pred = output.get('s_aux_pred', None)
+        loss_dict.update(self.class_loss(pred=pred, aux_pred=aux_pred,
+                                         t=targets,
+                                         **kwargs))
 
-            dist_dict.update(self.class_loss(pred=pred, aux_pred=aux_pred,
-                                             t=target,
-                                             **kwargs))
+        loss_dict['loss'] += self._class_error_mu * loss_dict['class_error']
+        loss_dict['loss'] += (self._class_error_aux_mu
+                              * loss_dict['aux_class_error'])
 
-            dist_dict['loss'] += (self._class_error_mu
-                                  * dist_dict['class_error']
-                                  + self._class_error_aux_mu
-                                  * dist_dict['aux_class_error'])
+    def _empty_task_loss(self, *args, **kwargs):
+        pass
 
-        return dist_dict
+    def forward(self, inputs, outputs, targets=None, net=None, **kwargs):
+        loss_dict = {'loss': 0, 
+                     'channel_e': torch.LongTensor([-1])}
+
+        self.dist_loss_func(loss_dict, inputs, outputs, **kwargs)
+        self.rate_loss_func(loss_dict, inputs, outputs, net, **kwargs)
+        self.penalty_loss_func(loss_dict, inputs, outputs, net, **kwargs)
+        self.class_loss_func(loss_dict, targets, outputs, **kwargs)
+
+        return loss_dict
 
 
 def setup_loss(criterion, **kwargs):

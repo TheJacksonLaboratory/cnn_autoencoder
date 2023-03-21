@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import (accuracy_score,
@@ -6,8 +5,7 @@ from sklearn.metrics import (accuracy_score,
                              recall_score,
                              precision_score,
                              f1_score,
-                             average_precision_score,
-                             multilabel_confusion_matrix)
+                             average_precision_score)
 
 
 def compute_class_metrics(pred, target, top_k=5, num_classes=None):

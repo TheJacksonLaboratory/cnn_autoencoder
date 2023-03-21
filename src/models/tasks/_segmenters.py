@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ._taskutils import ModelEmptyTask
+
 
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3,
@@ -268,7 +270,9 @@ def segmenter_from_state_dict(checkpoint, gpu=False, train=False):
         checkpoint_state = checkpoint
 
     if checkpoint_state.get('segment_model_type', None) not in SEG_MODELS:
-        return None
+        model = ModelEmptyTask()
+        model = nn.DataParallel(model)
+        return model
 
     model = setup_modules(**checkpoint_state)
     load_state_dict(model, checkpoint_state)
