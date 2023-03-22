@@ -141,6 +141,9 @@ def setup_loss(criterion, **kwargs):
     else:
         class_loss_type = None
 
+    if 'weighted' in criterion.lower():
+        class_loss_type = 'Weighted' + class_loss_type
+
     if class_loss_type is not None and 'aux' in criterion.lower():
         class_loss_type += 'WithAux'
 

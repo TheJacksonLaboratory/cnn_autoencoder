@@ -18,7 +18,11 @@ def compute_class_metrics(pred, target, top_k=5, num_classes=None,
     top_k = min(top_k, num_classes)
 
     if pred.ndim == 4:
+        if target.size(1) > 1 and num_classes == 1:
+            target = target[:, 1:]
+
         target = target.cpu().permute(0, 2, 3, 1).reshape(-1, num_classes)
+
         pred = pred.cpu().detach().permute(0, 2, 3, 1).reshape(-1, num_classes)
 
     if num_classes > 1:

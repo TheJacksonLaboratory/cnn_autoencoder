@@ -492,7 +492,7 @@ def zarrdataset_worker_init(worker_id):
          _) = \
             dataset_obj._preload_files(
                 curr_worker_filenames,
-                data_group=dataset_obj._labels_group,
+                data_group=dataset_obj._labels_data_group,
                 compressed_input=False,
                 rois=curr_worker_rois,
                 s3_obj=dataset_obj._s3_obj)
@@ -768,12 +768,12 @@ class LabeledZarrDataset(ZarrDataset):
     """
     def __init__(self, root, input_target_transform=None,
                  target_transform=None,
-                 labels_group='labels/0/0',
+                 labels_data_group='labels/0/0',
                  labels_data_axes=None,
                  **kwargs):
 
         # Open the labels from the labels group
-        self._labels_group = labels_group
+        self._labels_data_group = labels_data_group
         if labels_data_axes is None:
             labels_data_axes = self._data_axes
         self._labels_data_axes = labels_data_axes
@@ -793,7 +793,8 @@ class LabeledZarrDataset(ZarrDataset):
     def __iter__(self):
         super().__iter__()
         self._lab_list, self._lab_rois_list, _ = \
-            self._preload_files(self._filenames, data_group=self._labels_group,
+            self._preload_files(self._filenames,
+                                data_group=self._labels_data_group,
                                 compressed_input=False,
                                 s3_obj=self._s3_obj)
 

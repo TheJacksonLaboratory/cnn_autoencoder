@@ -1,9 +1,18 @@
+import torch
 from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
 
 
 class ClassLoss(object):
     def __call__(self, pred, t, **kwargs):
         return dict(class_error=self._loss(pred, t),
+                    aux_class_error=0)
+
+
+class WeightedClassLoss(object):
+    def __call__(self, pred, t, **kwargs):
+        loss = self._loss(pred, t[:, 1:])
+        loss = torch.mean(t[:, :1] * loss)
+        return dict(class_error=loss,
                     aux_class_error=0)
 
 
@@ -36,6 +45,18 @@ class CEClassLoss(ClassLoss):
 class BCEClassLoss(ClassLoss):
     def __init__(self, weight=None, size_average=None, reduce=None,
                  reduction='mean',
+                 pos_weight=None,
+                 gpu=False,
+                 **kwargs):
+        self._loss = BCEWithLogitsLoss(weight, size_average, reduce, reduction,
+                                       pos_weight)
+        if gpu:
+            self._loss.cuda()
+
+
+class BCEWeightedClassLoss(WeightedClassLoss):
+    def __init__(self, weight=None, size_average=None, reduce=None,
+                 reduction='none',
                  pos_weight=None,
                  gpu=False,
                  **kwargs):
@@ -84,6 +105,7 @@ class BCEClassLossWithAux(ClassLossWithAux):
 CLASSLOSS_LIST = {
     "CELoss": CEClassLoss,
     "BCELoss": BCEClassLoss,
+    "WeightedBCELoss": BCEWeightedClassLoss,
     "CELossWithAux": CEClassLossWithAux,
     "BCELossWithAux": BCEClassLossWithAux,
 }
