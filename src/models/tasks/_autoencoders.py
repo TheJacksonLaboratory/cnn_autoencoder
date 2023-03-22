@@ -583,10 +583,12 @@ def setup_modules(channels_bn=192, compression_level=4, K=4, r=3,
 
 def load_state_dict(model, checkpoint_state):
     if 'encoder' in checkpoint_state.keys():
-        model['encoder'].load_state_dict(checkpoint_state['encoder'])
+        model['encoder'].load_state_dict(checkpoint_state['encoder'],
+                                         strict=False)
 
     if 'decoder' in checkpoint_state.keys():
-        model['decoder'].load_state_dict(checkpoint_state['decoder'])
+        model['decoder'].load_state_dict(checkpoint_state['decoder'],
+                                         strict=False)
 
     if 'fact_ent' in checkpoint_state.keys():
         model['fact_ent'].update(force=True)

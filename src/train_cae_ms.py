@@ -586,14 +586,9 @@ def setup_network(args):
                                                              gpu=args.gpu,
                                                              train=True)
 
-    if model['class_model'] is None:
-        model['class_model'] = models.ModelEmptyTask()
-
     model['seg_model'] = models.segmenter_from_state_dict(args_dict,
                                                           gpu=args.gpu,
                                                           train=True)
-    if model['seg_model'] is None:
-        model['seg_model'] = models.ModelEmptyTask()
 
     return model
 

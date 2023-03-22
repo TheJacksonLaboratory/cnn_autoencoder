@@ -7,6 +7,7 @@ cae_replace_keys = [
     ('_offset', '', 0),
     ('_quantized_cdf', '', 0),
     ('_cdf_length', '', 0),
+    ('target', '', 0),
     ('likelihood_lower_bound.bound', '', 0),
     ('_matrices.', '_matrix%i', 1),
     ('_biases.', '_bias%i', 1),
@@ -19,6 +20,7 @@ cae_replace_keys = [
 
 cai_replace_keys = [
     ('quantiles', '', 0),
+    ('target', '', 0),
     ('_offset', '', 0),
     ('_quantized_cdf', '', 0),
     ('_cdf_length', '', 0),
