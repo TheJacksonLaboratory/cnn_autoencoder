@@ -82,17 +82,17 @@ def compute_class_metrics(pred, target, top_k=5, num_classes=None,
 
         if metrics_dict['p'] > 0:
             metrics_dict['auc'] = roc_auc_score(target, pred_scores[:, 0])
-            metrics_dict['acc'] = accuracy_score(target, pred_class)
-            metrics_dict['rec'] = recall_score(target, pred_class,
-                                               average='binary')
-            metrics_dict['prec'] = precision_score(target, pred_class,
-                                                   average='binary')
-            metrics_dict['f1'] = f1_score(target, pred_class, average='binary')
         else:
             metrics_dict['auc'] = float('nan')
-            metrics_dict['acc'] = float('nan')
-            metrics_dict['rec'] = float('nan')
-            metrics_dict['prec'] = float('nan')
-            metrics_dict['f1'] = float('nan')
+
+        metrics_dict['acc'] = accuracy_score(target, pred_class)
+        metrics_dict['rec'] = recall_score(target, pred_class,
+                                           average='binary',
+                                           zero_division=0)
+        metrics_dict['prec'] = precision_score(target, pred_class,
+                                               average='binary',
+                                               zero_division=0)
+        metrics_dict['f1'] = f1_score(target, pred_class, average='binary',
+                                      zero_division=0)
 
     return metrics_dict
