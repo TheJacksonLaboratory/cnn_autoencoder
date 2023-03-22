@@ -14,7 +14,7 @@ def trainable_module(func):
     def trainable_module_step(*args, **kwargs):
         torch.set_grad_enabled(True)
         output = func(*args, **kwargs)
-        torch.enable_grad()
+        torch.set_grad_enabled(True)
         return output
 
     return trainable_module_step
@@ -24,7 +24,7 @@ def fixed_module(func):
     def fixed_module_step(*args, **kwargs):
         torch.set_grad_enabled(False)
         output = func(*args, **kwargs)
-        torch.enable_grad()
+        torch.set_grad_enabled(True)
         return output
 
     return fixed_module_step
@@ -73,7 +73,7 @@ def decorate_trainable_modules(trainable_modules=None):
         s_pred, s_aux_pred = seg_model_step_fun(model['seg_model'], y_q,
                                                 fx_brg=x_brg)
 
-        return dict(x_r=x_r, y=y, y_q=y_q, p_y=p_y,
+        return dict(x_r=x_r, x_brg=x_brg, y=y, y_q=y_q, p_y=p_y, 
                     t_pred=t_pred,
                     t_aux_pred=t_aux_pred,
                     s_pred=s_pred,

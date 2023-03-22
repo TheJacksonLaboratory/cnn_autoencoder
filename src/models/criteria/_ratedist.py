@@ -9,8 +9,6 @@ import torch.nn.functional as F
 
 class PyramidLossMixin:
     def __init__(self, channels_org, **kwargs):
-        super().__init__(**kwargs)
-
         pyr_kernel = torch.tensor(
             [[[[1, 4, 6, 4, 1],
                [4, 16, 24, 16, 4],
@@ -29,12 +27,12 @@ class PyramidLossMixin:
                                   align_corners=False)
         return x_dwn
 
-    def __call__(self, x, x_r, **kwargs):
+    def __call__(self, x, x_brg, **kwargs):
         dist = []
         x_org = x.clone()
 
-        for s, (x_r_s, d_crt) in enumerate(zip(x_r, self._dist_criteria)):
-            dist_s = d_crt(x_org, x_r_s)
+        for s, (x_r, d_crt) in enumerate(zip(x_brg, self._dist_criteria)):
+            dist_s = d_crt(x_org, x_r)
             dist += dist_s['dist']
 
             # Downsample the original input
@@ -58,10 +56,10 @@ class RateLoss(object):
 
 class DistMSELoss(object):
     def __init__(self, **kwargs):
-        pass
+        self._dist_loss = nn.MSELoss()
 
     def __call__(self, x, x_r, **kwargs):
-        dist = F.mse_loss(x_r, x.to(x_r.device))
+        dist = self._dist_loss(x_r, x.to(x_r.device))
         return dict(dist=[dist])
 
 
@@ -93,25 +91,25 @@ class DistMSSSIMLoss(object):
 
 
 class DistMSEPyramidLoss(PyramidLossMixin):
-    def __init__(self, **kwargs):
+    def __init__(self, compression_level=4, **kwargs):
         super().__init__(**kwargs)
 
         self._dist_criteria = [DistMSELoss(**kwargs)
-                               for _ in range(len(self._distortion_lambda))]
+                               for _ in range(compression_level)]
 
 
 class DistMSSSIMPyramidLoss(PyramidLossMixin):
-    def __init__(self, patch_size, **kwargs):
+    def __init__(self, patch_size, compression_level=4, **kwargs):
         super().__init__(**kwargs)
 
         self._dist_criteria = [DistMSSSIMLoss(patch_size=patch_size, scale=s,
-                                          **kwargs)
-                               for s in range(len(self._distortion_lambda))]
+                                              **kwargs)
+                               for s in range(compression_level)]
 
 
 class PenaltyA:
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        pass
 
     def __call__(self, x, y, **kwargs):
         # Compute A, the approximation to the variance introduced during the
@@ -139,7 +137,6 @@ class PenaltyA:
 
 class PenaltyB:
     def __init__(self, channel_e=0, **kwargs):
-        super().__init__(**kwargs)
         self._channel_e = channel_e
 
     def __call__(self, y, net, **kwargs):

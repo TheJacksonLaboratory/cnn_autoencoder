@@ -166,4 +166,25 @@ task_args = [
         'default': ['encoder', 'decoder', 'fact_ent', 'class_model'],
         }
     },
+    {'tasks': ['all'],
+        'modes': ['test'],
+        'flags': ('-thr', '--threshold'),
+        'details': {
+        'dest': 'seg_threshold',
+        'type': float,
+        'help': 'Confidence threshold use to determine if a pixel has been '
+                'segmented into the corresponding class',
+        'default': 0.5,
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['test'],
+        'flags': ('-spr', '--save-prediction'),
+        'details': {
+        'dest': 'save_prediction',
+        'action': 'store_true',
+        'help': 'Store the thresholded prediction from the segmentation head',
+        'default': False,
+        }
+    },
 ]

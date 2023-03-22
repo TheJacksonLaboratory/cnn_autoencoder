@@ -53,6 +53,7 @@ class GeneralLoss(nn.Module):
 
     def _dist_loss(self, loss_dict, inputs, outputs, **kwargs):
         loss_dict.update(self.dist_loss(x=inputs, x_r=outputs['x_r'],
+                                        x_brg=outputs['x_brg'],
                                         **kwargs))
 
         loss_dict['dist'] = [self._multiplier * d for d in loss_dict['dist']]

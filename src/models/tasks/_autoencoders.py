@@ -443,7 +443,6 @@ class Synthesizer(nn.Module):
             x_r = color_layer(fx)
             x_r_ms.insert(0, x_r)
 
-        x_r = self.color_layers[-1](fx)
         return x_r, x_r_ms
 
 
