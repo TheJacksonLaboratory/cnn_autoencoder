@@ -370,8 +370,9 @@ def train(model, train_data,
 
                 # Compute the mean value of the metrics recorded every 10% of
                 # the steps within each epoch.
-                for m, v in rec_metrics.items():
-                    trn_avg_metrics['trn_' + m] = np.nanmean(v)
+                if rec_metrics is not None:
+                    for m, v in rec_metrics.items():
+                        trn_avg_metrics['trn_' + m] = np.nanmean(v)
 
                 channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
                 if extra_metrics is None:
