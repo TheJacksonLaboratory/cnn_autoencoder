@@ -99,7 +99,7 @@ class WeightsDistances(object):
             target_labels, num_objects = label(target[0], structure=self.SE)
             d1 = distance_transform_edt(target < 1)
             d2 = []
-            for l in range(num_objects):
+            for l in range(1, num_objects + 1):
                 target_remaining = np.copy(target[0])
                 target_remaining[target_labels == l] = 0
                 d2.append(distance_transform_edt(target_remaining < 1))
