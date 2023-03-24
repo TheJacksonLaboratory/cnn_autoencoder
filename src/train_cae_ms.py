@@ -356,34 +356,24 @@ def train(model, train_data,
                                              k_sc[0] + ": " + k_sc[1].__repr__(),
                                              stopping_criteria.items()))
                 current_lr = ''
+                trn_avg_metrics = {}
                 for k, sched in mod_schedulers.items():
                     if hasattr(sched, '_last_lr'):
                         current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
+                        trn_avg_metrics[k] = sched._last_lr[0]
                     else:
                         current_lr += '{}=None '.format(k)
-
-                logger.info(
-                    '[Step {:06d} ({})] Training loss {:0.4f}, validation '
-                    'loss {:.4f}, best validation loss {:.4f}, learning '
-                    'rate {}, stopping criteria: {}'.format(
-                        step, 'training' if keep_training else 'stopping',
-                        train_loss,
-                        valid_loss,
-                        best_valid_loss,
-                        current_lr,
-                        stopping_info)
-                )
+                        trn_avg_metrics[k] = float('nan')
 
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
 
                 # Compute the mean value of the metrics recorded every 10% of
                 # the steps within each epoch.
-                channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
-                trn_avg_metrics = {}
                 for m, v in rec_metrics.items():
                     trn_avg_metrics['trn_' + m] = np.nanmean(v)
 
+                channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
                 if extra_metrics is None:
                     extra_metrics = {'channel_e': []}
                     for m in chain(trn_avg_metrics.keys(),
@@ -405,6 +395,18 @@ def train(model, train_data,
                                                    extra_metrics)
                 channel_e_history = []
                 rec_metrics = None
+
+                logger.info(
+                    '[Step {:06d} ({})] Training loss {:0.4f}, validation '
+                    'loss {:.4f}, best validation loss {:.4f}, learning '
+                    'rate {}, stopping criteria: {}'.format(
+                        step, 'training' if keep_training else 'stopping',
+                        train_loss,
+                        valid_loss,
+                        best_valid_loss,
+                        current_lr,
+                        stopping_info)
+                )
 
                 # Update the state of the stopping criteria
                 stopping_criteria['early_stopping'].update(iteration=step,

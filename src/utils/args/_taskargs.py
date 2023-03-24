@@ -178,6 +178,18 @@ task_args = [
         }
     },
     {'tasks': ['all'],
+        'modes': ['all'],
+        'flags': ('-clsw', '--class-weights'),
+        'details': {
+        'dest': 'class_weights',
+        'nargs': '+',
+        'type': float,
+        'help': 'Weight associated to each class to balance its contribution '
+                'to the loss function',
+        'default': None,
+        }
+    },
+    {'tasks': ['all'],
         'modes': ['test'],
         'flags': ('-spr', '--save-prediction'),
         'details': {

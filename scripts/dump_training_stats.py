@@ -6,6 +6,28 @@ import torch
 import numpy as np
 
 
+metrics_keys = ['tp', 'tp_top', 'acc_top', 'avg_prec', 'acc', 'rec', 'prec',
+                'f1',
+                'C',
+                'D',
+                'R',
+                'S',
+                'x_r_min',
+                'x_r_max',
+                'x_r_std',
+                'y_min',
+                'y_max',
+                'p_y_min',
+                'p_y_max',
+                'A',
+                'q1',
+                'q2',
+                'q3',
+                'E',
+                'Ch',
+                ]
+
+
 def save_training_stats_checkpoint(trained_model, output_filename):
     """Extract and save the training and validation performance into a csv file
     """
@@ -19,15 +41,27 @@ def save_training_stats_checkpoint(trained_model, output_filename):
     if not output_filename.endswith(".csv"):
         output_filename = os.path.join(output_filename, "training_stats.csv")
 
+    all_metrics_keys = ['trn_' + m for m in metrics_keys]
+    all_metrics_keys += ['val_' + m for m in metrics_keys]
+
+    all_metrics_keys = [m for m in all_metrics_keys if m in state.keys()]
+
+    steps = len(state["train_loss"])
     with open(output_filename, "w") as fp:
-        fp.write("Model,seed,step,train_loss,val_loss\n")
-        for s, (trn_loss, val_loss) in enumerate(zip(state["train_loss"],
-                                                     state["valid_loss"])):
-            fp.write("%s,%s,%i,%f,%f\n" % (state["args"]["model_type"],
-                                           state["args"]["seed"],
-                                           s * state["args"]["checkpoint_steps"],
-                                           trn_loss,
-                                           val_loss))
+        fp.write("Model,seed,step,train_loss,val_loss,"
+                 + ','.join(all_metrics_keys)
+                 + '\n')
+        for s in range(steps):
+            step_metrics = "%s,%s,%i,%f,%f" % (state["model_type"],
+                                               state["seed"],
+                                               s * state["checkpoint_steps"],
+                                               state["train_loss"][s],
+                                               state["valid_loss"][s])
+            for m in all_metrics_keys:
+                step_metrics += ',%f' % state[m][s]
+
+            step_metrics += '\n'
+            fp.write(step_metrics)
 
 
 def save_training_stats_log(training_log, output_filename):

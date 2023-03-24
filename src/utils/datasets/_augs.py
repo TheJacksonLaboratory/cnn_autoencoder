@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 
 from elasticdeform import deform_grid
-from scipy.ndimage import rotate
+from scipy.ndimage import rotate, label, distance_transform_edt
 
 
 merge_funs = {'mean': np.mean, 'max': np.max, 'median':np.median}
@@ -82,9 +82,38 @@ class RandomRotationInputTarget(object):
         return patch, target
 
 
-class MapLabels(object):
+class WeightsDistances(object):
+    """Computes the weight associated to each pixel on the label image to the
+    clossest object.
     """
-    This mapping can handle the following case.
+    def __init__(self, class_weights, sigma=5, w_0=10):
+        self.class_weights = class_weights
+        self.sigma_2 = 2 * sigma ** 2
+        self.w_0 = w_0
+        self.SE = np.ones((3, 3))
+
+    def __call__(self, target):
+        w_x = np.take(self.class_weights, target.astype(np.int32))
+        num_objects = target.sum()
+        if num_objects > 0:
+            target_labels, num_objects = label(target[0], structure=self.SE)
+            d1 = distance_transform_edt(target < 1)
+            d2 = []
+            for l in range(num_objects):
+                target_remaining = np.copy(target[0])
+                target_remaining[target_labels == l] = 0
+                d2.append(distance_transform_edt(target_remaining < 1))
+
+            d2 = np.stack(d2)
+            d2 = np.min(d2, axis=0)[np.newaxis, ...]
+
+            w_x = w_x + self.w_0 * np.exp(-(d1 + d2) ** 2 / self.sigma_2)
+
+        return np.concatenate((w_x, target), axis=0)
+
+
+class MapLabels(object):
+    """ This mapping can handle the following cases.
         0,0,0 -> 0
         1,0,0 -> 1
         1,1,0 -> 2
@@ -113,6 +142,9 @@ def get_zarr_transform(data_mode='test', normalize=False,
                        merge_labels=None,
                        add_noise=False,
                        patch_size=128,
+                       weights_map_sigma=None,
+                       weights_map_w=None,
+                       class_weights=None,
                        **kwargs):
     """Define the transformations that are commonly applied to zarr-based
     datasets.
@@ -159,6 +191,13 @@ def get_zarr_transform(data_mode='test', normalize=False,
 
     if merge_labels is not None:
         target_trans_list.append(MergeLabels(merge_labels))
+
+    if (class_weights is not None
+      and weights_map_sigma is not None
+      and weights_map_w is not None):
+        target_trans_list.append(WeightsDistances(class_weights=class_weights,
+                                                 sigma=weights_map_sigma,
+                                                 w_0=weights_map_w))
 
     if len(target_trans_list) > 0:
         target_trans = transforms.Compose(target_trans_list)

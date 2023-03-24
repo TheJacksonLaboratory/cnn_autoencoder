@@ -161,6 +161,26 @@ data_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
+        'flags': ('-wms', '--weight-map-sigma'),
+        'details': {
+        'dest': 'weight_map_sigma',
+        'type': float,
+        'help': 'Sigma value used to compute the weights map during training',
+        'default': None
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-wmw', '--weight-map-w'),
+        'details': {
+        'dest': 'weight_map_w_0',
+        'type': float,
+        'help': 'Omega value used to compute the weights map during training',
+        'default': None
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
         'flags': ('-an', '--noise'),
         'details': {
         'dest': 'add_noise',
