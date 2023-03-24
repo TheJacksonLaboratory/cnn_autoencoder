@@ -18,13 +18,17 @@ class DownsamplingUnit(nn.Module):
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.BatchNorm2d(channels_out)
+        self._bn1 = nn.GroupNorm(num_groups=channels_out,
+                                 num_channels=channels_out)
+        # self._bn1 = nn.BatchNorm2d(channels_out)
         self._c2 = nn.Conv2d(channels_out, channels_out,
                              kernel_size=kernel_size,
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn2 = nn.BatchNorm2d(channels_out)
+        self._bn2 = nn.GroupNorm(num_groups=channels_out,
+                                 num_channels=channels_out)
+        # self._bn2 = nn.BatchNorm2d(channels_out)
         self._relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -51,13 +55,17 @@ class UpsamplingUnit(nn.Module):
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.BatchNorm2d(channels_unit)
+        self._bn1 = nn.GroupNorm(num_groups=channels_unit,
+                                 num_channels=channels_unit)
+        # self._bn1 = nn.BatchNorm2d(channels_unit)
         self._c2 = nn.Conv2d(channels_unit, channels_unit,
                              kernel_size=kernel_size,
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn2 = nn.BatchNorm2d(channels_unit)
+        self._bn2 = nn.GroupNorm(num_groups=channels_unit,
+                                 num_channels=channels_unit)
+        # self._bn2 = nn.BatchNorm2d(channels_unit)
         self._relu = nn.ReLU(inplace=True)
         self._up_sample = upsample_op(channels_unit, channels_out,
                                       kernel_size=2,
@@ -86,13 +94,17 @@ class BottleneckUnit(nn.Module):
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.BatchNorm2d(channels_out)
+        self._bn1 = nn.GroupNorm(num_groups=channels_out,
+                                 num_channels=channels_out)
+        # self._bn1 = nn.BatchNorm2d(channels_out)
         self._c2 = nn.Conv2d(channels_out, channels_out,
                              kernel_size=kernel_size,
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn2 = nn.BatchNorm2d(channels_out)
+        self._bn1 = nn.GroupNorm(num_groups=channels_out,
+                                 num_channels=channels_out)
+        # self._bn2 = nn.BatchNorm2d(channels_out)
         self._relu = nn.ReLU(inplace=True)
         self._up_sample = nn.ConvTranspose2d(channels_out, channels_in,
                                              kernel_size=2, stride=2,
