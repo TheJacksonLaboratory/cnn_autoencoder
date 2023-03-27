@@ -144,6 +144,16 @@ task_args = [
         }
     },
     {'tasks': ['all'],
+        'modes': ['all'],
+        'flags': ('-bn', '--batch-norm'),
+        'details': {
+        'dest': 'batch_norm',
+        'action': 'store_true',
+        'help': 'Add batch normalization layers',
+        'default': False,
+        }
+    },
+    {'tasks': ['all'],
         'modes': ['training'],
         'flags': ('-do', '--dropout'),
         'details': {

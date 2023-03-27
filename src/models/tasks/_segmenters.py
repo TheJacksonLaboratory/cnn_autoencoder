@@ -7,6 +7,7 @@ from ._taskutils import ModelEmptyTask
 
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3,
+                 batch_norm=True,
                  downsample_op=nn.MaxPool2d):
         super(DownsamplingUnit, self).__init__()
         if downsample_op is None:
@@ -18,17 +19,25 @@ class DownsamplingUnit(nn.Module):
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.GroupNorm(num_groups=channels_out,
-                                 num_channels=channels_out)
-        # self._bn1 = nn.BatchNorm2d(channels_out)
+
+        if batch_norm:
+            self._bn1 = nn.GroupNorm(num_groups=channels_out,
+                                     num_channels=channels_out)
+        else:
+            self._bn1 = nn.Identity()
+
         self._c2 = nn.Conv2d(channels_out, channels_out,
                              kernel_size=kernel_size,
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn2 = nn.GroupNorm(num_groups=channels_out,
-                                 num_channels=channels_out)
-        # self._bn2 = nn.BatchNorm2d(channels_out)
+
+        if batch_norm:
+            self._bn2 = nn.GroupNorm(num_groups=channels_out,
+                                     num_channels=channels_out)
+        else:
+            self._bn2 = nn.Identity()
+
         self._relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -45,6 +54,7 @@ class DownsamplingUnit(nn.Module):
 
 class UpsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_unit, channels_out, kernel_size=3,
+                 batch_norm=True,
                  upsample_op=nn.ConvTranspose2d):
         super(UpsamplingUnit, self).__init__()
         if upsample_op is None:
@@ -55,17 +65,23 @@ class UpsamplingUnit(nn.Module):
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.GroupNorm(num_groups=channels_unit,
-                                 num_channels=channels_unit)
-        # self._bn1 = nn.BatchNorm2d(channels_unit)
+        if batch_norm:
+            self._bn1 = nn.GroupNorm(num_groups=channels_unit,
+                                     num_channels=channels_unit)
+        else:
+            self._bn1 = nn.Identity()
+
         self._c2 = nn.Conv2d(channels_unit, channels_unit,
                              kernel_size=kernel_size,
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn2 = nn.GroupNorm(num_groups=channels_unit,
-                                 num_channels=channels_unit)
-        # self._bn2 = nn.BatchNorm2d(channels_unit)
+        if batch_norm:
+            self._bn2 = nn.GroupNorm(num_groups=channels_unit,
+                                     num_channels=channels_unit)
+        else:
+            self._bn2 = nn.Identity()
+
         self._relu = nn.ReLU(inplace=True)
         self._up_sample = upsample_op(channels_unit, channels_out,
                                       kernel_size=2,
@@ -86,7 +102,8 @@ class UpsamplingUnit(nn.Module):
 
 
 class BottleneckUnit(nn.Module):
-    def __init__(self, channels_in, channels_out, kernel_size=3):
+    def __init__(self, channels_in, channels_out, kernel_size=3,
+                 batch_norm=True):
         super(BottleneckUnit, self).__init__()
         self._dwn_sample = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self._c1 = nn.Conv2d(channels_in, channels_out,
@@ -94,17 +111,25 @@ class BottleneckUnit(nn.Module):
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.GroupNorm(num_groups=channels_out,
-                                 num_channels=channels_out)
-        # self._bn1 = nn.BatchNorm2d(channels_out)
+
+        if batch_norm:
+            self._bn1 = nn.GroupNorm(num_groups=channels_out,
+                                     num_channels=channels_out)
+        else:
+            self._bn1 = nn.Identity()
+
         self._c2 = nn.Conv2d(channels_out, channels_out,
                              kernel_size=kernel_size,
                              stride=1,
                              padding=kernel_size//2,
                              bias=False)
-        self._bn1 = nn.GroupNorm(num_groups=channels_out,
-                                 num_channels=channels_out)
-        # self._bn2 = nn.BatchNorm2d(channels_out)
+
+        if batch_norm:
+            self._bn2 = nn.GroupNorm(num_groups=channels_out,
+                                     num_channels=channels_out)
+        else:
+            self._bn2 = nn.Identity()
+
         self._relu = nn.ReLU(inplace=True)
         self._up_sample = nn.ConvTranspose2d(channels_out, channels_in,
                                              kernel_size=2, stride=2,
@@ -132,6 +157,7 @@ class UNet(nn.Module):
                  use_analysis_track=True,
                  concat_bridges=True,
                  project_bridges_from_channels=None,
+                 batch_norm=True,
                  **kwargs):
         super(UNet, self).__init__()
 
@@ -157,7 +183,8 @@ class UNet(nn.Module):
                 analysis_track.append(
                     DownsamplingUnit(channels_in=ch_in, channels_out=ch_out,
                                      kernel_size=3,
-                                     downsample_op=dws_op))
+                                     downsample_op=dws_op,
+                                     batch_norm=batch_norm))
 
             self.analysis_track = nn.ModuleList(analysis_track)
 
@@ -194,14 +221,16 @@ class UNet(nn.Module):
                                channels_unit=ch_in,
                                channels_out=ch_out,
                                kernel_size=3,
-                               upsample_op=ups_op))
+                               upsample_op=ups_op,
+                               batch_norm=batch_norm))
 
         self.bridges_projection = nn.ModuleList(bridges_projection)
         self.synthesis_track = nn.ModuleList(synthesis_track)
 
         self.bottleneck = BottleneckUnit(
             channels_net * channels_expansion ** (compression_level - 1),
-            channels_bn)
+            channels_bn,
+            batch_norm=batch_norm)
 
         self.fc = nn.Conv2d(channels_net, num_classes, kernel_size=1, stride=1,
                             padding=0,
