@@ -99,17 +99,20 @@ class WeightsDistances(object):
         num_objects = target.sum()
         if num_objects > 0:
             target_labels, num_objects = label(target[0], structure=self.SE)
-            d1 = distance_transform_edt(target < 1).astype(np.float32)
-            d2 = []
+            dist = []
             for l in range(1, num_objects + 1):
-                target_remaining = np.copy(target[0])
+                target_remaining = np.ones_like(target[0])
                 target_remaining[target_labels == l] = 0
-                d2.append(distance_transform_edt(target_remaining < 1))
+                d2_rem = distance_transform_edt(target_remaining)
+                dist.append(d2_rem.astype(np.float32))
 
-            d2 = np.stack(d2)
-            d2 = np.min(d2, axis=0)[np.newaxis, ...].astype(np.float32)
+            dist = np.stack(dist)
+            dist = np.sort(dist, axis=0)
 
-            w_1 = np.exp(-(d1 + d2) ** 2 / self.sigma_2)
+            if num_objects > 1:
+                w_1 = np.exp(-(dist[0] + dist[1]) ** 2 / self.sigma_2)
+            else:
+                w_1 = np.exp(-dist[0] ** 2 / self.sigma_2)
 
             w_x = w_x + self.w_0 * w_1
 

@@ -190,16 +190,7 @@ def main(args):
     test_data, num_classes = utils.get_data(args)
     args.num_classes = num_classes
 
-    model = models.autoencoder_from_state_dict(args.checkpoint, gpu=args.gpu,
-                                               train=False)
-
-    model['class_model'] = models.classifier_from_state_dict(args.checkpoint,
-                                                             gpu=args.gpu,
-                                                             train=False)
-
-    model['seg_model'] = models.segmenter_from_state_dict(args.checkpoint,
-                                                          gpu=args.gpu,
-                                                          train=False)
+    model = setup_network(args)
 
     # Log the training setup
     logger.info('Network architecture:')
