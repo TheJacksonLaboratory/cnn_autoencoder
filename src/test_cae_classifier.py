@@ -39,7 +39,8 @@ def test(model, test_data, args):
     if args.progress_bar:
         q = tqdm(total=len(test_data), desc="Testing", position=0)
 
-    test_forward_step = models.decorate_trainable_modules(None)
+    test_forward_step = models.decorate_trainable_modules(
+        None, enabled_modules=model.keys())
 
     rec_metrics = None
     true_pos = 0

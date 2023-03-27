@@ -52,7 +52,9 @@ def valid(model, data, criterion, args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    valid_forward_step = models.decorate_trainable_modules(None)
+    valid_forward_step = models.decorate_trainable_modules(
+        trainable_modules=None,
+        enabled_modules=args.enabled_modules)
 
     for k in model.keys():
         model[k].eval()
@@ -156,7 +158,8 @@ def train(model, train_data,
     logger = logging.getLogger(args.mode + '_log')
 
     train_forward_step = models.decorate_trainable_modules(
-        args.trainable_modules)
+        trainable_modules=args.trainable_modules,
+        enabled_modules=args.enabled_modules)
 
     completed = False
     keep_training = True
@@ -476,13 +479,14 @@ def setup_network(args):
     model = models.autoencoder_from_state_dict(args_dict, gpu=args.gpu,
                                                train=True)
 
-    model['class_model'] = models.classifier_from_state_dict(args_dict,
-                                                             gpu=args.gpu,
-                                                             train=True)
-
-    model['seg_model'] = models.segmenter_from_state_dict(args_dict,
-                                                          gpu=args.gpu,
-                                                          train=True)
+    if 'class_model' in args_dict['enabled_modules']:
+        model['class_model'] = models.classifier_from_state_dict(args_dict,
+                                                                 gpu=args.gpu,
+                                                                 train=True)
+    if 'seg_model' in args_dict['enabled_modules']:
+        model['seg_model'] = models.segmenter_from_state_dict(args_dict,
+                                                              gpu=args.gpu,
+                                                              train=True)
 
     return model
 

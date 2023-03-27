@@ -95,6 +95,37 @@ task_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
+        'flags': ('-snch', '--seg-net-channels'),
+        'details': {
+        'dest': 'seg_channels_net',
+        'type': int,
+        'help': 'Number of channels in the segmentation head',
+        'default': 128
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-sbch', '--seg-bottleneck-channels'),
+        'details': {
+        'dest': 'seg_channels_bn',
+        'type': int,
+        'help': 'Number of channels of the bottleneck segmentation head',
+        'default': 48
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
+        'flags': ('-sech', '--seg-expansion-channels'),
+        'details': {
+        'dest': 'seg_channels_expansion',
+        'type': int,
+        'help': 'Rate of expansion of the number of channels in the '
+                'segmentation head',
+        'default': 1
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
         'flags': ('-cl', '--compression-level'),
         'details': {
         'dest': 'compression_level',
@@ -174,6 +205,17 @@ task_args = [
                 ' will set as evaluation mode and their parameters will not be'
                 ' tracked by the optimizer',
         'default': ['encoder', 'decoder', 'fact_ent', 'class_model'],
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['all'],
+        'flags': ('-enm', '--enabled-modules'),
+        'details': {
+        'dest': 'enabled_modules',
+        'type': str,
+        'nargs': '+',
+        'help': 'Enabled modules of the network for this task',
+        'default': None,
         }
     },
     {'tasks': ['all'],

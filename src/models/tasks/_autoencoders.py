@@ -39,17 +39,6 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.01)
 
 
-class EmptyBottleneck(nn.Module):
-    def __init__(self, **kwargs):
-        super(EmptyBottleneck, self).__init__()
-
-    def update(self):
-        pass
-
-    def forward(self, x):
-        return x, x
-
-
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
@@ -571,40 +560,33 @@ def setup_modules(channels_bn=192, compression_level=4, K=4, r=3,
                                        **kwargs)
 
     if 'fact_ent' in enabled_modules:
-        if compression_level > 0:
-            model['fact_ent'] = EntropyBottleneck(channels=channels_bn,
-                                                  filters=[r] * K)
-        else:
-            model['fact_ent'] = EmptyBottleneck()
+        model['fact_ent'] = EntropyBottleneck(channels=channels_bn,
+                                              filters=[r] * K)
 
     return model
 
 
-def load_state_dict(model, checkpoint_state):
-    if 'encoder' in checkpoint_state.keys():
-        model['encoder'].load_state_dict(checkpoint_state['encoder'],
-                                         strict=False)
+def load_state_dict(model, encoder=None, decoder=None, fact_ent=None,
+                    **kwargs):
+    if 'encoder' in model.keys() and encoder is not None:
+        model['encoder'].load_state_dict(encoder, strict=False)
 
-    if 'decoder' in checkpoint_state.keys():
-        model['decoder'].load_state_dict(checkpoint_state['decoder'],
-                                         strict=False)
+    if 'decoder' in model.keys() and decoder is not None:
+        model['decoder'].load_state_dict(decoder, strict=False)
 
-    if 'fact_ent' in checkpoint_state.keys():
+    if 'fact_ent' in model.keys() and fact_ent is not None:
         model['fact_ent'].update(force=True)
 
-        if '_quantized_cdf' in checkpoint_state['fact_ent']:
-            model['fact_ent']._quantized_cdf = \
-                checkpoint_state['fact_ent']['_quantized_cdf']
+        if '_quantized_cdf' in fact_ent:
+            model['fact_ent']._quantized_cdf = fact_ent['_quantized_cdf']
 
-        if '_offset' in checkpoint_state['fact_ent']:
-            model['fact_ent']._offset = \
-                checkpoint_state['fact_ent']['_offset']
+        if '_offset' in fact_ent:
+            model['fact_ent']._offset = fact_ent['_offset']
 
-        if '_cdf_length' in checkpoint_state['fact_ent']:
-            model['fact_ent']._cdf_length = \
-                checkpoint_state['fact_ent']['_cdf_length']
+        if '_cdf_length' in fact_ent:
+            model['fact_ent']._cdf_length = fact_ent['_cdf_length']
 
-        model['fact_ent'].load_state_dict(checkpoint_state['fact_ent'])
+        model['fact_ent'].load_state_dict(fact_ent)
 
 
 def autoencoder_from_state_dict(checkpoint, gpu=False, train=False):
@@ -614,11 +596,11 @@ def autoencoder_from_state_dict(checkpoint, gpu=False, train=False):
         checkpoint_state = checkpoint
 
     model = setup_modules(**checkpoint_state)
-    load_state_dict(model, checkpoint_state)
+    load_state_dict(model, **checkpoint_state)
 
     # If there are more than one GPU, DataParallel handles automatically the
     # distribution of the work.
-    for k in ['encoder', 'decoder', 'fact_ent']:
+    for k in model.keys():
         model[k] = nn.DataParallel(model[k])
 
         if gpu and torch.cuda.is_available():

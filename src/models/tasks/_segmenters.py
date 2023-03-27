@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ._taskutils import ModelEmptyTask
-
 
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3,
@@ -150,8 +148,9 @@ class BottleneckUnit(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, channels_org=3, channels_net=64, channels_bn=1024,
-                 channels_expansion=2,
+    def __init__(self, channels_org=3, seg_channels_net=64,
+                 seg_channels_bn=1024,
+                 seg_channels_expansion=2,
                  compression_level=4,
                  num_classes=1,
                  use_analysis_track=True,
@@ -169,9 +168,9 @@ class UNet(nn.Module):
             project_bridges_from_channels = None
 
             channels_in_list = [channels_org] 
-            channels_in_list += [channels_net * channels_expansion ** c
+            channels_in_list += [int(seg_channels_net * seg_channels_expansion ** c)
                                  for c in range(compression_level - 1)]
-            channels_out_list = [channels_net * channels_expansion ** c
+            channels_out_list = [int(seg_channels_net * seg_channels_expansion ** c)
                                  for c in range(compression_level)]
             downsample_op_list = [None]
             downsample_op_list += [nn.MaxPool2d] * (compression_level - 1)
@@ -191,9 +190,9 @@ class UNet(nn.Module):
         else:
             self.analysis_track = []
 
-        channels_in_list = [channels_net * channels_expansion ** c
+        channels_in_list = [int(seg_channels_net * seg_channels_expansion ** c)
                             for c in reversed(range(compression_level))]
-        channels_out_list = [channels_net * channels_expansion ** (c - 1)
+        channels_out_list = [int(seg_channels_net * seg_channels_expansion ** (c - 1))
                                 for c in reversed(range(compression_level))]
 
         upsample_op_list = [nn.ConvTranspose2d] * (compression_level - 1)
@@ -228,11 +227,11 @@ class UNet(nn.Module):
         self.synthesis_track = nn.ModuleList(synthesis_track)
 
         self.bottleneck = BottleneckUnit(
-            channels_net * channels_expansion ** (compression_level - 1),
-            channels_bn,
+            int(seg_channels_net * seg_channels_expansion ** (compression_level - 1)),
+            seg_channels_bn,
             batch_norm=batch_norm)
 
-        self.fc = nn.Conv2d(channels_net, num_classes, kernel_size=1, stride=1,
+        self.fc = nn.Conv2d(seg_channels_net, num_classes, kernel_size=1, stride=1,
                             padding=0,
                             bias=True)
 
@@ -265,14 +264,15 @@ class UNet(nn.Module):
 
 
 class JNet(UNet):
-    def __init__(self, channels_net=64, channels_bn=1024,
-                 channels_expansion=2,
+    def __init__(self, seg_channels_net=64, channels_bn=320,
+                 seg_channels_bn=1024,
+                 seg_channels_expansion=2,
                  compression_level=4,
                  concat_bridges=False,
                  **kwargs):
-        super(JNet, self).__init__(channels_net=channels_net,
-                                   channels_bn=channels_bn,
-                                   channels_expansion=channels_expansion,
+        super(JNet, self).__init__(seg_channels_net=seg_channels_net,
+                                   seg_channels_bn=seg_channels_bn,
+                                   seg_channels_expansion=seg_channels_expansion,
                                    compression_level=compression_level,
                                    use_analysis_track=False,
                                    save_bridges=False,
@@ -281,7 +281,7 @@ class JNet(UNet):
 
         self.bottleneck = nn.ConvTranspose2d(
             channels_bn,
-            channels_net * channels_expansion ** (compression_level - 1),
+            int(seg_channels_net * seg_channels_expansion ** (compression_level - 1)),
             kernel_size=2,
             stride=2,
             padding=0,
@@ -310,10 +310,7 @@ def segmenter_from_state_dict(checkpoint, gpu=False, train=False):
     else:
         checkpoint_state = checkpoint
 
-    if checkpoint_state.get('segment_model_type', None) not in SEG_MODELS:
-        model = ModelEmptyTask()
-        model = nn.DataParallel(model)
-        return model
+    assert checkpoint_state.get('segment_model_type', None) in SEG_MODELS
 
     model = setup_modules(**checkpoint_state)
     load_state_dict(model, checkpoint_state)
@@ -334,8 +331,8 @@ def segmenter_from_state_dict(checkpoint, gpu=False, train=False):
 
 
 if __name__ == "__main__":
-    seg = JNet(channels_prg=3, channels_net=64, channels_expansion=2,
-               channels_bn=320,
+    seg = JNet(channels_prg=3, seg_channels_net=64, seg_channels_expansion=2,
+               seg_channels_bn=320,
                num_classes=1,
                concat_bridges=True,
                project_bridges_from_channels=192)

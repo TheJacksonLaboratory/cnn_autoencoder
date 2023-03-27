@@ -6,8 +6,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ._taskutils import ModelEmptyTask
-
 # TODO: Implement a version of the Mobilenet
 
 
@@ -229,10 +227,7 @@ def classifier_from_state_dict(checkpoint, gpu=False, train=False):
     else:
         checkpoint_state = checkpoint
 
-    if checkpoint_state.get('class_model_type', None) not in CLASS_MODELS:
-        model = ModelEmptyTask()
-        model = nn.DataParallel(model)
-        return model
+    assert checkpoint_state.get('class_model_type', None) in CLASS_MODELS
 
     model = setup_modules(**checkpoint_state)
 

@@ -94,10 +94,12 @@ class WeightsDistances(object):
 
     def __call__(self, target):
         w_x = np.take(self.class_weights, target.astype(np.int32))
+        w_x = w_x.astype(dtype=np.float32)
+
         num_objects = target.sum()
         if num_objects > 0:
             target_labels, num_objects = label(target[0], structure=self.SE)
-            d1 = distance_transform_edt(target < 1)
+            d1 = distance_transform_edt(target < 1).astype(np.float32)
             d2 = []
             for l in range(1, num_objects + 1):
                 target_remaining = np.copy(target[0])
@@ -105,9 +107,11 @@ class WeightsDistances(object):
                 d2.append(distance_transform_edt(target_remaining < 1))
 
             d2 = np.stack(d2)
-            d2 = np.min(d2, axis=0)[np.newaxis, ...]
+            d2 = np.min(d2, axis=0)[np.newaxis, ...].astype(np.float32)
 
-            w_x = w_x + self.w_0 * np.exp(-(d1 + d2) ** 2 / self.sigma_2)
+            w_1 = np.exp(-(d1 + d2) ** 2 / self.sigma_2)
+
+            w_x = w_x + self.w_0 * w_1
 
         return np.concatenate((w_x, target), axis=0)
 
