@@ -568,9 +568,9 @@ class ConvolutionalAutoencoder(Codec):
             buf_y_q = self._model['fact_ent'].decompress([buf[16:]],
                                                          size=buf_shape)
 
-        buf_x_r = self._model['decoder'](buf_y_q)
+        buf_x_r, _ = self._model['decoder'](buf_y_q)
 
-        buf_x_r = buf_x_r.cpu().detach()[0]
+        buf_x_r = buf_x_r[0].cpu().detach()[0]
         buf_x_r = buf_x_r * 255.0
         buf_x_r = buf_x_r.clip(0, 255).to(torch.uint8)
         buf_x_r = buf_x_r.permute(1, 2, 0)

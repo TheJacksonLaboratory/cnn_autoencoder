@@ -4,7 +4,6 @@ import os
 from time import perf_counter
 from skimage.color import deltaE_cie76, rgb2lab
 from skimage.metrics import (mean_squared_error,
-                             peak_signal_noise_ratio,
                              structural_similarity)
 
 from pytorch_msssim import ms_ssim
@@ -14,7 +13,6 @@ import zarr
 import torch
 import math
 
-import models
 import utils
 import compress
 import decompress
@@ -92,50 +90,28 @@ metric_fun = {'dist': compute_rmse,
 
 
 def test_image(checkpoint, input_filename,
-               channels_bn,
-               compression_level,
                patch_size=512,
-               add_offset=False,
-               transform_comp=None,
-               transform_decomp=None,
                source_format='zarr',
                data_group='0/0',
                data_axes='TCZYX',
-               seed=None,
-               temp_output_filename="./temp.zarr",
-               min_range=0.0,
-               max_range=1.0,
-               range_offset=0.0,
-               range_scale=1.0):
+               gpu=False,
+               progress_bar=True,
+               temp_output_filename="./temp.zarr"):
 
     e_time = perf_counter()
     compress.compress_image(checkpoint, input_filename, temp_output_filename,
-                            channels_bn,
-                            compression_level,
                             patch_size=patch_size,
-                            add_offset=add_offset,
-                            transform=transform_comp,
                             source_format=source_format,
                             data_group=data_group,
                             data_axes=data_axes,
-                            seed=seed,
-                            comp_label='compressed')
-    decompress.decompress_image(checkpoint, temp_output_filename,
-                                temp_output_filename,
-                                patch_size=patch_size,
-                                add_offset=add_offset,
-                                transform=transform_decomp,
-                                compute_pyramids=False,
-                                reconstruction_level=-1,
+                            progress_bar=progress_bar,
+                            gpu=gpu)
+
+    decompress.decompress_image(temp_output_filename, temp_output_filename,
                                 destination_format='zarr',
-                                data_group='compressed',
-                                data_axes='TCZYX',
-                                seed=seed,
+                                data_group=data_group,
                                 decomp_label='decompressed',
-                                min_range=min_range,
-                                max_range=max_range,
-                                range_offset=range_offset,
-                                range_scale=range_scale)
+                                progress_bar=progress_bar)
     e_time = perf_counter() - e_time
 
     arr, arr_shape, _ = utils.image_to_zarr(input_filename.split(';')[0],
@@ -154,8 +130,8 @@ def test_image(checkpoint, input_filename,
     transpose_order += [data_axes.index(a) for a in 'YXC']
 
     x = arr[slices]
-    y_q = zarr.open(temp_output_filename, mode="r")['compressed']
-    x_r = zarr.open(temp_output_filename, mode="r")['decompressed/0']
+    z = zarr.open(temp_output_filename, mode="r")
+    x_r = z['decompressed/' + data_group]
 
     x = np.transpose(x, transpose_order).squeeze()
     x_r = np.transpose(x_r, transpose_order).squeeze()
@@ -166,7 +142,7 @@ def test_image(checkpoint, input_filename,
     eval_time = perf_counter()
     for m_k in metric_fun.keys():
         metrics_eval_time = perf_counter()
-        score, extra_info = metric_fun[m_k](x=x, x_r=x_r, y_q_ptr=y_q)
+        score, extra_info = metric_fun[m_k](x=x, x_r=x_r, y_q_ptr=z[data_group])
         metrics_eval_time = perf_counter() - metrics_eval_time
         all_metrics[m_k + '_time'] = metrics_eval_time
 
@@ -193,25 +169,10 @@ def test_cae(args):
     Parameters
     ----------
     args : dict or Namespace
-        The set of parameters passed to the different constructors to set up the convolutional autoencoder training
+        The set of parameters passed to the different constructors to set up
+        the convolutional autoencoder training.
     """
     logger = logging.getLogger(args.mode + '_log')
-
-    state = utils.load_state(args)
-
-    if state['args']['normalize']:
-        min_range = -1.0
-        max_range = 1.0
-        range_scale = 0.5
-        range_offset = 0.5
-    else:
-        min_range = 0.0
-        max_range = 1.0
-        range_scale = 1.0
-        range_offset = 0.0
-
-    # Get the compression level from the model checkpoint
-    compression_level = state['args']['compression_level']
 
     input_fn_list = utils.get_filenames(args.data_dir, args.source_format,
                                         data_mode='all')
@@ -229,21 +190,12 @@ def test_cae(args):
     for i, in_fn in enumerate(input_fn_list):
         all_metrics = test_image(checkpoint=args.checkpoint,
                                  input_filename=in_fn,
-                                 channels_bn=state['args']['channels_bn'],
-                                 compression_level=compression_level,
                                  patch_size=args.patch_size,
-                                 add_offset=args.add_offset,
-                                 transform_comp=None,
-                                 transform_decomp=None,
                                  source_format=args.source_format,
                                  data_axes=args.data_axes,
                                  data_group=args.data_group,
-                                 seed=state['args']['seed'],
                                  temp_output_filename=args.output_dir,
-                                 min_range=min_range,
-                                 max_range=max_range,
-                                 range_offset=range_offset,
-                                 range_scale=range_scale)
+                                 gpu=args.gpu)
 
         avg_metrics = ''
         for m_k in all_metrics_stats.keys():
@@ -273,7 +225,7 @@ def test_cae(args):
         logger.debug('==== Test metrics {}'.format(avg_metrics))
 
     all_metrics_stats['codec'] = 'CAE'
-    all_metrics_stats['seed'] = state['args']['seed']
+    all_metrics_stats['seed'] = state['seed']
 
     torch.save(all_metrics_stats,
                os.path.join(args.log_dir,

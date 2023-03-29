@@ -162,7 +162,7 @@ def load_state(args):
 
     if not torch.cuda.is_available() or not args.gpu:
         state = torch.load(save_fn, map_location=torch.device('cpu'))
-        state['args']['gpu'] = False
+        state['gpu'] = False
     else:
         state = torch.load(save_fn)
 
@@ -170,7 +170,7 @@ def load_state(args):
     logger.info('Loaded model from %s' % save_fn)
 
     logger.info('Training arguments')
-    logger.info(state['args'])
+    logger.info(state)
 
     return state
 
