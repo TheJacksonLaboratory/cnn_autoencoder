@@ -175,7 +175,7 @@ task_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['all'],
+        'modes': ['training'],
         'flags': ('-bn', '--batch-norm'),
         'details': {
         'dest': 'batch_norm',

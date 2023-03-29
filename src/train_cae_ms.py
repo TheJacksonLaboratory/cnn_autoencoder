@@ -68,7 +68,6 @@ def valid(model, data, criterion, args):
 
     for i, (x, t) in enumerate(data):
         output = valid_forward_step(x, model)
-        t = t.to(output['y_q'].device)
 
         loss_dict = criterion(inputs=x, outputs=output, targets=t, net=model)
         loss = torch.mean(loss_dict['loss'])
@@ -210,7 +209,6 @@ def train(model, train_data,
                 # Start of training step
 
                 output = train_forward_step(x, model)
-                t = t.to(output['y_q'].device)
 
                 loss_dict = criterion(inputs=x, outputs=output, targets=t,
                                       net=model)
@@ -447,7 +445,7 @@ def train(model, train_data,
     return completed
 
 
-def setup_network(args):
+def setup_network(args, train=True):
     """Setup a nerual network for image compression/decompression.
 
     Parameters
@@ -469,24 +467,25 @@ def setup_network(args):
     else:
         args_dict = args.__dict__
 
-    args_dict['multiscale_analysis'] = 'Multiscale' in args_dict['criterion']
 
     if args.checkpoint is not None:
         checkpoint_state = torch.load(args.checkpoint, map_location='cpu')
         checkpoint_state.update(args_dict)
         args_dict = checkpoint_state
 
+    args_dict['multiscale_analysis'] = 'Multiscale' in args_dict['criterion']
+
     model = models.autoencoder_from_state_dict(args_dict, gpu=args.gpu,
-                                               train=True)
+                                               train=train)
 
     if 'class_model' in args_dict['enabled_modules']:
         model['class_model'] = models.classifier_from_state_dict(args_dict,
                                                                  gpu=args.gpu,
-                                                                 train=True)
+                                                                 train=train)
     if 'seg_model' in args_dict['enabled_modules']:
         model['seg_model'] = models.segmenter_from_state_dict(args_dict,
                                                               gpu=args.gpu,
-                                                              train=True)
+                                                              train=train)
 
     return model
 

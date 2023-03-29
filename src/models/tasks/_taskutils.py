@@ -76,7 +76,7 @@ def decorate_trainable_modules(trainable_modules=None,
     else:
         decoder_step_fun = identity_double_output_step
 
-    if 'class_model' in trainable_modules:
+    if 'class_model' in enabled_modules:
         if 'class_model' in trainable_modules:
             class_model_step_fun = trainable_module(model_step)
         else:

@@ -190,7 +190,7 @@ def main(args):
     test_data, num_classes = utils.get_data(args)
     args.num_classes = num_classes
 
-    model = setup_network(args)
+    model = setup_network(args, train=False)
 
     # Log the training setup
     logger.info('Network architecture:')

@@ -4,23 +4,23 @@ from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
 
 class ClassLoss(object):
     def __call__(self, pred, t, **kwargs):
-        return dict(class_error=self._loss(pred, t),
+        return dict(class_error=self._loss(pred, t.to(pred.device)),
                     aux_class_error=0)
 
 
 class WeightedClassLoss(object):
     def __call__(self, pred, t, **kwargs):
-        loss = self._loss(pred, t[:, 1:])
-        loss = torch.mean(t[:, :1] * loss)
+        loss = self._loss(pred, t[:, 1:].to(pred.device))
+        loss = torch.mean(t[:, :1].to(pred.device) * loss)
         return dict(class_error=loss,
                     aux_class_error=0)
 
 
 class ClassLossWithAux(object):
     def __call__(self, pred, t, aux_pred, **kwargs):
-        class_error = self._loss(pred, t)
+        class_error = self._loss(pred, t.to(pred.device))
         if aux_pred is not None:
-            aux_class_error = self._aux_loss(aux_pred, t)
+            aux_class_error = self._aux_loss(aux_pred, t.to(pred.device))
         else:
             aux_class_error = 0
 

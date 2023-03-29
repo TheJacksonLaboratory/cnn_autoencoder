@@ -279,13 +279,12 @@ class JNet(UNet):
                                    concat_bridges=concat_bridges,
                                    **kwargs)
 
-        self.bottleneck = nn.ConvTranspose2d(
-            channels_bn,
-            int(seg_channels_net * seg_channels_expansion ** (compression_level - 1)),
-            kernel_size=2,
-            stride=2,
-            padding=0,
-            bias=False)
+        self.bottleneck._dwn_sample = nn.Identity()
+        self.bottleneck._c1 = nn.Conv2d(channels_bn, seg_channels_bn,
+                                        kernel_size=1,
+                                        stride=1,
+                                        padding=0,
+                                        bias=False)
 
 
 SEG_MODELS = {
