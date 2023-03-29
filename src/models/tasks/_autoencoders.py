@@ -485,8 +485,6 @@ def load_state_dict(model, encoder=None, decoder=None, fact_ent=None,
         model['decoder'].load_state_dict(decoder, strict=False)
 
     if 'fact_ent' in model.keys() and fact_ent is not None:
-        model['fact_ent'].update(force=True)
-
         if '_quantized_cdf' in fact_ent:
             model['fact_ent']._quantized_cdf = fact_ent['_quantized_cdf']
 
@@ -497,6 +495,7 @@ def load_state_dict(model, encoder=None, decoder=None, fact_ent=None,
             model['fact_ent']._cdf_length = fact_ent['_cdf_length']
 
         model['fact_ent'].load_state_dict(fact_ent)
+        model['fact_ent'].update(force=True)
 
 
 def autoencoder_from_state_dict(checkpoint, gpu=False, train=False):
