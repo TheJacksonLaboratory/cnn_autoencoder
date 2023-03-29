@@ -27,12 +27,12 @@ class PyramidLossMixin:
                                   align_corners=False)
         return x_dwn
 
-    def __call__(self, x, x_brg, **kwargs):
+    def __call__(self, x, x_r, **kwargs):
         dist = []
         x_org = x.clone()
 
-        for s, (x_r, d_crt) in enumerate(zip(x_brg, self._dist_criteria)):
-            dist_s = d_crt(x_org, x_r)
+        for s, (x_r, d_crt) in enumerate(zip(x_r, self._dist_criteria)):
+            dist_s = d_crt(x_org, [x_r])
             dist += dist_s['dist']
 
             # Downsample the original input
@@ -59,7 +59,7 @@ class DistMSELoss(object):
         self._dist_loss = nn.MSELoss()
 
     def __call__(self, x, x_r, **kwargs):
-        dist = self._dist_loss(x_r, x.to(x_r.device))
+        dist = self._dist_loss(x_r[0], x.to(x_r[0].device))
         return dict(dist=[dist])
 
 
@@ -80,8 +80,8 @@ class DistMSSSIMLoss(object):
             self.padding = nn.Identity()
 
     def __call__(self, x, x_r, **kwargs):
-        padded_x_r = self.padding(x_r)
-        padded_x = self.padding(x.to(x_r.device))
+        padded_x_r = self.padding(x_r[0])
+        padded_x = self.padding(x.to(x_r[0].device))
         ms_ssim_res = ms_ssim(padded_x_r, padded_x, data_range=self._range, 
                               win_size=self.win_size,
                               win_sigma=self.win_sigma)

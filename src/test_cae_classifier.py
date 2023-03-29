@@ -186,6 +186,7 @@ def main(args):
         the convolutional autoencoder training.
     """
     logger = logging.getLogger(args.mode + '_log')
+    args.criterion = "CE"
 
     test_data, num_classes = utils.get_data(args)
     args.num_classes = num_classes

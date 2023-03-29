@@ -3,6 +3,41 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class ProjectionUnit(nn.Module):
+    def __init__(self, channels_in, channels_out, kernel_size=3,
+                 batch_norm=True):
+        super(ProjectionUnit, self).__init__()
+
+        if batch_norm:
+            self._bn1 = nn.GroupNorm(num_groups=channels_in,
+                                     num_channels=channels_in)
+        else:
+            self._bn1 = nn.Identity()
+
+        self._c2 = nn.Conv2d(channels_in, channels_out,
+                             kernel_size=kernel_size,
+                             stride=1,
+                             padding=kernel_size//2,
+                             bias=False)
+
+        if batch_norm:
+            self._bn2 = nn.GroupNorm(num_groups=channels_out,
+                                     num_channels=channels_out)
+        else:
+            self._bn2 = nn.Identity()
+
+        self._relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        fx = self._bn1(x)
+        fx = self._relu(fx)
+        fx = self._c2(fx)
+        fx = self._bn2(fx)
+        fx = self._relu(fx)
+    
+        return fx
+
+
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3,
                  batch_norm=True,
@@ -148,14 +183,14 @@ class BottleneckUnit(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, channels_org=3, seg_channels_net=64,
+    def __init__(self, channels_org=3, seg_channels_net=64, channels_net=64,
                  seg_channels_bn=1024,
                  seg_channels_expansion=2,
+                 channels_expansion=1,
                  compression_level=4,
                  num_classes=1,
                  use_analysis_track=True,
                  concat_bridges=True,
-                 project_bridges_from_channels=None,
                  batch_norm=True,
                  **kwargs):
         super(UNet, self).__init__()
@@ -164,13 +199,19 @@ class UNet(nn.Module):
         # synthesis track.
         self._concat_bridges = concat_bridges
 
+        decoder_channels_out_list = [channels_net * channels_expansion ** c
+                                     for c in range(compression_level - 1)]
+        decoder_channels_out_list += [channels_org]
+
         if use_analysis_track:
-            project_bridges_from_channels = None
+            decoder_channels_out_list = [None] * compression_level
 
             channels_in_list = [channels_org] 
-            channels_in_list += [int(seg_channels_net * seg_channels_expansion ** c)
+            channels_in_list += [int(seg_channels_net
+                                     * seg_channels_expansion ** c)
                                  for c in range(compression_level - 1)]
-            channels_out_list = [int(seg_channels_net * seg_channels_expansion ** c)
+            channels_out_list = [int(seg_channels_net
+                                     * seg_channels_expansion ** c)
                                  for c in range(compression_level)]
             downsample_op_list = [None]
             downsample_op_list += [nn.MaxPool2d] * (compression_level - 1)
@@ -190,9 +231,11 @@ class UNet(nn.Module):
         else:
             self.analysis_track = []
 
-        channels_in_list = [int(seg_channels_net * seg_channels_expansion ** c)
+        channels_in_list = [int(seg_channels_net
+                                * seg_channels_expansion ** c)
                             for c in reversed(range(compression_level))]
-        channels_out_list = [int(seg_channels_net * seg_channels_expansion ** (c - 1))
+        channels_out_list = [int(seg_channels_net
+                                 * seg_channels_expansion ** (c - 1))
                                 for c in reversed(range(compression_level))]
 
         upsample_op_list = [nn.ConvTranspose2d] * (compression_level - 1)
@@ -200,17 +243,13 @@ class UNet(nn.Module):
 
         synthesis_track = []
         bridges_projection = []
-        for ch_in, ch_out, ups_op in zip(channels_in_list, 
-                                         channels_out_list,
-                                         upsample_op_list):
-            if project_bridges_from_channels is not None and concat_bridges:
+        for dch_out, ch_in, ch_out, ups_op in zip(decoder_channels_out_list,
+                                                  channels_in_list, 
+                                                  channels_out_list,
+                                                  upsample_op_list):
+            if dch_out is not None and concat_bridges:
                 bridges_projection.append(
-                    nn.Conv2d(project_bridges_from_channels,
-                              ch_in,
-                              kernel_size=1,
-                              stride=1,
-                              padding=0,
-                              bias=False)
+                    ProjectionUnit(dch_out, ch_in, batch_norm=batch_norm)
                 )
             else:
                 bridges_projection.append(nn.Identity())
@@ -227,11 +266,13 @@ class UNet(nn.Module):
         self.synthesis_track = nn.ModuleList(synthesis_track)
 
         self.bottleneck = BottleneckUnit(
-            int(seg_channels_net * seg_channels_expansion ** (compression_level - 1)),
+            int(seg_channels_net
+                * seg_channels_expansion ** (compression_level - 1)),
             seg_channels_bn,
             batch_norm=batch_norm)
 
-        self.fc = nn.Conv2d(seg_channels_net, num_classes, kernel_size=1, stride=1,
+        self.fc = nn.Conv2d(seg_channels_net, num_classes, kernel_size=1,
+                            stride=1,
                             padding=0,
                             bias=True)
 

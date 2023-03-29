@@ -2,8 +2,6 @@ from ._taskutils import *
 
 from ._autoencoders import (Analyzer,
                             Synthesizer,
-                            SynthesizerInflate,
-                            AutoEncoder,
                             ConvolutionalAutoencoder,
                             autoencoder_from_state_dict)
 

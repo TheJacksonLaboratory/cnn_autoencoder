@@ -95,13 +95,13 @@ def decorate_trainable_modules(trainable_modules=None,
     def forward_func(x, model):
         y = encoder_step_fun(model, 'encoder', x)
         y_q, p_y = fact_ent_step_fun(model, 'fact_ent', y)
-        x_r, x_brg = decoder_step_fun(model, 'decoder', y_q)
+        x_r, fx_brg = decoder_step_fun(model, 'decoder', y_q)
 
         t_pred, t_aux_pred = class_model_step_fun(model, 'class_model', y_q)
         s_pred, s_aux_pred = seg_model_step_fun(model, 'seg_model', y_q,
-                                                fx_brg=x_brg)
+                                                fx_brg=fx_brg)
 
-        return dict(x_r=x_r, x_brg=x_brg, y=y, y_q=y_q, p_y=p_y, 
+        return dict(x_r=x_r, fx_brg=fx_brg, y=y, y_q=y_q, p_y=p_y, 
                     t_pred=t_pred,
                     t_aux_pred=t_aux_pred,
                     s_pred=s_pred,

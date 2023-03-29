@@ -136,16 +136,6 @@ task_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
-        'flags': ('-mt', '--model-type'),
-        'details': {
-        'dest': 'model_type',
-        'type': str,
-        'help': 'Convoutional Autoencoder model type',
-        'default': 'AutoEncoder',
-        }
-    },
-    {'tasks': ['all'],
-        'modes': ['training'],
         'flags': ('-cmt', '--class-model-type'),
         'details': {
         'dest': 'class_model_type',

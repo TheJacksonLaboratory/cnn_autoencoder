@@ -39,6 +39,14 @@ def initialize_weights(m):
             nn.init.constant_(m.bias.data, 0.01)
 
 
+class NoneColorLayer(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super(NoneColorLayer, self).__init__()
+
+    def forward(self, *args, **kwargs):
+        return None
+
+
 class DownsamplingUnit(nn.Module):
     def __init__(self, channels_in, channels_out, kernel_size=3, groups=False,
                  batch_norm=False,
@@ -361,6 +369,7 @@ class Synthesizer(nn.Module):
                  bias=False,
                  use_residual=False,
                  act_layer_type=None,
+                 multiscale_analysis=False,
                  **kwargs):
         super(Synthesizer, self).__init__()
 
@@ -402,17 +411,22 @@ class Synthesizer(nn.Module):
         # Final color reconvertion
         self.synthesis_track = nn.Sequential(*up_track)
 
-        color_layers = [
-            nn.Sequential(
-                nn.Conv2d(channels_net * channels_expansion**i, channels_org,
-                          kernel_size=kernel_size,
-                          stride=1,
-                          padding=kernel_size//2,
-                          dilation=1,
-                          groups=channels_org if groups else 1,
-                          bias=bias,
-                          padding_mode='reflect'))
-                        for i in reversed(range(compression_level - 1))]
+        if multiscale_analysis:
+            color_layers = [
+                nn.Sequential(
+                    nn.Conv2d(channels_net * channels_expansion**i,
+                              channels_org,
+                              kernel_size=kernel_size,
+                              stride=1,
+                              padding=kernel_size//2,
+                              dilation=1,
+                              groups=channels_org if groups else 1,
+                              bias=bias,
+                              padding_mode='reflect'))
+                            for i in reversed(range(compression_level - 1))]
+        else:
+            color_layers = [nn.Sequential(NoneColorLayer())
+                            for _ in reversed(range(compression_level - 1))]
 
         color_layers += [nn.Identity()]
 
@@ -424,120 +438,21 @@ class Synthesizer(nn.Module):
 
     def forward(self, x):
         fx = x
-        x_r_ms = []
+        fx_brg = []
+        x_r = []
 
         for up_layer, color_layer in zip(self.synthesis_track,
                                          self.color_layers):
             fx = up_layer(fx)
-            x_r = color_layer(fx)
-            x_r_ms.insert(0, x_r)
+            x_r_i = color_layer(fx)
 
-        return x_r, x_r_ms
+            x_r.insert(0, x_r_i)
+            fx_brg.append(fx)
 
-
-
-class SynthesizerInflate(Synthesizer):
-    def __init__(self, rec_level=-1, color=True, **kwargs):
-        super(SynthesizerInflate, self).__init__(**kwargs)
-        if rec_level < 1:
-            rec_level = len(self.synthesis_track)
-
-        if not color:
-            for r in range(rec_level - 1):
-                self.color_layers[r] = nn.Identity()
-
-        self.rec_level = rec_level
-
-
-
-class AutoEncoder(nn.Module):
-    """ AutoEncoder encapsulates the full compression-decompression process.
-    In this manner, the network can be trained end-to-end, but its modules can
-    be saved and accessed separatelly
-    """
-    def __init__(self, channels_org=3, channels_net=8, channels_bn=16,
-                 compression_level=3,
-                 channels_expansion=1,
-                 kernel_size=3,
-                 groups=False,
-                 batch_norm=False,
-                 dropout=0.0,
-                 bias=False,
-                 use_residual=False,
-                 act_layer_type=None,
-                 multiscale_analysis=False,
-                 K=4,
-                 r=3,
-                 **kwargs):
-        super(AutoEncoder, self).__init__()
-
-        # Initial color embedding
-        self.embedding = nn.Identity()
-
-        self.analysis = Analyzer(channels_net=channels_net,
-                                 channels_bn=channels_bn,
-                                 compression_level=compression_level,
-                                 channels_expansion=channels_expansion,
-                                 kernel_size=kernel_size,
-                                 groups=groups,
-                                 batch_norm=batch_norm,
-                                 dropout=dropout,
-                                 bias=bias,
-                                 use_residual=use_residual,
-                                 act_layer_type=act_layer_type)
-
-        if multiscale_analysis:
-            synthesizer_class = SynthesizerInflate
-        else:
-            synthesizer_class = Synthesizer
-
-        self.synthesis = synthesizer_class(
-            channels_org=channels_org,
-            channels_net=channels_net,
-            channels_bn=channels_bn,
-            compression_level=compression_level,
-            channels_expansion=channels_expansion,
-            kernel_size=kernel_size,
-            groups=groups,
-            batch_norm=batch_norm,
-            dropout=dropout,
-            bias=bias,
-            use_residual=use_residual,
-            act_layer_type=act_layer_type)
-
-        self.fact_ent = EntropyBottleneck(channels=channels_bn,
-                                              filters=[r] * K)
-
-    def forward(self, x, synthesize_only=False, factorized_entropy_only=False):
-        if synthesize_only:
-            # When running on synthesize only mode, use x as y_q
-            x_r = self.synthesis(x)
-            return x_r
-
-        elif factorized_entropy_only:
-            # When running on factorized entropy only mode, use x as y_q
-            # log_p_y = self.fact_ent(x)
-            log_p_y = self.fact_ent._logits_cumulative(x, stop_gradient=True)
-            return log_p_y
-
-        fx = self.embedding(x)
-
-        y = self.analysis(fx)
-
-        y_q, p_y = self.fact_ent(y)
-
-        x_r = self.synthesis(y_q)
-
-        return x_r, y, p_y
-
-
-CAE_MODELS = {
-    "AutoEncoder": AutoEncoder
-}
+        return x_r, fx_brg
 
 
 def setup_modules(channels_bn=192, compression_level=4, K=4, r=3,
-                  multiscale_analysis=False,
                   enabled_modules=None,
                   **kwargs):
     if enabled_modules is None:
@@ -550,12 +465,7 @@ def setup_modules(channels_bn=192, compression_level=4, K=4, r=3,
                                     **kwargs)
 
     if 'decoder' in enabled_modules:
-        if multiscale_analysis:
-            synth_class = SynthesizerInflate
-        else:
-            synth_class = Synthesizer
-
-        model['decoder'] = synth_class(channels_bn=channels_bn,
+        model['decoder'] = Synthesizer(channels_bn=channels_bn,
                                        compression_level=compression_level,
                                        **kwargs)
 

@@ -52,8 +52,7 @@ def save_training_stats_checkpoint(trained_model, output_filename):
                  + ','.join(all_metrics_keys)
                  + '\n')
         for s in range(steps):
-            step_metrics = "%s,%s,%i,%f,%f" % (state["model_type"],
-                                               state["seed"],
+            step_metrics = "%s,%s,%i,%f,%f" % ("AutoEncoder", state["seed"],
                                                s * state["checkpoint_steps"],
                                                state["train_loss"][s],
                                                state["valid_loss"][s])
