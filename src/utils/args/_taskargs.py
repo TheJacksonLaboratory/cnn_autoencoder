@@ -233,6 +233,16 @@ task_args = [
     },
     {'tasks': ['all'],
         'modes': ['test'],
+        'flags': ('-ccm', '--compute-components-metrics'),
+        'details': {
+        'dest': 'compute_components_metrics',
+        'action': 'store_true',
+        'help': 'Compute metrics per connected component in the target image',
+        'default': False,
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['test'],
         'flags': ('-spr', '--save-prediction'),
         'details': {
         'dest': 'save_prediction',

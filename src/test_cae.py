@@ -225,7 +225,7 @@ def test_cae(args):
         logger.debug('==== Test metrics {}'.format(avg_metrics))
 
     all_metrics_stats['codec'] = 'CAE'
-    all_metrics_stats['seed'] = state['seed']
+    all_metrics_stats['seed'] = args.seed
 
     torch.save(all_metrics_stats,
                os.path.join(args.log_dir,

@@ -3,7 +3,7 @@ import logging
 import torch
 from inspect import signature
 
-from ._metrics import compute_class_metrics
+from ._metrics import compute_metrics_per_image
 from ._info import VER, SEG_VER
 
 
@@ -278,9 +278,10 @@ def log_info(step, sub_step, len_data, model, inputs, targets, output,
                                           loss_dict['class_error'].item())
         recorded_metrics[class_task_type] = loss_dict['class_error'].item()
 
-        class_metrics = compute_class_metrics(output[class_task_key], targets,
-                                              top_k=5,
-                                              num_classes=None)
+        class_metrics = compute_metrics_per_image(output[class_task_key],
+                                                  targets,
+                                                  top_k=5,
+                                                  num_classes=None)
 
         for k, m in class_metrics.items():
             log_string += ' {}:{:.3f}'.format(k, m)
