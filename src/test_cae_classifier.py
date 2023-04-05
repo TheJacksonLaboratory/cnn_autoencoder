@@ -18,11 +18,12 @@ from train_cae_ms import setup_network
 from tqdm import tqdm
 
 
-def save_pred2zarr(save_filename, im_id, target, pred, seg_threshold,
+def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
                    batch_size, 
                    patch_size,
                    num_classes,
-                   compute_components_metrics):
+                   compute_components_metrics,
+                   save_input=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
     
     if pred.ndim == 4:
@@ -54,6 +55,15 @@ def save_pred2zarr(save_filename, im_id, target, pred, seg_threshold,
         target = target.to(torch.bool).numpy()
 
     z_grp = zarr.open(save_filename)
+
+    if save_input:
+        x = x.numpy()
+        z_grp.create_dataset('input/%i/0' % im_id, data=x,
+                         shape=x.shape,
+                         chunks=True,
+                         dtype=x.dtype,
+                         compressor=compressor,
+                         overwrite=True)
 
     z_grp.create_dataset('target/%i/0' % im_id, data=target,
                          shape=target.shape,
@@ -92,6 +102,16 @@ def save_pred2zarr(save_filename, im_id, target, pred, seg_threshold,
             target_k = target[cc_bbox]
             pred_scores_k = pred_scores[cc_bbox]
             pred_class_k = pred_class[cc_bbox]
+
+            if save_input:
+                x_k = x[cc_bbox]
+                z_grp.create_dataset('input/%i/%i' % (im_id, k),
+                                     chunks=True,
+                                     data=x_k,
+                                     shape=x_k.shape,
+                                     dtype=x_k.dtype,
+                                     compressor=compressor,
+                                     overwrite=True)
 
             z_grp.create_dataset('target/%i/%i' % (im_id, k),
                                  chunks=True,
@@ -156,12 +176,13 @@ def infer(model, test_data, args):
 
         save_filename = os.path.join(args.log_dir,
                                      f'output{args.log_identifier}.zarr')
-        save_pred2zarr(save_filename, i, t.cpu(), pred.detach().cpu(),
+        save_pred2zarr(save_filename, i, x.cpu(), t.cpu(), pred.detach().cpu(),
                        args.seg_threshold,
                        args.batch_size,
                        args.patch_size,
                        args.num_classes,
-                       args.compute_components_metrics)
+                       args.compute_components_metrics,
+                       args.save_input)
 
         if (i % max(1, int(len(test_data) * 0.1))) == 0:
             log_str = 'Test metrics'

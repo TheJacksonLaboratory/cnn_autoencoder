@@ -243,11 +243,11 @@ task_args = [
     },
     {'tasks': ['all'],
         'modes': ['test'],
-        'flags': ('-spr', '--save-prediction'),
+        'flags': ('-sin', '--save-input'),
         'details': {
-        'dest': 'save_prediction',
+        'dest': 'save_input',
         'action': 'store_true',
-        'help': 'Store the thresholded prediction from the segmentation head',
+        'help': 'Store the input image for which the prediction is made',
         'default': False,
         }
     },
