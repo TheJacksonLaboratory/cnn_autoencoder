@@ -57,7 +57,7 @@ def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
     z_grp = zarr.open(save_filename)
 
     if save_input:
-        x = x.numpy()
+        x = x[0].numpy()
         z_grp.create_dataset('input/%i/0' % im_id, data=x,
                          shape=x.shape,
                          chunks=True,
