@@ -232,10 +232,10 @@ def get_zarr_dataset(data_dir='.', batch_size=1,
     # Modes can vary from testing, segmentation, compress, decompress, etc.
     # For this reason, only when it is properly training, two data queues are
     # returned, otherwise, only one queue is returned.
-    if 'train' not in data_mode:
+    if 'test' in mode:
         zarr_data = histo_dataset(root=data_dir,
                                   dataset_size=test_dataset_size,
-                                  data_mode='test',
+                                  data_mode=data_mode,
                                   transform=prep_trans,
                                   intput_target_transform=input_target_trans,
                                   target_transform=target_trans,
