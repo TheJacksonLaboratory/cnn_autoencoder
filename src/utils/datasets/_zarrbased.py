@@ -4,8 +4,11 @@ from functools import reduce
 
 import numpy as np
 import zarr
+import dask
+import dask.array as da
 from tqdm import tqdm
 
+from skimage import transform
 from PIL import Image
 import boto3
 from io import BytesIO
@@ -63,7 +66,7 @@ class LazyImage(object):
             new_roi = []
             for r, s in zip(roi, shape):
                 if r.stop is None or (r.stop - r.start) / r.step < 0:
-                    new_roi.append(slice(0, s, 1))
+                    new_roi.append(slice(0, s, None))
                 else:
                     new_roi.append(r)
             roi = tuple(new_roi)
@@ -77,6 +80,20 @@ class LazyImage(object):
 
     def __call__(self):
         return self[:]
+
+
+def load_image(filename, s3_obj=None):
+    if s3_obj is not None:
+        # Remove the end-point from the file name
+        filename = '/'.join(filename.split('/')[4:])
+        im_bytes = s3_obj['s3'].get_object(Bucket=s3_obj['bucket_name'],
+                                           Key=filename)['Body'].read()
+        with Image.open(BytesIO(im_bytes)) as im_s3:
+            arr = im_s3.convert('RGB')
+    else:
+        im = Image.open(filename, mode="r").convert('RGB')
+    arr = np.array(im)
+    return arr
 
 
 def connect_s3(filename_sample):
@@ -95,47 +112,28 @@ def connect_s3(filename_sample):
     return s3_obj
 
 
-def image_to_zarr(arr_src, patch_size, source_format, data_group,
+def image_to_dask(arr_src, patch_size, source_format, data_group,
                   compressed_input=False,
                   s3_obj=None):
+    # TODO: Get compression level from compressed inputs
+    compression_level = 0
+
     if (isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str)
        and '.zarr' in source_format)):
         # If the passed object is a zarr group/file, open it and
         # extract the level from the specified group.
-        if isinstance(arr_src, str):
-            arr_src = zarr.open(arr_src, mode='r')
-
-        arr = arr_src[data_group]
-        comp_group = data_group.split('/')[0]
-
-        if (compressed_input
-           and comp_group in arr_src.keys()
-           and 'compression_metadata' in arr_src[comp_group].attrs.keys()):
-            comp_metadata = arr_src[comp_group].attrs['compression_metadata']
-            compressed_channels = comp_metadata['compressed_channels']
-            org_H = comp_metadata['height']
-            org_W = comp_metadata['width']
-            compression_level = comp_metadata['compression_level']
-            arr_shape = (1, compressed_channels, 1, org_H, org_W)
-
-        else:
-            arr_shape = arr.shape
-            compression_level = 0
+        arr = da.from_zarr(arr_src, component=data_group)
 
     elif (isinstance(arr_src, str) and '.zarr' not in source_format):
         # If the input is a path to an image stored in a format
         # supported by PIL, open it and use it as a numpy array.
-        arr = LazyImage(arr_src, s3_obj=s3_obj)
-        arr_shape = arr.shape
-        compression_level = 0
+        arr = da.from_delayed(dask.delayed(load_image), arr_src, s3_obj=s3_obj)
 
-    else:
+    elif isinstance(arr_src, zarr.Array):
         # Otherwise, use directly the zarr array
-        arr = arr_src
-        arr_shape = arr.shape
-        compression_level = 0
+        arr = da.from_zarr(arr_src)
 
-    return arr, arr_shape, compression_level
+    return arr, arr.shape, compression_level
 
 
 def compute_num_patches(size, patch_size, padding, stride):
@@ -221,7 +219,7 @@ def parse_roi(filename, source_format):
             axis_lengths = tuple([int(ln.strip('\n\r ()'))
                                   for ln in axis_lengths.split(',')])
 
-            roi_slices = tuple([slice(c_i, c_i + l_i, 1) for c_i, l_i in
+            roi_slices = tuple([slice(c_i, c_i + l_i, None) for c_i, l_i in
                                 zip(start_coords, axis_lengths)])
             rois.append(roi_slices)
 
@@ -279,66 +277,7 @@ def get_filenames(source, source_format, data_mode):
     return []
 
 
-def compute_grid(index, imgs_shapes, imgs_sizes, patch_size, padding, stride,
-                 by_rows=True):
-    """ Compute the coordinate on a grid of indices corresponding to 'index'.
-
-    Parameters:
-    ----------
-    index : int
-        Index of the patched dataset Between 0 and 'total_patches'-1
-    imgs_shapes : list of ints
-        Shapes of each image in the dataset
-    imgs_sizes : list of ints
-        Number of patches that can be obtained from each image in the dataset
-    patch_size : int
-        The size of each squared patch
-    padding : tuple of ints
-        Padding added to the source image prior to retrieve the patch.
-    stride : tuple of ints
-        The spacing in each axis (x, y) between each patch retrieved.
-    by_rows : bool
-        Whether the patches are extracted by rows (left to right) of by columns
-        (top to bottom).
-
-    Returns
-    -------
-    i : int
-        The file index relative to the list of filenames.
-    tl_y : int
-        The top left `y` coordinate of the patched image.
-    tl_x : int
-        The top left `x` coordinate of the patched image.
-    """
-    # This allows to generate virtually infinite data from bootstrapping the
-    # same data by resampling with replacement.
-    index %= imgs_sizes[-1]
-
-    # Get the file index among the available file names
-    i = list(filter(lambda l_h:
-                    l_h[1][0] <= index < l_h[1][1],
-                    enumerate(zip(imgs_sizes[:-1], imgs_sizes[1:]))))[0][0]
-    index -= imgs_sizes[i]
-    H, W = imgs_shapes[i]
-
-    # Get the patch position in the file
-    if by_rows:
-        n_patches_per_row = compute_num_patches(W, patch_size,
-                                                padding[0] + padding[1],
-                                                stride[0])
-        tl_y = index // n_patches_per_row
-        tl_x = index % n_patches_per_row
-    else:
-        n_patches_per_col = compute_num_patches(H, patch_size,
-                                                padding[2] + padding[3],
-                                                stride[1])
-        tl_y = index % n_patches_per_col
-        tl_x = index // n_patches_per_col
-    return i, tl_y, tl_x
-
-
-def get_patch(z, roi, shape, tl_y, tl_x, patch_size, padding, stride,
-              compression_level=0,
+def get_patch(z, tl_y, tl_x, patch_size, compression_level=0,
               data_axes="XYZCT"):
     """Get a squared region from an array z (numpy or zarr).
 
@@ -348,64 +287,48 @@ def get_patch(z, roi, shape, tl_y, tl_x, patch_size, padding, stride,
         A full array from where to take a patch
     roi : iterable of slices
         The active ROI that is used from the array `z`
-    shape : tuple of ints
-        Shape of the original array. For compressed representation of images,
-        the shape of the uncompressed image.
     tl_y : int
         Top left coordinate in the y-axis
     tl_x : int
         Top left coordinate in the x-axis
     patch_size : int
         Sice of the squared patch to extract from the input array `z`
-    padding : tuple of ints
-        Padding added to the source image prior to retrieve the patch.
-    stride : tuple of ints
-        The spacing in each axis (x, y) between each patch retrieved.
     compression_level : int
         In case that the input is a comrpessed representation, pass the level
         of compression.
+    data_axes : str
+        The order of the axes in the array.
 
     Returns
     -------
-    patch : numpy.array
+    patch : dask.array.Array
     """
-    tl_y *= stride[0]
-    tl_x *= stride[1]
-
-    a_ch, a_H, a_W = [data_axes.index(a) for a in 'CYX']
-    c = (roi[a_ch].stop - roi[a_ch].start) // roi[a_ch].step
-    H = shape[0]
-    W = shape[1]
-
-    # If the shape is negative take it from the input `z` array. The shape can
-    # be negative when the data is being pulled from a S3 bucket.
-    true_H = z.shape[a_H] * 2 ** compression_level
-    true_W = z.shape[a_W] * 2 ** compression_level
-
-    H = H if H > 0 else true_H
-    W = W if W > 0 else true_W
-
-    tl_x_padding = tl_x - padding[0]
-    br_x_padding = tl_x + patch_size + padding[1]
-    tl_y_padding = tl_y - padding[2]
-    br_y_padding = tl_y + patch_size + padding[3]
-
-    tl_y = max(tl_y_padding, 0) // 2 ** compression_level
-    tl_x = max(tl_x_padding, 0) // 2 ** compression_level
-    br_y = min(br_y_padding, H) // 2 ** compression_level
-    br_x = min(br_x_padding, W) // 2 ** compression_level
-
-    slices = [slice(roi[a_W].start + tl_x, roi[a_W].start + br_x, 1),
-              slice(roi[a_H].start + tl_y, roi[a_H].start + br_y, 1),
-              slice(None),
-              roi[a_ch],
-              slice(None)]
-
-    slices = tuple([slices['XYZCT'.index(a)] for a in data_axes])
+    a_H, a_W = [data_axes.index(a) for a in 'YX']
+    H, W = z.shape[a_H],  z.shape[a_W]
 
     unused_axis = list(set(data_axes) - set('CYX'))
     transpose_order = [data_axes.index(a) for a in unused_axis]
-    transpose_order += [data_axes.index(a) for a in 'CYX']
+
+    if 'C' in data_axes:
+        a_ch = data_axes.index('C')
+        transpose_order += [a_ch]
+        c = z.shape[a_ch]
+    else:
+        c = 1
+
+    transpose_order += [a_H, a_W]
+
+    tl_y = max(tl_y, 0) // 2 ** compression_level
+    tl_x = max(tl_x, 0) // 2 ** compression_level
+    br_y = min(tl_y + patch_size, H) // 2 ** compression_level
+    br_x = min(tl_x + patch_size, W) // 2 ** compression_level
+
+    # Generate the slices in the XYZCT order.
+    slices = [slice(tl_x, br_x, None), slice(tl_y, br_y, None), slice(None),
+              slice(0, c, None),
+              slice(None)]
+
+    slices = tuple([slices['XYZCT'.index(a)] for a in data_axes])
 
     patch = z[slices]
     patch = np.transpose(patch, transpose_order).squeeze()
@@ -413,40 +336,41 @@ def get_patch(z, roi, shape, tl_y, tl_x, patch_size, padding, stride,
     if c == 1:
         patch = patch[np.newaxis, ...]
 
-    # Pad the patch using the symmetric mode
-    patch_size //= 2 ** compression_level
-    if patch.shape[-2] < patch_size or patch.shape[-1] < patch_size:
-        # In the case that the input patch contains more than three dimensions,
-        # pad the leading dimensions with (0, 0).
-        leading_padding = [(0, 0)] * (patch.ndim - 2)
-
-        cp_left = padding[0] if tl_x_padding < 0 else 0
-        cp_right = padding[1] if br_x_padding > W else 0
-        cp_up = padding[2] if tl_y_padding < 0 else 0
-        cp_down = padding[3] if tl_y_padding < 0 else 0
-
-        cp_left //= 2 ** compression_level
-        cp_right //= 2 ** compression_level
-        cp_up //= 2 ** compression_level
-        cp_down //= 2 ** compression_level
-
-        context_padding = (
-            *leading_padding,
-            (cp_up, cp_down),
-            (cp_left, cp_right)
-        )
-
-        filling_padding = (
-            *leading_padding,
-            (0, patch_size - cp_up - cp_down - br_y + tl_y),
-            (0, patch_size - cp_left - cp_right - br_x + tl_x)
-        )
-
-        patch = np.pad(patch, context_padding, mode='symmetric',
-                       reflect_type='even')
-        patch = np.pad(patch, filling_padding, mode='constant')
-
     return patch
+
+
+def get_mask(filename, rois, shape, mask_shape, patch_size, mask_group,
+             object_presence=0.1):
+    scale = mask_shape[-1] / shape[-1]
+    if (mask_group is not None
+       and (isinstance(filename, zarr.Group) or (isinstance(filename, str)
+         and '.zarr' in filename))):
+        mask_grp = zarr.open(filename, mode="r")[mask_group]
+        mask = mask_grp[:]
+
+        scaled_patch_size = int(math.ceil(patch_size * scale))
+        dws_mask = transform.downscale_local_mean(mask,
+                                                  factor=(scaled_patch_size,
+                                                          scaled_patch_size))
+        valid_mask = dws_mask > object_presence
+
+    else:
+        valid_mask = np.ones(mask_shape, dtype=np.bool)
+
+    roi_mask = np.zeros_like(valid_mask, dtype=np.bool)
+
+    for roi in rois:
+        scaled_roi = (slice(int(math.ceil(roi[-2].start * scale)),
+                            int(math.ceil(roi[-2].stop * scale)),
+                            None),
+                      slice(int(math.ceil(roi[-1].start * scale)),
+                            int(math.ceil(roi[-1].stop * scale)),
+                            None))
+        roi_mask[scaled_roi] = True
+
+    valid_mask = np.bitwise_and(valid_mask, roi_mask)
+
+    return valid_mask
 
 
 def zarrdataset_worker_init(worker_id):
@@ -465,45 +389,37 @@ def zarrdataset_worker_init(worker_id):
         curr_worker_filenames = \
             dataset_obj._filenames[
                 worker_id*nf_worker:(worker_id + 1)*nf_worker]
-        curr_worker_rois = None
     elif (len(filenames_rois) == 1
           and len(filenames_rois[0][1]) >= worker_info.num_workers):
         nf_worker = int(math.ceil(len(filenames_rois[0][1])
                                   / worker_info.num_workers))
         curr_worker_filenames = [filenames_rois[0][0]]
-        curr_worker_rois = [
-            filenames_rois[0][1][worker_id*nf_worker:(worker_id+1)*nf_worker]]
     else:
         raise ValueError('Missmatching number of workers and input files/ROIs')
 
+    dataset_obj._workers = 1
+
     (dataset_obj.z_list,
-     dataset_obj._rois_list,
+     dataset_obj._valid_masks,
      dataset_obj._compression_level) = \
         dataset_obj._preload_files(
             curr_worker_filenames,
             data_group=dataset_obj._data_group,
-            compressed_input=dataset_obj._compressed_input,
-            rois=curr_worker_rois,
-            s3_obj=dataset_obj._s3_obj)
+            compressed_input=dataset_obj._compressed_input)
 
     if hasattr(dataset_obj, '_lab_list'):
         (dataset_obj._lab_list,
-         dataset_obj._lab_rois_list,
+         dataset_obj._lab_valid_masks,
          _) = \
             dataset_obj._preload_files(
                 curr_worker_filenames,
                 data_group=dataset_obj._labels_data_group,
-                compressed_input=False,
-                rois=curr_worker_rois,
-                s3_obj=dataset_obj._s3_obj)
+                compressed_input=False)
 
     (dataset_obj._dataset_size,
-     dataset_obj._max_H,
-     dataset_obj._max_W,
      dataset_obj._org_channels,
-     dataset_obj._imgs_sizes,
-     dataset_obj.imgs_shapes) = \
-        dataset_obj._compute_size(dataset_obj.z_list, dataset_obj._rois_list)
+     dataset_obj._imgs_sizes) = \
+        dataset_obj._compute_size(dataset_obj.z_list, dataset_obj._valid_masks)
 
     dataset_obj._initialized = True
 
@@ -531,6 +447,8 @@ class ZarrDataset(Dataset):
                  split_val=0.1,
                  workers=0,
                  progress_bar=False,
+                 mask_group=None,
+                 object_presence=0.1,
                  **kwargs):
 
         if padding is None:
@@ -565,8 +483,12 @@ class ZarrDataset(Dataset):
         self._requires_split = False
         self._filenames = self._split_dataset(root)
 
+        self._mask_group = mask_group
+        self._object_presence = object_presence
         self._initialized = False
         self._progress_bar = progress_bar
+        self._s3_obj = None
+        self._workers = workers
         self.__iter__()
 
         if workers > 0:
@@ -580,19 +502,16 @@ class ZarrDataset(Dataset):
         self._s3_obj = connect_s3(self._filenames[0])
 
         (self.z_list,
-         self._rois_list,
+         self._valid_masks,
          self._compression_level) = \
             self._preload_files(self._filenames,
                                 data_group=self._data_group,
-                                compressed_input=self._compressed_input,
-                                s3_obj=self._s3_obj)
+                                compressed_input=self._compressed_input)
 
         (dataset_size,
-         self._max_H,
-         self._max_W,
          self._org_channels,
-         self._imgs_sizes,
-         self.imgs_shapes) = self._compute_size(self.z_list, self._rois_list)
+         self._imgs_sizes) = self._compute_size(self.z_list,
+                                                  self._valid_masks)
 
         if self._dataset_size < 0:
             self._dataset_size = dataset_size
@@ -644,78 +563,62 @@ class ZarrDataset(Dataset):
         return filenames
 
     def _preload_files(self, filenames, data_group='0/0',
-                       compressed_input=False,
-                       rois=None,
-                       s3_obj=None):
-        if rois is None:
-            filenames_rois = list(
-                map(parse_roi, filenames,
-                    [self._source_format] * len(filenames)))
-        else:
-            filenames_rois = zip(filenames, rois)
-
+                       compressed_input=False):
         z_list = []
-        rois_list = []
+        valid_masks = []
         compression_level = 0
 
         if self._progress_bar:
-            q = tqdm(total=len(filenames_rois))
+            q = tqdm(total=len(filenames))
 
-        for id, (arr_src, rois) in enumerate(filenames_rois):
-            arr, arr_shape, compression_level = \
-                image_to_zarr(arr_src, self._patch_size, self._source_format,
-                              data_group,
-                              compressed_input,
-                              s3_obj)
+        for fn in filenames:
+            fn, rois = parse_roi(fn, self._source_format)
+
+            (arr,
+             arr_shape,
+             compression_level) = image_to_dask(fn, self._patch_size,
+                                                self._source_format,
+                                                data_group,
+                                                compressed_input,
+                                                self._s3_obj)
             z_list.append(arr)
 
             # List all ROIs in this image
-            if len(rois) > 0:
-                # Handle any number of dimensions in the ROIs list
-                for roi in rois:
-                    # Take the ROI as the original size of the image
-                    rois_list.append((id, roi))
+            if len(rois) == 0:
+                rois = [tuple([slice(0, s, None) for s in arr_shape])]
 
-            else:
-                roi = tuple([slice(0, s, 1) for s in arr_shape])
-                rois_list.append((id, roi))
+            # Get all valid top-left positions form the current image
+            a_H, a_W = [self._data_axes.index(a) for a in 'YX']
+            np_H = compute_num_patches(arr_shape[a_H],
+                                       patch_size=self._patch_size,
+                                       padding=0,
+                                       stride=self._patch_size)
+
+            np_W = compute_num_patches(arr_shape[a_W],
+                                       patch_size=self._patch_size,
+                                       padding=0,
+                                       stride=self._patch_size)
+
+            mask_shape = (np_H, np_W)
+            mask = get_mask(fn, rois=rois, shape=arr_shape,
+                            mask_shape=mask_shape,
+                            patch_size=self._patch_size,
+                            mask_group=self._mask_group,
+                            object_presence=self._object_presence)
+
+            valid_masks.append(mask)
 
             if self._progress_bar:
                 q.update()
     
         if self._progress_bar:
             q.close()
-        
-        return z_list, rois_list, compression_level
 
-    def _compute_size(self, z_list, rois_list):
+        return z_list, valid_masks, compression_level
+
+    def _compute_size(self, z_list, valid_masks):
         # Get the axis position for the input image height and width.
-        a_H, a_W = [self._data_axes.index(a) for a in 'YX']
-        imgs_shapes = [((roi[a_H].stop - roi[a_H].start)//roi[a_H].step,
-                        (roi[a_W].stop - roi[a_W].start)//roi[a_W].step)
-                       for _, roi in rois_list]
-        imgs_sizes = np.cumsum(
-            [0]
-            + [compute_num_patches(W, self._patch_size,
-                                   self._padding[0] + self._padding[1],
-                                   self._stride[0])
-               * compute_num_patches(H, self._patch_size,
-                                     self._padding[2] + self._padding[3],
-                                     self._stride[1])
-               for H, W in imgs_shapes])
-
-        # Get the upper bound of patches that can be obtained from all zarr
-        # files (images with smaller size will be padded).
-        max_H, max_W = np.max(np.array(imgs_shapes), axis=0)
-
-        max_H = (self._patch_size
-                 * compute_num_patches(max_H, self._patch_size,
-                                       self._padding[0] + self._padding[1],
-                                       self._stride[0]))
-        max_W = (self._patch_size
-                 * compute_num_patches(max_W, self._patch_size,
-                                       self._padding[0] + self._padding[1],
-                                       self._stride[0]))
+        imgs_sizes = np.cumsum([0] + [mask.sum() for mask in valid_masks])
 
         # Compute the size of the dataset from the valid patches
         if 'C' not in self._data_axes:
@@ -725,29 +628,27 @@ class ZarrDataset(Dataset):
 
         # Return the dataset size and the information about the dataset
         return (imgs_sizes[-1],
-                max_H,
-                max_W,
                 org_channels,
-                imgs_sizes,
-                imgs_shapes)
+                imgs_sizes)
 
     def __len__(self):
         return self._dataset_size
 
     def __getitem__(self, index):
-        i, tl_y, tl_x = compute_grid(index, self.imgs_shapes, self._imgs_sizes,
-                                     self._patch_size,
-                                     self._padding,
-                                     self._stride)
-        id, roi = self._rois_list[i]
-        patch = get_patch(self.z_list[id], roi, self.imgs_shapes[id],
-                          tl_y,
-                          tl_x,
-                          self._patch_size,
-                          self._padding,
-                          self._stride,
+        id = np.nonzero(index < self._imgs_sizes)[0][0]
+        index -= self._imgs_sizes[id]
+
+        tls_y, tls_x = np.nonzero(self._valid_masks[id])
+        tl_y = tls_y[index]
+        tl_x = tls_x[index]
+
+        patch = get_patch(self.z_list[id], tl_y, tl_x, self._patch_size,
                           self._compression_level,
                           self._data_axes).squeeze()
+
+        patch = patch.compute(scheduler='synchronous'
+                                        if self._workers <= 1
+                                        else 'threads')
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
@@ -757,9 +658,6 @@ class ZarrDataset(Dataset):
 
     def get_channels(self):
         return self._org_channels
-
-    def get_shape(self):
-        return self._max_H, self._max_W
 
 
 class LabeledZarrDataset(ZarrDataset):
@@ -786,45 +684,42 @@ class LabeledZarrDataset(ZarrDataset):
         self._target_transform = target_transform
 
         self._lab_list = []
-        self._lab_rois_list = []
+        self._lab_valid_masks = []
 
         super(LabeledZarrDataset, self).__init__(root, **kwargs)
 
     def __iter__(self):
         super().__iter__()
-        self._lab_list, self._lab_rois_list, _ = \
+        self._lab_list, self._lab_valid_masks, _ = \
             self._preload_files(self._filenames,
                                 data_group=self._labels_data_group,
-                                compressed_input=False,
-                                s3_obj=self._s3_obj)
+                                compressed_input=False)
 
     def __getitem__(self, index):
-        i, tl_y, tl_x = compute_grid(index, self.imgs_shapes, self._imgs_sizes,
-                                     self._patch_size,
-                                     self._padding,
-                                     self._stride)
-        id, roi = self._rois_list[i]
-        patch = get_patch(self.z_list[id], roi, self.imgs_shapes[id],
-                          tl_y,
-                          tl_x,
-                          self._patch_size,
-                          self._padding,
-                          self._stride,
+        id = np.nonzero(index < self._imgs_sizes)[0][0] - 1
+        index -= self._imgs_sizes[id]
+
+        tls_y, tls_x = np.nonzero(self._valid_masks[id])
+        tl_y = tls_y[index]
+        tl_x = tls_x[index]
+
+        patch = get_patch(self.z_list[id], tl_y, tl_x, self._patch_size,
                           self._compression_level,
                           self._data_axes).squeeze()
+
+        patch = patch.compute(scheduler='synchronous'
+                                        if self._workers <= 1
+                                        else 'threads')
 
         if self._transform is not None:
             patch = self._transform(patch.transpose(1, 2, 0))
 
-        id, roi = self._lab_rois_list[i]
-        target = get_patch(self._lab_list[id], roi, self.imgs_shapes[id],
-                           tl_y,
-                           tl_x,
-                           self._patch_size,
-                           self._padding,
-                           self._stride,
-                           0,
+        target = get_patch(self._lab_list[id], tl_y, tl_x, self._patch_size, 0,
                            self._labels_data_axes).astype(np.float32)
+
+        target = target.compute(scheduler='synchronous'
+                                        if self._workers <= 1
+                                        else 'threads')
 
         if self._input_target_transform:
             patch, target = self._input_target_transform((patch, target))
