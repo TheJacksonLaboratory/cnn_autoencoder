@@ -81,7 +81,7 @@ def compute_tissue_mask(zarr_url, mag=40, scaled_mag=1.25, data_axes="XYZCT",
                                      new_axis=(0, 1),
                                      meta=np.empty((0), dtype=np.uint8))
 
-    scaled_wsi = scaled_wsi.compute(scheduler="synchronous")
+    scaled_wsi = scaled_wsi.compute()
 
     mask_wsi = get_mask(scaled_wsi)
     return mask_wsi

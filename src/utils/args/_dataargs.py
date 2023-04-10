@@ -5,10 +5,21 @@ from .._info import DATASETS
 
 data_args = [
     {'tasks': ['all'],
+        'modes': ['all'],
+        'flags': ('-msk', '--mask-group'),
+        'details': {
+        'dest': 'mask_group',
+        'type': str,
+        'help': 'For Zarr datasets, the masks indicating valid regions in the '
+                'image to be used as inputs',
+        'default': None
+        }
+    },
+    {'tasks': ['all'],
         'modes': ['training'],
         'flags': ('-ldg', '--labels-data-group'),
         'details': {
-        'dest': 'label_data_group',
+        'dest': 'labels_data_group',
         'type': str,
         'help': 'For Zarr datasets, the group from where the lables are '
                 'retrieved',

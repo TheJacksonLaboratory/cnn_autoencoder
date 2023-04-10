@@ -341,20 +341,21 @@ def get_patch(z, tl_y, tl_x, patch_size, compression_level=0,
 
 def get_mask(filename, rois, shape, mask_shape, patch_size, mask_group,
              object_presence=0.1):
-    scale = mask_shape[-1] / shape[-1]
     if (mask_group is not None
-       and (isinstance(filename, zarr.Group) or (isinstance(filename, str)
-         and '.zarr' in filename))):
-        mask_grp = zarr.open(filename, mode="r")[mask_group]
+      and (isinstance(filename, zarr.Group) or (isinstance(filename, str)
+          and '.zarr' in filename))):
+        mask_grp = zarr.open(filename, mode='r')[mask_group]
+        scale = mask_grp.attrs['scale']
         mask = mask_grp[:]
 
         scaled_patch_size = int(math.ceil(patch_size * scale))
         dws_mask = transform.downscale_local_mean(mask,
-                                                  factor=(scaled_patch_size,
-                                                          scaled_patch_size))
+                                                  factors=(scaled_patch_size,
+                                                           scaled_patch_size))
         valid_mask = dws_mask > object_presence
 
     else:
+        scale = mask_shape[-1] / shape[-1]
         valid_mask = np.ones(mask_shape, dtype=np.bool)
 
     roi_mask = np.zeros_like(valid_mask, dtype=np.bool)
