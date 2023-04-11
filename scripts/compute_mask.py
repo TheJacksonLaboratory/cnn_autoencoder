@@ -110,6 +110,13 @@ def mask_zarr(z_url, output_filename, scaled_mag=1.25, default_mag=40,
             mag_pos_end = z_ome.find("|", mag_pos_ini)
             mag = float(z_ome[mag_pos_ini:mag_pos_end].strip(" "))
 
+        mag_pos_ini = z_ome.find("Power")
+        if mag_pos_ini >= 0:
+            mag_pos_ini = z_ome.find("Value", mag_pos_ini)
+            mag_pos_ini = z_ome.find(">", mag_pos_ini) + 1
+            mag_pos_end = z_ome.find("<", mag_pos_ini)
+            mag = float(z_ome[mag_pos_ini:mag_pos_end].strip(" "))
+
     if mag is None:
         print("Could not get magnification from metadata, setting "
               "magnification to default value %i" % default_mag)
