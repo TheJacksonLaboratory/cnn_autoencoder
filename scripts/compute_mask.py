@@ -39,7 +39,7 @@ def downscale_chunk(chunk, scale):
 
 def compute_tissue_mask(zarr_url, mag=40, scaled_mag=1.25, data_axes="XYZCT",
                         array_keys=None):
-    z = zarr.open_consolidated(zarr_url)
+    z = zarr.open(zarr_url, mode="r")
 
     a_ch, a_H, a_W = [data_axes.index(a) for a in "CYX"]
 
