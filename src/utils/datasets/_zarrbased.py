@@ -3,6 +3,7 @@ import os
 from functools import reduce
 
 import numpy as np
+import aiohttp
 import zarr
 import dask
 import dask.array as da
@@ -318,8 +319,11 @@ def get_patch(z, tl_y, tl_x, patch_size, compression_level=0,
 
     transpose_order += [a_H, a_W]
 
-    tl_y = max(tl_y, 0) // 2 ** compression_level
-    tl_x = max(tl_x, 0) // 2 ** compression_level
+    tl_y = tl_y * patch_size
+    tl_x = tl_x * patch_size
+
+    tl_y = tl_y // 2 ** compression_level
+    tl_x = tl_x // 2 ** compression_level
     br_y = min(tl_y + patch_size, H) // 2 ** compression_level
     br_x = min(tl_x + patch_size, W) // 2 ** compression_level
 
@@ -344,7 +348,13 @@ def get_mask(filename, rois, shape, mask_shape, patch_size, mask_group,
     if (mask_group is not None
       and (isinstance(filename, zarr.Group) or (isinstance(filename, str)
           and '.zarr' in filename))):
-        mask_grp = zarr.open(filename, mode='r')[mask_group]
+        try:
+            z_grp = zarr.open_consolidated(filename, mode='r')
+
+        except (KeyError, aiohttp.client_exceptions.ClientResponseError):
+            z_grp = zarr.open(filename, mode='r')
+
+        mask_grp = z_grp[mask_group]
         scale = mask_grp.attrs['scale']
         mask = mask_grp[:]
 
@@ -406,7 +416,9 @@ def zarrdataset_worker_init(worker_id):
         dataset_obj._preload_files(
             curr_worker_filenames,
             data_group=dataset_obj._data_group,
-            compressed_input=dataset_obj._compressed_input)
+            data_axes=dataset_obj._data_axes,
+            compressed_input=dataset_obj._compressed_input,
+            compute_valid_mask=True)
 
     if hasattr(dataset_obj, '_lab_list'):
         (dataset_obj._lab_list,
@@ -415,7 +427,9 @@ def zarrdataset_worker_init(worker_id):
             dataset_obj._preload_files(
                 curr_worker_filenames,
                 data_group=dataset_obj._labels_data_group,
-                compressed_input=False)
+                data_axes=dataset_obj._labels_data_axes,
+                compressed_input=False,
+                compute_valid_mask=False)
 
     (dataset_obj._dataset_size,
      dataset_obj._org_channels,
@@ -507,7 +521,9 @@ class ZarrDataset(Dataset):
          self._compression_level) = \
             self._preload_files(self._filenames,
                                 data_group=self._data_group,
-                                compressed_input=self._compressed_input)
+                                data_axes=self._data_axes,
+                                compressed_input=self._compressed_input,
+                                compute_valid_mask=True)
 
         (dataset_size,
          self._org_channels,
@@ -563,8 +579,9 @@ class ZarrDataset(Dataset):
 
         return filenames
 
-    def _preload_files(self, filenames, data_group='0/0',
-                       compressed_input=False):
+    def _preload_files(self, filenames, data_group='0/0', data_axes="XYZCT",
+                       compressed_input=False,
+                       compute_valid_mask=False):
         z_list = []
         valid_masks = []
         compression_level = 0
@@ -584,30 +601,31 @@ class ZarrDataset(Dataset):
                                                 self._s3_obj)
             z_list.append(arr)
 
-            # List all ROIs in this image
-            if len(rois) == 0:
-                rois = [tuple([slice(0, s, None) for s in arr_shape])]
+            if compute_valid_mask:
+                # List all ROIs in this image
+                if len(rois) == 0:
+                    rois = [tuple([slice(0, s, None) for s in arr_shape])]
 
-            # Get all valid top-left positions form the current image
-            a_H, a_W = [self._data_axes.index(a) for a in 'YX']
-            np_H = compute_num_patches(arr_shape[a_H],
-                                       patch_size=self._patch_size,
-                                       padding=0,
-                                       stride=self._patch_size)
+                # Get all valid top-left positions from the current image
+                a_H, a_W = [data_axes.index(a) for a in 'YX']
+                np_H = compute_num_patches(arr_shape[a_H],
+                                        patch_size=self._patch_size,
+                                        padding=0,
+                                        stride=self._patch_size)
 
-            np_W = compute_num_patches(arr_shape[a_W],
-                                       patch_size=self._patch_size,
-                                       padding=0,
-                                       stride=self._patch_size)
+                np_W = compute_num_patches(arr_shape[a_W],
+                                        patch_size=self._patch_size,
+                                        padding=0,
+                                        stride=self._patch_size)
 
-            mask_shape = (np_H, np_W)
-            mask = get_mask(fn, rois=rois, shape=arr_shape,
-                            mask_shape=mask_shape,
-                            patch_size=self._patch_size,
-                            mask_group=self._mask_group,
-                            object_presence=self._object_presence)
+                mask_shape = (np_H, np_W)
+                mask = get_mask(fn, rois=rois, shape=arr_shape,
+                                mask_shape=mask_shape,
+                                patch_size=self._patch_size,
+                                mask_group=self._mask_group,
+                                object_presence=self._object_presence)
 
-            valid_masks.append(mask)
+                valid_masks.append(mask)
 
             if self._progress_bar:
                 q.update()
@@ -655,15 +673,15 @@ class ZarrDataset(Dataset):
             patch = self._transform(patch.transpose(1, 2, 0))
 
         # Returns anything as label, to prevent an error during training
-        return patch, [0]
+        return patch, 0
 
     def get_channels(self):
         return self._org_channels
 
 
-class LabeledZarrDataset(ZarrDataset):
-    """ A labeled dataset based on the zarr dataset class.
-        The densely labeled targets are extracted from group '1'.
+class DenselyLabeledZarrDataset(ZarrDataset):
+    """A labeled dataset based on the zarr dataset class.
+    The densely labeled targets are extracted from group 'labels_data_group'.
     """
     def __init__(self, root, input_target_transform=None,
                  target_transform=None,
@@ -685,16 +703,17 @@ class LabeledZarrDataset(ZarrDataset):
         self._target_transform = target_transform
 
         self._lab_list = []
-        self._lab_valid_masks = []
 
-        super(LabeledZarrDataset, self).__init__(root, **kwargs)
+        super(DenselyLabeledZarrDataset, self).__init__(root, **kwargs)
 
     def __iter__(self):
         super().__iter__()
-        self._lab_list, self._lab_valid_masks, _ = \
+        self._lab_list, _, _ = \
             self._preload_files(self._filenames,
                                 data_group=self._labels_data_group,
-                                compressed_input=False)
+                                data_axes=self._labels_data_axes,
+                                compressed_input=False,
+                                compute_valid_mask=False)
 
     def __getitem__(self, index):
         id = np.nonzero(index < self._imgs_sizes)[0][0] - 1
@@ -719,8 +738,8 @@ class LabeledZarrDataset(ZarrDataset):
                            self._labels_data_axes).astype(np.float32)
 
         target = target.compute(scheduler='synchronous'
-                                        if self._workers <= 1
-                                        else 'threads')
+                                          if self._workers <= 1
+                                          else 'threads')
 
         if self._input_target_transform:
             patch, target = self._input_target_transform((patch, target))
@@ -728,5 +747,43 @@ class LabeledZarrDataset(ZarrDataset):
         if self._target_transform:
             target = self._target_transform(target)
 
-        # Returns anything as label, to prevent an error during training
+        return patch, target
+
+
+class WeaklyLabeledZarrDataset(DenselyLabeledZarrDataset):
+    """A labeled dataset based on the zarr dataset class.
+    The weakly labeled targets are extracted from group 'labels_data_group'.
+    """
+    def __init__(self, root, **kwargs):
+        super(WeaklyLabeledZarrDataset, self).__init__(root, **kwargs)
+
+    def __getitem__(self, index):
+        id = np.nonzero(index < self._imgs_sizes)[0][0] - 1
+        index -= self._imgs_sizes[id]
+
+        tls_y, tls_x = np.nonzero(self._valid_masks[id])
+        tl_y = tls_y[index]
+        tl_x = tls_x[index]
+
+        patch = get_patch(self.z_list[id], tl_y, tl_x, self._patch_size,
+                          self._compression_level,
+                          self._data_axes).squeeze()
+
+        patch = patch.compute(scheduler='synchronous'
+                                        if self._workers <= 1
+                                        else 'threads')
+
+        if self._transform is not None:
+            patch = self._transform(patch.transpose(1, 2, 0))
+
+        target = self._lab_list[id].astype(np.float32)
+
+        target = target.compute(scheduler='synchronous'
+                                          if self._workers <= 1
+                                          else 'threads')
+
+        if self._target_transform:
+            target = self._target_transform(target)
+
+        target = target.squeeze()
         return patch, target

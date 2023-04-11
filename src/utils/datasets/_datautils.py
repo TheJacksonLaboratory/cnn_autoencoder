@@ -9,7 +9,8 @@ from ._cifar import CIFAR10, CIFAR100
 from ._mnist import MNIST, EMNIST
 from ._zarrbased import (zarrdataset_worker_init,
                          ZarrDataset,
-                         LabeledZarrDataset)
+                         WeaklyLabeledZarrDataset,
+                         DenselyLabeledZarrDataset)
 from ._imagenet import ImageFolder, ImageS3
 
 
@@ -214,7 +215,7 @@ def get_zarr_dataset(data_dir='.', batch_size=1,
                      gpu=False,
                      mode='training',
                      num_classes=None,
-                     criterion='',
+                     label_density=0,
                      **kwargs):
     """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
@@ -224,10 +225,15 @@ def get_zarr_dataset(data_dir='.', batch_size=1,
      input_target_trans,
      target_trans) = get_zarr_transform(data_mode=data_mode, **kwargs)
 
-    if 'ce' in criterion.lower() and mode in ['training', 'test']:
-        histo_dataset = LabeledZarrDataset
-    else:
+    if label_density == 0:
         histo_dataset = ZarrDataset
+    elif label_density == 1:
+        histo_dataset = WeaklyLabeledZarrDataset
+    elif label_density == 2:
+        histo_dataset = DenselyLabeledZarrDataset
+    else:
+        raise ValueError("The labeling density "
+                         "{} is not supported".format(label_density))
 
     # Modes can vary from testing, segmentation, compress, decompress, etc.
     # For this reason, only when it is properly training, two data queues are

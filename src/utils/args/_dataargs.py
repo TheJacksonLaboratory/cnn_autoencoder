@@ -17,6 +17,19 @@ data_args = [
     },
     {'tasks': ['all'],
         'modes': ['training'],
+        'flags': ('-ldn', '--label-density'),
+        'details': {
+        'dest': 'label_density',
+        'type': int,
+        'help': 'Whether the image is densely labeled or not. '
+                'Supported options are 0: No labeled, 1: Weakly labeled (image'
+                ' level), 2: Densely labeled (pixel level)',
+        'choices': [0, 1, 2],
+        'default': 0
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['training'],
         'flags': ('-ldg', '--labels-data-group'),
         'details': {
         'dest': 'labels_data_group',

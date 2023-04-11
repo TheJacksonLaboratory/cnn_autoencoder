@@ -82,6 +82,44 @@ class RandomRotationInputTarget(object):
         return patch, target
 
 
+
+class RandomElasticDeformationInput(object):
+    def __init__(self, sigma=10):
+        self._sigma = sigma
+
+    def __call__(self, patch):
+        points = [3] * 2
+        displacement = np.random.randn(2, *points) * self._sigma
+
+        if not isinstance(patch, np.ndarray):
+            patch = patch.numpy()
+
+        patch = torch.from_numpy(deform_grid(patch, displacement, order=3,
+                                             mode='reflect',
+                                             axis=(1, 2))).float()
+        return patch
+
+
+class RandomRotationInput(object):
+    def __init__(self, degrees=90):
+        self._degrees = degrees
+
+    def __call__(self, patch):
+        angle = np.random.rand() * self._degrees
+
+        if not isinstance(patch, np.ndarray):
+            patch = patch.numpy()
+
+        # rotate the input patch with bicubic interpolation, reflect the edges
+        # to preserve the content in the image.
+        patch = torch.from_numpy(rotate(patch.transpose(1, 2, 0), angle,
+                                        order=4,
+                                        reshape=False,
+                                        mode='reflect').transpose(2, 0, 1)
+                                 ).float()
+        return patch
+
+
 class WeightsDistances(object):
     """Computes the weight associated to each pixel on the label image to the
     clossest object.
@@ -145,6 +183,7 @@ def get_zarr_transform(data_mode='test', normalize=False,
                        compressed_input=False,
                        rotation=False,
                        elastic_deformation=False,
+                       dense_labels=False,
                        map_labels=None,
                        merge_labels=None,
                        add_noise=False,
@@ -177,15 +216,25 @@ def get_zarr_transform(data_mode='test', normalize=False,
     if not compressed_input and normalize:
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
-    prep_trans = transforms.Compose(prep_trans_list)
 
     input_target_trans_list = []
     if rotation:
-        input_target_trans_list.append(RandomRotationInputTarget(degrees=30.))
+        if dense_labels:
+            input_target_trans_list.append(
+                RandomRotationInputTarget(degrees=30.))
+        else:
+            prep_trans_list.append(
+                RandomRotationInput(degrees=30.))
 
     if elastic_deformation:
-        input_target_trans_list.append(
-            RandomElasticDeformationInputTarget(sigma=10))
+        if dense_labels:
+            input_target_trans_list.append(
+                RandomElasticDeformationInputTarget(sigma=10))
+        else:
+            prep_trans_list.append(
+                RandomElasticDeformationInput(sigma=10))
+
+    prep_trans = transforms.Compose(prep_trans_list)
 
     if len(input_target_trans_list) > 0:
         input_target_trans = transforms.Compose(input_target_trans_list)
