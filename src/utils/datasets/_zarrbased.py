@@ -785,5 +785,5 @@ class WeaklyLabeledZarrDataset(DenselyLabeledZarrDataset):
         if self._target_transform:
             target = self._target_transform(target)
 
-        target = target.squeeze()
+        target = target.squeeze().astype(np.int64)
         return patch, target

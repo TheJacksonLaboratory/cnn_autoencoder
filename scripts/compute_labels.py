@@ -50,6 +50,10 @@ if __name__ == "__main__":
                              "Ignore this to store the mask in the same input "
                              "zarr file",
                         default=None)
+    parser.add_argument("-p", "--progress-bar", dest="progress_bar",
+                        action="store_true",
+                        default=False,
+                        help="Show progress bar per file processed")
     args = parser.parse_args()
 
     if not isinstance(args.inputs, list):
@@ -68,7 +72,9 @@ if __name__ == "__main__":
         elif ".zarr" in filename.lower():
             fn_list.append(filename)
 
-    q = tqdm.tqdm(total=len(fn_list))
+    if args.progress_bar:
+        q = tqdm.tqdm(total=len(fn_list))
+
     for filename in fn_list:
         filename, label = filename.split("::")
         label = int(label)
@@ -81,7 +87,9 @@ if __name__ == "__main__":
 
         label_zarr(filename, label, output_filename)
 
-        q.set_description("Completed labeling file %s" % filename)
-        q.update()
+        if args.progress_bar:
+            q.set_description("Completed labeling file %s" % filename)
+            q.update()
 
-    q.close()
+    if args.progress_bar:
+        q.close()

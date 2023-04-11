@@ -161,6 +161,10 @@ if __name__ == "__main__":
                              "zarr group. This is used in case that the list "
                              "of keys cannot be read from the file (e.g., a "
                              "zarr file stored in a S3 bucket)")
+    parser.add_argument("-p", "--progress-bar", dest="progress_bar",
+                        action="store_true",
+                        default=False,
+                        help="Show progress bar per file processed")
     parser.add_argument("-dm", "--default-mag", dest="default_mag", type=float,
                         default=20,
                         help=argparse.SUPPRESS)
@@ -182,7 +186,9 @@ if __name__ == "__main__":
         elif filename.lower().endswith(".zarr"):
             fn_list.append(filename)
 
-    q = tqdm.tqdm(total=len(fn_list))
+    if args.progress_bar:
+        q = tqdm.tqdm(total=len(fn_list))
+
     for filename in fn_list:
         if args.output_dir is not None:
             output_filename = os.path.join(args.output_dir,
@@ -195,7 +201,9 @@ if __name__ == "__main__":
                   data_axes=args.data_axes,
                   array_keys=args.array_keys)
 
-        q.set_description("Completed masking file %s" % filename)
-        q.update()
+        if args.progress_bar:
+            q.set_description("Completed masking file %s" % filename)
+            q.update()
 
-    q.close()
+    if args.progress_bar:
+        q.close()
