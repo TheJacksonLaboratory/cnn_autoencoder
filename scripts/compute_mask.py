@@ -9,7 +9,6 @@ import dask.array as da
 import numpy as np
 
 from skimage import morphology, color, filters, transform
-import ome_types
 
 import tqdm
 
@@ -40,7 +39,7 @@ def downscale_chunk(chunk, scale):
 
 def compute_tissue_mask(zarr_url, mag=40, scaled_mag=1.25, data_axes="XYZCT",
                         array_keys=None):
-    z = zarr.open(zarr_url, mode="r")
+    z = zarr.open_consolidated(zarr_url)
 
     a_ch, a_H, a_W = [data_axes.index(a) for a in "CYX"]
 
@@ -55,12 +54,12 @@ def compute_tissue_mask(zarr_url, mag=40, scaled_mag=1.25, data_axes="XYZCT",
     scaled_H = int(math.ceil(H * scaled_mag / mag))
     scaled_W = int(math.ceil(W * scaled_mag / mag))
 
-    dist = [((scaled_H - h) ** 2 + (scaled_W - w) ** 2, k)
+    dist = [((scaled_H - h) ** 2 + (scaled_W - w) ** 2, h, w, k)
             for h, w, k in shapes]
 
-    closest_pyr_key = min(dist)[1]
+    _, cls_H, cls_W, cls_key = min(dist)
 
-    base_wsi = da.from_zarr(zarr_url, component="0/" + closest_pyr_key)
+    base_wsi = da.from_zarr(zarr_url, component="0/" + cls_key)
 
     # Reschunk input to have all channels inside each chunk
     chunks = (base_wsi.chunksize[a_W], base_wsi.chunksize[a_H], 1, 3, 1)
@@ -71,7 +70,7 @@ def compute_tissue_mask(zarr_url, mag=40, scaled_mag=1.25, data_axes="XYZCT",
     transpose_order = [a_H, a_W, a_ch]
     transpose_order += [data_axes.index(a) for a in unused_axes]
     base_wsi = base_wsi.transpose(transpose_order)
-    base_wsi = base_wsi.reshape(H, W, 3)
+    base_wsi = base_wsi.reshape(cls_H, cls_W, 3)
 
     scale = scaled_H / base_wsi.shape[0]
     scaled_wsi = base_wsi.map_blocks(downscale_chunk,
@@ -90,35 +89,32 @@ def compute_tissue_mask(zarr_url, mag=40, scaled_mag=1.25, data_axes="XYZCT",
 def mask_zarr(z_url, output_filename, scaled_mag=1.25, default_mag=40,
               data_axes="XYZCT",
               array_keys=None):
-    z_ome_desc = ""
+
+    z_ome = None
+    mag = None
     if len(urllib.parse.urlparse(z_url).scheme) > 0:
         try:
-            with urllib.request.urlopen(os.path.join(z_url,
-                                                 "OME/METADATA.ome.xml")) as f:
-                z_ome = ome_types.from_xml(f.read().decode("utf-8"),
-                                           validate=False)
-                z_ome_desc = z_ome.images[0].description
-
+            with urllib.request.urlopen(os.path.join(z_url, "OME/METADATA.ome.xml")) as f:
+                z_ome = f.read().decode('utf-8')
         except urllib.error.HTTPError:
             pass
     else:
         if os.path.isfile(os.path.join(z_url, "OME/METADATA.ome.xml")):
-            z_ome = ome_types.from_xml(os.path.join(z_url,
-                                                    "OME/METADATA.ome.xml"),
-                                       validate=False)
-            z_ome_desc = z_ome.images[0].description
+            with open(os.path.join(z_url, "OME/METADATA.ome.xml")) as f:
+                z_ome = f.read()
 
-    if len(z_ome_desc) > 0:
-        z_ome_desc = z_ome_desc.split("|")
-        z_ome_desc = dict((k.strip(" \n"), v.strip(" \n"))
-                          for k, v in map(lambda kv: kv.split("="),
-                                          z_ome_desc))
-    else:
+    if z_ome is not None:
+        mag_pos_ini = z_ome.find("AppMag")
+        if mag_pos_ini >= 0:
+            mag_pos_ini = z_ome.find("=", mag_pos_ini) + 1
+            mag_pos_end = z_ome.find("|", mag_pos_ini)
+            mag = float(z_ome[mag_pos_ini:mag_pos_end].strip(" "))
+
+    if mag is None:
         print("Could not get magnification from metadata, setting "
               "magnification to default value %i" % default_mag)
-        z_ome_desc = {}
+        mag = default_mag
 
-    mag = float(z_ome_desc.get("AppMag", default_mag))
 
     mask_wsi = compute_tissue_mask(z_url, mag=mag,
                                    scaled_mag=scaled_mag,
