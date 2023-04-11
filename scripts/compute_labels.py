@@ -1,6 +1,7 @@
 import argparse
 import os
 
+import numpy as np
 import aiohttp
 import zarr
 
@@ -29,7 +30,14 @@ def label_zarr(z_url, label, output_filename):
                          chunks=True,
                          compressor=compressor,
                          overwrite=True)
-    z_grp["masks/1/0"].attrs.update({'label': label})
+    z_grp.create_dataset(name="masks/1/1",
+                         data=np.array([label], dtype=np.int64),
+                         shape=(1,),
+                         dtype=np.int64,
+                         chunks=True,
+                         compressor=compressor,
+                         overwrite=True)
+    z_grp["masks/1"].attrs.update({'label': label})
 
 
 if __name__ == "__main__":
