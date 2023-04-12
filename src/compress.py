@@ -5,13 +5,10 @@ import os
 import shutil
 import requests
 
-from itertools import product
-import math
-import numpy as np
+import aiohttp
 import zarr
-import dask.array as da
 
-from numcodecs import Blosc, register_codec
+from numcodecs import register_codec
 
 import models
 import utils
@@ -33,17 +30,15 @@ def compress_image(checkpoint, input_filename, output_filename,
     fn, rois = utils.parse_roi(input_filename, source_format)
 
     s3_obj = utils.connect_s3(fn)
-    z_arr, _, _ = utils.image_to_zarr(fn, patch_size, source_format,
-                                      data_group, s3_obj=s3_obj)
-
-    if not isinstance(z_arr, zarr.core.Array):
-        z_arr = zarr.array(data=z_arr[:])
+    z, _, _ = utils.image_to_dask(fn, patch_size, source_format,
+                                      data_group, compressed_input=False,
+                                      s3_obj=s3_obj)
 
     if len(rois):
-        z = da.from_zarr(z_arr)[rois[0]].squeeze()
+        z = z[rois[0]].squeeze()
         rois = rois[0]
     else:
-        z = da.from_zarr(z_arr).squeeze()
+        z = z.squeeze()
         rois = None
 
     data_axes = [a for a in data_axes if a in 'YXC']
@@ -61,30 +56,34 @@ def compress_image(checkpoint, input_filename, output_filename,
                   compressor=compressor)
 
     # Add metadata to the compressed zarr file
-    group = zarr.open(output_filename)
+    group_dst = zarr.open(output_filename)
 
-    # Copy the labels of the original image
-    if ('zarr' in source_format
-       and (isinstance(z_arr.store, zarr.storage.FSStore)
-            or not os.path.samefile(output_filename, fn))):
-        z_org = zarr.open(output_filename, mode="rw")
-        if 'labels' in z_org.keys() and 'labels' not in group.keys():
-            zarr.copy(z_org['labels'], group)
+    # Copy the labels and metadata from the original image
+    if ('zarr' in source_format):
+        try:
+            group_src = zarr.open_consolidated(fn, mode="r")
+        except (KeyError, aiohttp.client_exceptions.ClientResponseError):
+            group_src = zarr.open(fn, mode="r")
 
-        # If the source file has metadata (e.g. extracted by bioformats2raw)
-        # copy that the destination zarr file.
-        if isinstance(z_arr.store, zarr.storage.FSStore):
-            metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
-            if metadata_resp.status_code == 200:
-                if not os.path.isdir(os.path.join(output_filename, 'OME')):
-                    os.mkdir(os.path.join(output_filename, 'OME'))
+        if (isinstance(group_src.store, zarr.storage.FSStore)
+          or not os.path.samefile(output_filename, fn)):
+            z_org = zarr.open(output_filename, mode="rw")
+            if 'labels' in z_org.keys() and 'labels' not in group_dst.keys():
+                zarr.copy(z_org['labels'], group_dst)
 
-                # Download METADATA.ome.xml into the creted output dir
-                with open(os.path.join(output_filename,
-                                       'OME',
-                                       'METADATA.ome.xml'),
-                          'wb') as fp:
-                    fp.write(metadata_resp.content)
+            # If the source file has metadata (e.g. extracted by bioformats2raw)
+            # copy that into the destination zarr file.
+            if isinstance(group_src.store, zarr.storage.FSStore):
+                metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
+                if metadata_resp.status_code == 200:
+                    if not os.path.isdir(os.path.join(output_filename, 'OME')):
+                        os.mkdir(os.path.join(output_filename, 'OME'))
+
+                    # Download METADATA.ome.xml into the creted output dir
+                    with open(os.path.join(output_filename,
+                                           'OME',
+                                           'METADATA.ome.xml'), 'wb') as fp:
+                        fp.write(metadata_resp.content)
 
         elif os.path.isdir(os.path.join(fn, 'OME')):
             shutil.copytree(os.path.join(fn, 'OME'),

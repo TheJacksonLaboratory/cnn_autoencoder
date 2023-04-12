@@ -93,8 +93,7 @@ def load_image(filename, s3_obj=None):
             arr = im_s3.convert('RGB')
     else:
         im = Image.open(filename, mode="r").convert('RGB')
-    arr = np.array(im)
-    return arr
+    return im
 
 
 def connect_s3(filename_sample):
@@ -128,7 +127,11 @@ def image_to_dask(arr_src, patch_size, source_format, data_group,
     elif (isinstance(arr_src, str) and '.zarr' not in source_format):
         # If the input is a path to an image stored in a format
         # supported by PIL, open it and use it as a numpy array.
-        arr = da.from_delayed(dask.delayed(load_image), arr_src, s3_obj=s3_obj)
+        im = load_image(arr_src, s3_obj=s3_obj)
+        channels = len(im.getbands())
+        arr = da.from_delayed(dask.delayed(np.array)(im),
+                              shape=(im.size[1], im.size[0], channels),
+                              dtype=np.uint8)
 
     elif isinstance(arr_src, zarr.Array):
         # Otherwise, use directly the zarr array

@@ -284,7 +284,7 @@ def compute_metrics(args):
                 target_k = np.moveaxis(target_k, 0, -1)
                 target_k = np.reshape(target_k, (-1, args.num_classes))
 
-            pred_class_top_k = da.from_array(np.argsort(pred_k,
+            pred_class_top_k = da.from_array(np.argsort(-pred_k,
                                                         axis=-1)[:, :top_k])
 
             if k == '0':

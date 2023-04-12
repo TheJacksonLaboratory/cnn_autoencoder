@@ -114,7 +114,8 @@ def test_image(checkpoint, input_filename,
                                 progress_bar=progress_bar)
     e_time = perf_counter() - e_time
 
-    arr, arr_shape, _ = utils.image_to_zarr(input_filename.split(';')[0],
+    fn, _ = utils.parse_roi(input_filename, source_format)
+    arr, arr_shape, _ = utils.image_to_dask(fn,
                                             patch_size,
                                             source_format,
                                             data_group)
@@ -129,7 +130,7 @@ def test_image(checkpoint, input_filename,
     transpose_order = [data_axes.index(a) for a in unused_axis]
     transpose_order += [data_axes.index(a) for a in 'YXC']
 
-    x = arr[slices]
+    x = arr[slices].compute()
     z = zarr.open(temp_output_filename, mode="r")
     x_r = z['decompressed/' + data_group]
 

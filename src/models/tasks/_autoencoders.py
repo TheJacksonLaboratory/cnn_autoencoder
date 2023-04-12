@@ -578,3 +578,35 @@ class ConvolutionalAutoencoder(Codec):
         buf_x_r = ensure_contiguous_ndarray(buf_x_r)
 
         return ndarray_copy(buf_x_r, out)
+
+
+class ConvolutionalAutoencoderBottleneck(Codec):
+    codec_id = 'cae_bn'
+    def __init__(self, checkpoint, gpu=False):
+        self.checkpoint = checkpoint
+        self.gpu = gpu
+
+        self._model = autoencoder_from_state_dict(checkpoint, gpu=gpu,
+                                                  train=False)
+
+    def encode(self, buf):
+        pass
+
+    def decode(self, buf, out=None):
+        if out is not None:
+            out = ensure_contiguous_ndarray(out)
+
+        compression_level = len(self._model['decoder'].module.synthesis_track)
+
+        h, w = struct.unpack('>QQ', buf[:16])
+
+        buf_shape = (h // 2 ** compression_level, w // 2 ** compression_level)
+
+        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
+            buf_y_q = self._model['fact_ent'].module.decompress([buf[16:]],
+                                                                size=buf_shape)
+        else:
+            buf_y_q = self._model['fact_ent'].decompress([buf[16:]],
+                                                         size=buf_shape)
+
+        return ndarray_copy(buf_y_q, out)
