@@ -249,14 +249,17 @@ def compute_metrics(args):
     all_targets = []
     all_pred_scores = []
     all_pred_classes = []
+    all_pred_classes_top = []
 
     all_targets_objs = []
     all_pred_scores_objs = []
     all_pred_classes_objs = []
+    all_pred_classes_top_objs = []
 
     z = zarr.open(os.path.join(args.log_dir,
                                f'output{args.log_identifier}.zarr'), 'r')
 
+    top_k = min(5, args.num_classes)
     for i in z['target'].group_keys():
         for k in z['target/' + i].array_keys():
             pred_k = da.from_zarr(
@@ -281,21 +284,24 @@ def compute_metrics(args):
                 target_k = np.moveaxis(target_k, 0, -1)
                 target_k = np.reshape(target_k, (-1, args.num_classes))
 
+            pred_class_top_k = da.from_array(np.argsort(pred_k,
+                                                        axis=-1)[:, :top_k])
+
             if k == '0':
                 all_pred_scores.append(pred_k)
                 all_pred_classes.append(pred_class_k)
                 all_targets.append(target_k)
+                all_pred_classes_top.append(pred_class_top_k)
             else:
                 all_pred_scores_objs.append(pred_k)
                 all_pred_classes_objs.append(pred_class_k)
                 all_targets_objs.append(target_k)
+                all_pred_classes_top.append(pred_class_top_k)
 
     pred_scores = da.concatenate(all_pred_scores, axis=0)
     pred_class = da.concatenate(all_pred_classes, axis=0)
+    pred_class_top = da.concatenate(all_pred_classes_top, axis=0)
     target = da.concatenate(all_targets, axis=0)
-
-    top_k = min(5, args.num_classes)
-    pred_class_top = da.topk(pred_scores, top_k, axis=-1)
 
     metrics = utils.compute_class_metrics_dask(pred_class, target,
                                                args.num_classes,
@@ -360,7 +366,9 @@ def test(args):
         logger.info('\n{}'.format(k))
         logger.info(model[k])
 
-    infer(model, test_data, args)
+    if not args.metrics_only:
+        infer(model, test_data, args)
+
     compute_metrics(args)
 
 

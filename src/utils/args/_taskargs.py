@@ -251,4 +251,14 @@ task_args = [
         'default': False,
         }
     },
+    {'tasks': ['all'],
+        'modes': ['test'],
+        'flags': ('-mo', '--metrics-only'),
+        'details': {
+        'dest': 'metrics_only',
+        'action': 'store_true',
+        'help': 'Compute only metrics on a set of pre-inferred outputs',
+        'default': False,
+        }
+    },
 ]
