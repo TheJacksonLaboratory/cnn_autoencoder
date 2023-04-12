@@ -18,71 +18,6 @@ import torch
 from torch.utils.data import Dataset
 
 
-class LazyImage(object):
-    """Class to open images lazyly when they are needed for computation.
-    """
-    def __init__(self, filename, s3_obj=None):
-        """Load the image at `filename` using the Image class from the PIL
-        library and returns it as a numpy array.
-
-        Parameters:
-        ----------
-        filename : str
-            Path to the image, either in local or S3 bucket storage
-        s3 : boto3.client or None
-            A clinet connected to a S3 bucket
-        Returns
-        -------
-        arr : numpy.array
-        """
-        self._filename = filename
-        self._s3_obj = s3_obj
-
-        if self._s3_obj is not None:
-            # Remove the end-point from the file name
-            self._filename = '/'.join(self._filename.split('/')[4:])
-            self.shape = (-1, -1, 3)
-            self._im = None
-        else:
-            self._im = Image.open(self._filename, mode="r").convert('RGB')
-            self.shape = (self._im.height, self._im.width, 3)
-
-    def __getitem__(self, roi):
-        if self._s3_obj is not None:
-            im_bytes = self._s3_obj['s3'].get_object(
-                Bucket=self._s3_obj['bucket_name'],
-                Key=self._filename)['Body'].read()
-            im_s3 = Image.open(BytesIO(im_bytes))
-            im = im_s3.copy().convert('RGB')
-            im_s3.close()
-            arr = np.array(im)
-            shape = arr.shape
-
-            # When loading images from buckets, the shape of the image could
-            # not be known beforhand. That makes the ROI be negative, which is
-            # corrected here.
-            if not isinstance(roi, (list, tuple)):
-                roi = [roi]
-
-            new_roi = []
-            for r, s in zip(roi, shape):
-                if r.stop is None or (r.stop - r.start) / r.step < 0:
-                    new_roi.append(slice(0, s, None))
-                else:
-                    new_roi.append(r)
-            roi = tuple(new_roi)
-        else:
-            arr = np.array(self._im)
-
-        return arr[roi]
-
-    def get_orthogonal_selection(self, roi):
-        return self[roi]
-
-    def __call__(self):
-        return self[:]
-
-
 def load_image(filename, s3_obj=None):
     if s3_obj is not None:
         # Remove the end-point from the file name
@@ -657,6 +592,7 @@ class ZarrDataset(Dataset):
         return self._dataset_size
 
     def __getitem__(self, index):
+        index = index % self._imgs_sizes[-1]
         id = np.nonzero(index < self._imgs_sizes)[0][0]
         index -= self._imgs_sizes[id]
 
@@ -719,6 +655,7 @@ class DenselyLabeledZarrDataset(ZarrDataset):
                                 compute_valid_mask=False)
 
     def __getitem__(self, index):
+        index = index % self._imgs_sizes[-1]
         id = np.nonzero(index < self._imgs_sizes)[0][0] - 1
         index -= self._imgs_sizes[id]
 
@@ -761,6 +698,7 @@ class WeaklyLabeledZarrDataset(DenselyLabeledZarrDataset):
         super(WeaklyLabeledZarrDataset, self).__init__(root, **kwargs)
 
     def __getitem__(self, index):
+        index = index % self._imgs_sizes[-1]
         id = np.nonzero(index < self._imgs_sizes)[0][0] - 1
         index -= self._imgs_sizes[id]
 
