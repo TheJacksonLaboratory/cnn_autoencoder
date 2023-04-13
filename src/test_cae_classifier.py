@@ -23,19 +23,18 @@ def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
                    patch_size,
                    num_classes,
                    compute_components_metrics,
+                   top_k=5,
                    save_input=False):
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
-    
+
+    top_k = min(top_k, num_classes)
     if pred.ndim == 4:
         h, w = target.shape[-2:]
         if target.shape[1] > 1 and num_classes == 1:
             target = target[:, 1:]
 
-        target = target.reshape(num_classes, h, w)
-        target_chunks_shape = (1, patch_size, patch_size)
-
-        pred = pred.reshape(num_classes, h, w)
-        pred_chunks_shape = (num_classes, patch_size, patch_size)
+        target_chunks_shape = (1, 1, patch_size, patch_size)
+        pred_chunks_shape = (1, num_classes, patch_size, patch_size)
 
     else:
         target = target.reshape(-1, 1)
@@ -46,7 +45,8 @@ def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
 
     if num_classes > 1:
         pred_scores = torch.softmax(pred, dim=1).numpy()
-        pred_class = torch.argmax(pred, dim=1).reshape(-1, 1).numpy()
+        pred_class = torch.argmax(pred, dim=1).unsqueeze(1).numpy()
+        pred_class_top = torch.topk(pred, k=top_k, dim=1)[1].numpy()
         target = target.numpy()
 
     else:
@@ -57,7 +57,7 @@ def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
     z_grp = zarr.open(save_filename)
 
     if save_input:
-        x = x[0].numpy()
+        x = x.numpy()
         z_grp.create_dataset('input/%i/0' % im_id, data=x,
                          shape=x.shape,
                          chunks=True,
@@ -86,12 +86,21 @@ def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
                          compressor=compressor,
                          overwrite=True)
 
+    if num_classes > 1:
+        z_grp.create_dataset('topk/%i/0' % im_id, data=pred_class_top,
+                             shape=pred_class_top.shape,
+                             chunks=target_chunks_shape,
+                             dtype=pred_class_top.dtype,
+                             compressor=compressor,
+                             overwrite=True)
+
     if compute_components_metrics:
         t_lab, n_objs = label(target, return_num=True, connectivity=2)
 
         for k in range(1, n_objs + 1):
-            _, cc_y, cc_x = np.nonzero(t_lab == k)
+            _, _, cc_y, cc_x = np.nonzero(t_lab == k)
             cc_bbox = (slice(None),
+                       slice(None),
                        slice(max(0, cc_y.min() - 1),
                              min(h, cc_y.max() + 2),
                              1),
@@ -137,6 +146,16 @@ def save_pred2zarr(save_filename, im_id, x, target, pred, seg_threshold,
                                  compressor=compressor,
                                  overwrite=True)
 
+            if num_classes > 1:
+                pred_class_top_k = pred_class_top[cc_bbox]
+                z_grp.create_dataset('topk/%i/%i' % (im_id, k),
+                                     chunks=True,
+                                     data=pred_class_top_k,
+                                     shape=pred_class_top_k.shape,
+                                     dtype=pred_class_top_k.dtype,
+                                     compressor=compressor,
+                                     overwrite=True)
+
 
 def infer(model, test_data, args):
     """Inference for classification/segmentation models.
@@ -176,13 +195,16 @@ def infer(model, test_data, args):
 
         save_filename = os.path.join(args.log_dir,
                                      f'output{args.log_identifier}.zarr')
-        save_pred2zarr(save_filename, i, x.cpu(), t.cpu(), pred.detach().cpu(),
+        save_pred2zarr(save_filename, i, x.cpu().mul(255).to(torch.uint8),
+                       t.cpu(),
+                       pred.detach().cpu(),
                        args.seg_threshold,
                        args.batch_size,
                        args.patch_size,
                        args.num_classes,
                        args.compute_components_metrics,
-                       args.save_input)
+                       top_k=5,
+                       save_input=args.save_input)
 
         if (i % max(1, int(len(test_data) * 0.1))) == 0:
             log_str = 'Test metrics'
@@ -259,12 +281,15 @@ def compute_metrics(args):
     z = zarr.open(os.path.join(args.log_dir,
                                f'output{args.log_identifier}.zarr'), 'r')
 
-    top_k = min(5, args.num_classes)
     for i in z['target'].group_keys():
         for k in z['target/' + i].array_keys():
-            pred_k = da.from_zarr(
-                os.path.join(args.log_dir, f'output{args.log_identifier}.zarr'),
-                component='scores/' + i + '/' + k)
+            if args.num_classes == 1:
+                pred_k = da.from_zarr(
+                    os.path.join(args.log_dir,
+                                 f'output{args.log_identifier}.zarr'),
+                    component='scores/' + i + '/' + k)
+            else:
+                pred_k = None
 
             pred_class_k = da.from_zarr(
                 os.path.join(args.log_dir, f'output{args.log_identifier}.zarr'),
@@ -274,40 +299,56 @@ def compute_metrics(args):
                 os.path.join(args.log_dir, f'output{args.log_identifier}.zarr'),
                 component='target/'  + i + '/' + k)
 
-            if pred_k.ndim > 2:
-                pred_k = np.moveaxis(pred_k, 0, -1)
-                pred_k = np.reshape(pred_k, (-1, args.num_classes))
-
-                pred_class_k = np.moveaxis(pred_class_k, 0, -1)
-                pred_class_k = np.reshape(pred_class_k, (-1, args.num_classes))
-
-                target_k = np.moveaxis(target_k, 0, -1)
-                target_k = np.reshape(target_k, (-1, args.num_classes))
-
-            pred_class_top_k = da.from_array(np.argsort(-pred_k,
-                                                        axis=-1)[:, :top_k])
+            if 'topk' in z.group_keys():
+                pred_class_top_k = da.from_zarr(
+                    os.path.join(args.log_dir,
+                                 f'output{args.log_identifier}.zarr'),
+                    component='topk/'  + i + '/' + k)
+            else:
+                pred_class_top_k = None
 
             if k == '0':
-                all_pred_scores.append(pred_k)
                 all_pred_classes.append(pred_class_k)
                 all_targets.append(target_k)
-                all_pred_classes_top.append(pred_class_top_k)
+
+                if pred_k is not None:
+                    all_pred_scores.append(pred_k)
+
+                if pred_class_top_k is not None:
+                    all_pred_classes_top.append(pred_class_top_k)
             else:
-                all_pred_scores_objs.append(pred_k)
                 all_pred_classes_objs.append(pred_class_k)
                 all_targets_objs.append(target_k)
-                all_pred_classes_top.append(pred_class_top_k)
 
-    pred_scores = da.concatenate(all_pred_scores, axis=0)
+                if pred_k is not None:
+                    all_pred_scores_objs.append(pred_k)
+
+                if pred_class_top_k is not None:
+                    all_pred_classes_top_objs.append(pred_class_top_k)
+
     pred_class = da.concatenate(all_pred_classes, axis=0)
-    pred_class_top = da.concatenate(all_pred_classes_top, axis=0)
+    pred_class = np.moveaxis(pred_class, 1, -1).reshape(-1, 1)
+
     target = da.concatenate(all_targets, axis=0)
+    target = np.moveaxis(target, 1, -1).reshape(-1, 1)
+
+    if len(all_pred_classes_top):
+        pred_class_top = da.concatenate(all_pred_classes_top, axis=0)
+        top_k = pred_class_top.shape[1]
+        pred_class_top = np.moveaxis(pred_class_top, 1, -1).reshape(-1, top_k)
+
+    else:
+        pred_class_top = None
 
     metrics = utils.compute_class_metrics_dask(pred_class, target,
                                                args.num_classes,
                                                pred_class_top)
 
     if args.num_classes == 1:
+        pred_scores = da.concatenate(all_pred_scores, axis=0)
+        pred_scores = np.moveaxis(pred_scores, 1, -1)
+        pred_scores = pred_scores.reshape(-1, args.num_classes)
+
         metrics['auc'] = compute_roc_curve(pred_scores, target, 'image_level',
                                            args)
 
@@ -317,18 +358,32 @@ def compute_metrics(args):
 
     logger.info(log_str)
 
-    if len(all_pred_scores_objs):
-        pred_scores_obj = da.concatenate(all_pred_scores_objs, axis=0)
+    if len(all_pred_classes_objs):
         pred_class_obj = da.concatenate(all_pred_classes_objs, axis=0)
-        target_obj = da.concatenate(all_targets_objs, axis=0)
+        pred_class_obj = np.moveaxis(pred_class_obj, 1, -1).reshape(-1, 1)
 
-        pred_class_top_obj = da.topk(pred_scores_obj, top_k, axis=-1)
+        target_obj = da.concatenate(all_targets_objs, axis=0)
+        target_obj = np.moveaxis(target_obj, 1, -1).reshape(-1, 1)
+
+        if len(all_pred_classes_top_objs):
+            pred_class_top_obj = da.concatenate(all_pred_classes_top_objs,
+                                                axis=0)
+            pred_class_top_obj = np.moveaxis(pred_class_top_obj, 1, -1)
+            pred_class_top_obj = pred_class_top_obj.reshape(-1, top_k)
+
+        else:
+            pred_class_top_obj = None
 
         metrics_obj = utils.compute_class_metrics_dask(pred_class_obj,
                                                        target_obj,
                                                        args.num_classes,
                                                        pred_class_top_obj)
+
         if args.num_classes == 1:
+            pred_scores_obj = da.concatenate(all_pred_scores_objs, axis=0)
+            pred_scores_obj = np.moveaxis(pred_scores_obj, 1, -1)
+            pred_scores_obj = pred_scores_obj.reshape(-1, args.num_classes)
+
             metrics_obj['auc'] = compute_roc_curve(pred_scores_obj, target_obj,
                                                    'object_level',
                                                    args)

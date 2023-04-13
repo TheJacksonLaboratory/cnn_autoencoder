@@ -30,6 +30,7 @@ def compute_class_metrics_dask(pred_class, target, num_classes,
 
         tp_top = np.sum(np.any(pred_class_top
                                == target.reshape(-1, 1), axis=1)).compute()
+        tn_top = 0
 
     else:
         target = target > 0.5
@@ -38,6 +39,8 @@ def compute_class_metrics_dask(pred_class, target, num_classes,
         tp_top = tp
 
         tn = np.sum(np.bitwise_and((1 - pred_class), (1 - target))).compute()
+        tn_top = tn
+
         fp = np.sum(np.bitwise_and(pred_class, (1 - target))).compute()
         fn = np.sum(np.bitwise_and((1 - pred_class), target)).compute()
 
@@ -46,7 +49,7 @@ def compute_class_metrics_dask(pred_class, target, num_classes,
 
     if (tp + tn + fp + fn) > 0:
         acc = (tp + tn) / (tp + tn + fp + fn)
-        acc_top = tp_top / (tp + tn + fp + fn)
+        acc_top = (tp_top + tn_top) / (tp + tn + fp + fn)
     else:
         acc = float('nan')
         acc_top = float('nan')
