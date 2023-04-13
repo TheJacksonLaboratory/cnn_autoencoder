@@ -264,7 +264,7 @@ def compute_roc_curve(pred, target, component, args):
     return roc_auc
 
 
-def compute_metrics(args):
+def compute_metrics(args, object_level=False):
     logger = logging.getLogger(args.mode + '_log')
     completed = False
 
@@ -273,16 +273,18 @@ def compute_metrics(args):
     all_pred_classes = []
     all_pred_classes_top = []
 
-    all_targets_objs = []
-    all_pred_scores_objs = []
-    all_pred_classes_objs = []
-    all_pred_classes_top_objs = []
+    type_level = 'object_level' if object_level else 'image_level'
 
     z = zarr.open(os.path.join(args.log_dir,
                                f'output{args.log_identifier}.zarr'), 'r')
 
     for i in z['target'].group_keys():
-        for k in z['target/' + i].array_keys():
+        if object_level:
+            array_keys = set(z['target/' + i].array_keys()) - set('0')
+        else:
+            array_keys = ['0']
+
+        for k in array_keys:
             if args.num_classes == 1:
                 pred_k = da.from_zarr(
                     os.path.join(args.log_dir,
@@ -292,11 +294,13 @@ def compute_metrics(args):
                 pred_k = None
 
             pred_class_k = da.from_zarr(
-                os.path.join(args.log_dir, f'output{args.log_identifier}.zarr'),
+                os.path.join(args.log_dir,
+                             f'output{args.log_identifier}.zarr'),
                 component='class/'  + i + '/' + k)
 
             target_k = da.from_zarr(
-                os.path.join(args.log_dir, f'output{args.log_identifier}.zarr'),
+                os.path.join(args.log_dir,
+                             f'output{args.log_identifier}.zarr'),
                 component='target/'  + i + '/' + k)
 
             if 'topk' in z.group_keys():
@@ -307,35 +311,40 @@ def compute_metrics(args):
             else:
                 pred_class_top_k = None
 
-            if k == '0':
-                all_pred_classes.append(pred_class_k)
-                all_targets.append(target_k)
+            if object_level:
+                pred_class_k = np.moveaxis(pred_class_k, 1, -1).reshape(-1, 1)
+                target_k = np.moveaxis(target_k, 1, -1).reshape(-1, 1)
 
-                if pred_k is not None:
-                    all_pred_scores.append(pred_k)
+            all_pred_classes.append(pred_class_k)
+            all_targets.append(target_k)
 
-                if pred_class_top_k is not None:
-                    all_pred_classes_top.append(pred_class_top_k)
-            else:
-                all_pred_classes_objs.append(pred_class_k)
-                all_targets_objs.append(target_k)
+            if pred_k is not None:
+                if object_level:
+                    pred_k = np.moveaxis(pred_k, 1, -1)
+                    pred_k = pred_k.reshape(-1, args.num_classes)
 
-                if pred_k is not None:
-                    all_pred_scores_objs.append(pred_k)
+                all_pred_scores.append(pred_k)
 
-                if pred_class_top_k is not None:
-                    all_pred_classes_top_objs.append(pred_class_top_k)
+            if pred_class_top_k is not None:
+                if object_level:
+                    pred_class_top_k = np.moveaxis(pred_class_top_k, 1, -1)
+                    pred_class_top_k = pred_class_top_k.reshape(-1, top_k)
+
+                all_pred_classes_top.append(pred_class_top_k)
 
     pred_class = da.concatenate(all_pred_classes, axis=0)
-    pred_class = np.moveaxis(pred_class, 1, -1).reshape(-1, 1)
-
     target = da.concatenate(all_targets, axis=0)
-    target = np.moveaxis(target, 1, -1).reshape(-1, 1)
+
+    if not object_level:
+        pred_class = np.moveaxis(pred_class, 1, -1).reshape(-1, 1)
+        target = np.moveaxis(target, 1, -1).reshape(-1, 1)
 
     if len(all_pred_classes_top):
         pred_class_top = da.concatenate(all_pred_classes_top, axis=0)
         top_k = pred_class_top.shape[1]
-        pred_class_top = np.moveaxis(pred_class_top, 1, -1).reshape(-1, top_k)
+        if not object_level:
+            pred_class_top = np.moveaxis(pred_class_top, 1, -1)
+            pred_class_top = pred_class_top.reshape(-1, top_k)
 
     else:
         pred_class_top = None
@@ -346,53 +355,19 @@ def compute_metrics(args):
 
     if args.num_classes == 1:
         pred_scores = da.concatenate(all_pred_scores, axis=0)
-        pred_scores = np.moveaxis(pred_scores, 1, -1)
-        pred_scores = pred_scores.reshape(-1, args.num_classes)
+        if not object_level:
+            pred_scores = np.moveaxis(pred_scores, 1, -1)
+            pred_scores = pred_scores.reshape(-1, args.num_classes)
 
-        metrics['auc'] = compute_roc_curve(pred_scores, target, 'image_level',
+        metrics['auc'] = compute_roc_curve(pred_scores, target,
+                                           type_level,
                                            args)
 
-    log_str = f'Test metrics per image'
+    log_str = 'Test metrics at ' + type_level
     for m, v in metrics.items():
         log_str += ' {}:{:.3f}'.format(m, v)
 
     logger.info(log_str)
-
-    if len(all_pred_classes_objs):
-        pred_class_obj = da.concatenate(all_pred_classes_objs, axis=0)
-        pred_class_obj = np.moveaxis(pred_class_obj, 1, -1).reshape(-1, 1)
-
-        target_obj = da.concatenate(all_targets_objs, axis=0)
-        target_obj = np.moveaxis(target_obj, 1, -1).reshape(-1, 1)
-
-        if len(all_pred_classes_top_objs):
-            pred_class_top_obj = da.concatenate(all_pred_classes_top_objs,
-                                                axis=0)
-            pred_class_top_obj = np.moveaxis(pred_class_top_obj, 1, -1)
-            pred_class_top_obj = pred_class_top_obj.reshape(-1, top_k)
-
-        else:
-            pred_class_top_obj = None
-
-        metrics_obj = utils.compute_class_metrics_dask(pred_class_obj,
-                                                       target_obj,
-                                                       args.num_classes,
-                                                       pred_class_top_obj)
-
-        if args.num_classes == 1:
-            pred_scores_obj = da.concatenate(all_pred_scores_objs, axis=0)
-            pred_scores_obj = np.moveaxis(pred_scores_obj, 1, -1)
-            pred_scores_obj = pred_scores_obj.reshape(-1, args.num_classes)
-
-            metrics_obj['auc'] = compute_roc_curve(pred_scores_obj, target_obj,
-                                                   'object_level',
-                                                   args)
-
-        log_str = 'Test metrics per object'
-        for m, v in metrics_obj.items():
-            log_str += ' {}:{:.3f}'.format(m, v)
-
-        logger.info(log_str)
 
     # Return True if the testing finished sucessfully
     return completed
@@ -424,7 +399,10 @@ def test(args):
     if not args.metrics_only:
         infer(model, test_data, args)
 
-    compute_metrics(args)
+    compute_metrics(args, object_level=False)
+
+    if args.compute_components_metrics:
+        compute_metrics(args, object_level=True)
 
 
 if __name__ == '__main__':
