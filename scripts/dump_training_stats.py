@@ -25,6 +25,11 @@ metrics_keys = ['tp', 'tp_top', 'acc_top', 'avg_prec', 'acc', 'rec', 'prec',
                 'q3',
                 'E',
                 'Ch',
+                'seg_model_last_lr',
+                'class_model_last_lr',
+                'encoder_last_lr',
+                'decoder_last_lr',
+                'fact_ent_last_lr',
                 ]
 
 
@@ -123,6 +128,8 @@ def save_training_stats_log(training_log, output_filename):
                     if stats[mode].get(m, None) is None:
                         stats[mode][m] = []
 
+                    if v is None:
+                        v = 'nan'
                     stats[mode][m].append(float(v))
 
                 if metrics_headers == 0:

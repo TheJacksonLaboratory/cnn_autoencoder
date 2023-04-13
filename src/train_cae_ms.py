@@ -361,10 +361,10 @@ def train(model, train_data,
                 for k, sched in mod_schedulers.items():
                     if hasattr(sched, '_last_lr'):
                         current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
-                        trn_avg_metrics[k] = sched._last_lr[0]
+                        trn_avg_metrics[k + '_last_lr'] = sched._last_lr[0]
                     else:
                         current_lr += '{}=None '.format(k)
-                        trn_avg_metrics[k] = float('nan')
+                        trn_avg_metrics[k + '_last_lr'] = float('nan')
 
                 train_loss_history.append(train_loss)
                 valid_loss_history.append(valid_loss)
