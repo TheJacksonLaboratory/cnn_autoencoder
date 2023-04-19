@@ -82,7 +82,6 @@ class RandomRotationInputTarget(object):
         return patch, target
 
 
-
 class RandomElasticDeformationInput(object):
     def __init__(self, sigma=10):
         self._sigma = sigma
@@ -97,26 +96,6 @@ class RandomElasticDeformationInput(object):
         patch = torch.from_numpy(deform_grid(patch, displacement, order=3,
                                              mode='reflect',
                                              axis=(1, 2))).float()
-        return patch
-
-
-class RandomRotationInput(object):
-    def __init__(self, degrees=90):
-        self._degrees = degrees
-
-    def __call__(self, patch):
-        angle = np.random.rand() * self._degrees
-
-        if not isinstance(patch, np.ndarray):
-            patch = patch.numpy()
-
-        # rotate the input patch with bicubic interpolation, reflect the edges
-        # to preserve the content in the image.
-        patch = torch.from_numpy(rotate(patch.transpose(1, 2, 0), angle,
-                                        order=4,
-                                        reshape=False,
-                                        mode='reflect').transpose(2, 0, 1)
-                                 ).float()
         return patch
 
 
@@ -179,11 +158,46 @@ class MergeLabels(object):
         return merged_labels
 
 
+class ExpandTensor(object):
+    def __init__(self, ndim=3):
+        self._ndim = ndim
+
+    def __call__(self, image):
+        if self._ndim == 0:
+            return image.view(-1).squeeze()
+
+        if image.ndim < self._ndim:
+            sizes = tuple([1] * (self._ndim - image.ndim) + [-1] * image.ndim)
+            image = image.expand(*sizes)
+
+        elif image.ndim > self._ndim:
+            dim_slice = slice(image.ndim - self._ndim, image.ndim, None)
+            sizes = tuple([-1] + list(image.shape[dim_slice]))
+            image = image.view(*sizes)
+
+        return image
+
+
+class ConvertTensorDtype(object):
+    def __init__(self, dtype):
+        if dtype is torch.float32:
+            self.__tofun = lambda image: image.float()
+        elif dtype is torch.int64:
+            self.__tofun = lambda image: image.long()
+        else:
+            raise ValueError(
+                "Convertion to data type {} not supported".format(dtype))
+
+    def __call__(self, image):
+        return self.__tofun(image)
+
+
 def get_zarr_transform(data_mode='test', normalize=False,
                        compressed_input=False,
                        rotation=False,
                        elastic_deformation=False,
-                       dense_labels=False,
+                       target_data_type=None,
+                       label_density=0,
                        map_labels=None,
                        merge_labels=None,
                        add_noise=False,
@@ -216,18 +230,19 @@ def get_zarr_transform(data_mode='test', normalize=False,
     if not compressed_input and normalize:
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
-
     input_target_trans_list = []
     if rotation:
-        if dense_labels:
+        if label_density == 2:
             input_target_trans_list.append(
                 RandomRotationInputTarget(degrees=30.))
         else:
             prep_trans_list.append(
-                RandomRotationInput(degrees=30.))
+                transforms.RandomRotation(
+                    degrees=30.,
+                    interpolation=transforms.InterpolationMode.BILINEAR))
 
     if elastic_deformation:
-        if dense_labels:
+        if label_density == 2:
             input_target_trans_list.append(
                 RandomElasticDeformationInputTarget(sigma=10))
         else:
@@ -254,6 +269,15 @@ def get_zarr_transform(data_mode='test', normalize=False,
         target_trans_list.append(WeightsDistances(class_weights=class_weights,
                                                  sigma=weights_map_sigma,
                                                  w_0=weights_map_w))
+
+    if label_density > 1:
+        target_trans_list.append(ExpandTensor(ndim=3))
+    elif label_density > 0:
+        target_trans_list.append(ExpandTensor(ndim=0))
+
+    if target_data_type is not None:
+        target_trans_list.append(
+            ConvertTensorDtype(target_data_type))
 
     if len(target_trans_list) > 0:
         target_trans = transforms.Compose(target_trans_list)

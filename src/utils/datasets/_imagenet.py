@@ -30,7 +30,8 @@ try:
                 with open(root, 'r') as f:
                     self._s3_urls = [l.strip() for l in f.readlines()]
             else:
-                raise ValueError('Root %s not supported for retrieving images from an s3 bucket' % root)
+                raise ValueError('Root %s not supported for retrieving '
+                                 'images from an s3 bucket' % root)
 
             if dataset_size is not None and dataset_size > 0:
                 self._s3_urls = self._s3_urls[:dataset_size]

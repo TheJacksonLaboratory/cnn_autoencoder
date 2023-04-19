@@ -1,4 +1,5 @@
 from dask.diagnostics import ProgressBar
+import dask.array as da
 
 import logging
 import os
@@ -30,9 +31,10 @@ def compress_image(checkpoint, input_filename, output_filename,
     fn, rois = utils.parse_roi(input_filename, source_format)
 
     s3_obj = utils.connect_s3(fn)
-    z, _, _ = utils.image_to_dask(fn, patch_size, source_format,
+    z, _, _ = utils.image_to_zarr(fn, patch_size, source_format,
                                       data_group, compressed_input=False,
                                       s3_obj=s3_obj)
+    z = da.from_zarr(z)
 
     if len(rois):
         z = z[rois[0]].squeeze()

@@ -1,5 +1,10 @@
 import os
+import torch
 from torch.utils.data import DataLoader, random_split
+
+import zarr
+import numpy as np
+from functools import reduce, partial
 
 from ._augs import (get_zarr_transform,
                     get_mnist_transform,
@@ -9,9 +14,57 @@ from ._cifar import CIFAR10, CIFAR100
 from ._mnist import MNIST, EMNIST
 from ._zarrbased import (zarrdataset_worker_init,
                          ZarrDataset,
-                         WeaklyLabeledZarrDataset,
-                         DenselyLabeledZarrDataset)
+                         LabeledZarrDataset)
 from ._imagenet import ImageFolder, ImageS3
+
+
+def get_filenames(source, source_format, data_mode):
+    if (isinstance(source, str) and source_format in source.lower()
+       or isinstance(source, (zarr.Group, zarr.Array, np.ndarray))):
+        # If the input is a zarr group, zarr array, or numpy array return it as
+        # it is.
+        return [source]
+
+    elif isinstance(source, list):
+        # If the input is a list of any supported inputs, iterate each element
+        # Check if an element in the list corresponds to the current data mode
+        source_mode = list(filter(lambda fn: data_mode in fn, source))
+
+        if len(source_mode) > 0:
+            # Only if there is at least one element specific to the data mode,
+            # use it. Otherwise, recurse the original source list.
+            source = source_mode
+
+        return reduce(lambda l1, l2:
+                      l1 + l2,
+                      map(partial(get_filenames, source_format=source_format,
+                                  data_mode=data_mode),
+                          source),
+                      [])
+
+    elif isinstance(source, str) and source.lower().endswith('txt'):
+        # If the input is a text file with a list of url/paths or directories,
+        # recurse to get the filenames from the text file content.
+        with open(source, mode='r') as f:
+            filenames = [line.strip('\n\r ') for line in f.readlines()]
+
+        return get_filenames(filenames, source_format, data_mode)
+
+    elif isinstance(source, str):
+        # Otherwise, the input is a directory, create the filenames list from
+        # each element in that directory that meets the criteria.
+        source = [os.path.join(source, fn)
+                  for fn in sorted(os.listdir(source))
+                  if source_format in fn.lower()]
+
+        return reduce(lambda l1, l2:
+                      l1 + l2,
+                      map(partial(get_filenames, source_format=source_format,
+                                  data_mode=data_mode),
+                          source))
+
+    # If the source file/path does not meet the criteria, return an empty list
+    return []
 
 
 def get_MNIST(data_dir='.', batch_size=1, val_batch_size=1, workers=0,
@@ -216,30 +269,41 @@ def get_zarr_dataset(data_dir='.', batch_size=1,
                      mode='training',
                      num_classes=None,
                      label_density=0,
+                     criterion=None,
                      **kwargs):
     """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
     """
 
+    target_data_type = None
+
+    if criterion is not None and "ce" in criterion.lower():
+        if "bce" in criterion.lower():
+            target_data_type = torch.float32
+        else:
+            target_data_type = torch.int64
+
     (prep_trans,
      input_target_trans,
-     target_trans) = get_zarr_transform(data_mode=data_mode, **kwargs)
+     target_trans) = get_zarr_transform(data_mode=data_mode,
+                                        label_density=label_density,
+                                        target_data_type=target_data_type,
+                                        **kwargs)
 
-    if label_density == 0:
-        histo_dataset = ZarrDataset
-    elif label_density == 1:
-        histo_dataset = WeaklyLabeledZarrDataset
-    elif label_density == 2:
-        histo_dataset = DenselyLabeledZarrDataset
+    if label_density:
+        histo_dataset = LabeledZarrDataset
     else:
-        raise ValueError("The labeling density "
-                         "{} is not supported".format(label_density))
+        histo_dataset = ZarrDataset
 
     # Modes can vary from testing, segmentation, compress, decompress, etc.
     # For this reason, only when it is properly training, two data queues are
     # returned, otherwise, only one queue is returned.
     if 'test' in mode:
-        zarr_data = histo_dataset(root=data_dir,
+        test_filenames = get_filenames(data_dir, source_format=".zarr",
+                                       data_mode=data_mode)
+        test_filenames = np.array(test_filenames)
+
+        zarr_data = histo_dataset(test_filenames,
                                   dataset_size=test_dataset_size,
                                   data_mode=data_mode,
                                   transform=prep_trans,
@@ -255,17 +319,23 @@ def get_zarr_dataset(data_dir='.', batch_size=1,
                                 worker_init_fn=zarrdataset_worker_init)
         return test_queue, num_classes
 
-    zarr_train_data = histo_dataset(root=data_dir,
+    train_filenames = get_filenames(data_dir, source_format=".zarr",
+                                    data_mode="train")
+    train_filenames = np.array(train_filenames)
+
+    val_filenames = get_filenames(data_dir, source_format=".zarr",
+                                  data_mode="val")
+    val_filenames = np.array(val_filenames)
+
+    zarr_train_data = histo_dataset(train_filenames,
                                     dataset_size=train_dataset_size,
-                                    data_mode='train',
                                     transform=prep_trans,
                                     input_target_transform=input_target_trans,
                                     target_transform=target_trans,
                                     workers=workers,
                                     **kwargs)
-    zarr_valid_data = histo_dataset(root=data_dir,
+    zarr_valid_data = histo_dataset(val_filenames,
                                     dataset_size=val_dataset_size,
-                                    data_mode='val',
                                     transform=prep_trans,
                                     input_target_transform=input_target_trans,
                                     target_transform=target_trans,

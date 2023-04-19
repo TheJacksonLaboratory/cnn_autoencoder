@@ -16,6 +16,16 @@ data_args = [
         }
     },
     {'tasks': ['all'],
+        'modes': ['all'],
+        'flags': ('-mda', '--mask-data-axes'),
+        'details': {
+        'dest': 'mask_data_axes',
+        'type': str,
+        'help': 'The ordering of the available axes in the masks group',
+        'default': 'XY'
+        }
+    },
+    {'tasks': ['all'],
         'modes': ['training'],
         'flags': ('-ldn', '--label-density'),
         'details': {

@@ -19,3 +19,7 @@ dask-image==2022.9.0
 pytorch-msssim
 debugpy
 jupyterlab
+bridson==0.1.0
+shapely==2.0.1
+matplotlib==3.5.3
+compressai==1.2.4

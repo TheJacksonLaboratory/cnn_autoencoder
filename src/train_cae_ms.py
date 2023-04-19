@@ -169,8 +169,6 @@ def train(model, train_data,
     channel_e_history = []
 
     step = 0
-    train_data_size = len(train_data)
-
     if args.progress_bar:
         q = tqdm(total=stopping_criteria['early_stopping']._max_iterations,
                  desc="Training", position=0)
@@ -300,7 +298,7 @@ def train(model, train_data,
 
                 (log_str,
                  curr_rec_metrics) = utils.log_info(step, i + 1,
-                                                    train_data_size,
+                                                    len(train_data),
                                                     model,
                                                     x,
                                                     t,

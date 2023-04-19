@@ -128,7 +128,7 @@ def save_training_stats_log(training_log, output_filename):
                     if stats[mode].get(m, None) is None:
                         stats[mode][m] = []
 
-                    if v.lower() is 'none':
+                    if v.lower() == 'none':
                         v = 'nan'
 
                     stats[mode][m].append(float(v))
