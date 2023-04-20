@@ -13,6 +13,8 @@ from ._augs import (get_zarr_transform,
 from ._cifar import CIFAR10, CIFAR100
 from ._mnist import MNIST, EMNIST
 from ._zarrbased import (zarrdataset_worker_init,
+                         GridPatchSampler,
+                         BlueNoisePatchSampler,
                          ZarrDataset,
                          LabeledZarrDataset)
 from ._imagenet import ImageFolder, ImageS3
@@ -305,14 +307,12 @@ def get_zarr_dataset(data_dir='.', batch_size=1,
 
         zarr_data = histo_dataset(test_filenames,
                                   dataset_size=test_dataset_size,
-                                  data_mode=data_mode,
                                   transform=prep_trans,
                                   intput_target_transform=input_target_trans,
                                   target_transform=target_trans,
-                                  workers=workers,
+                                  shuffle=shuffle_test,
                                   **kwargs)
         test_queue = DataLoader(zarr_data, batch_size=batch_size,
-                                shuffle=shuffle_test,
                                 num_workers=min(workers, 
                                                 len(zarr_data._filenames)),
                                 pin_memory=gpu,

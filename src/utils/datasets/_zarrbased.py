@@ -15,7 +15,7 @@ import boto3
 from io import BytesIO
 
 import torch
-from torch.utils.data import Dataset, Sampler
+from torch.utils.data import IterableDataset
 
 from matplotlib.path import Path
 from bridson import poisson_disc_samples
@@ -51,15 +51,14 @@ def connect_s3(filename_sample):
     return s3_obj
 
 
-def image_to_zarr(arr_src, source_format, data_group, s3_obj=None):
+def image2dask(arr_src, source_format, data_group, s3_obj=None):
     if (isinstance(arr_src, zarr.Group) or (isinstance(arr_src, str)
        and ".zarr" in source_format)):
-        # If the passed object is a zarr group/file, open it and
-        # extract the level from the specified group.
-        try:
-            arr = zarr.open_consolidated(arr_src, mode="r")[data_group]
-        except (KeyError, aiohttp.client_exceptions.ClientResponseError):
-            arr = zarr.open(arr_src, mode="r")[data_group]
+        arr = da.from_zarr(arr_src, component=data_group)
+
+    elif isinstance(arr_src, zarr.Array):
+        # The array was already open from a zarr file
+        arr = da.from_zarr(arr_src)
 
     elif (isinstance(arr_src, str) and ".zarr" not in source_format):
         # If the input is a path to an image stored in a format
@@ -69,10 +68,6 @@ def image_to_zarr(arr_src, source_format, data_group, s3_obj=None):
         arr = da.from_delayed(dask.delayed(np.array)(im),
                               shape=(im.size[1], im.size[0], channels),
                               dtype=np.uint8)
-
-    elif isinstance(arr_src, zarr.Array):
-        # Otherwise, use directly the zarr array
-        arr = arr_src
 
     return arr, arr.shape
 
@@ -94,7 +89,7 @@ def parse_roi(filename, source_format):
 
     Parameters:
     ----------
-    filename : str, numpy.ndarray, zarr.Array, or zarr.Group
+    filename : str
         Path to the image.
     source_format : str
         Format of the input file.
@@ -105,31 +100,12 @@ def parse_roi(filename, source_format):
     rois : list of tuples
     """
     rois = []
-    if isinstance(filename, (zarr.Array, np.ndarray)):
-        fn = filename
-
-    elif isinstance(filename, zarr.Group):
-        fn = filename
-        rois = filename.attrs["rois"]
-
-    elif (isinstance(filename, str)
-          and filename.lower().endswith(".zarr")
-          and ";" not in filename.lower().split(".zarr")[1:]):
-        # The input is a zarr file, and the rois should be taken from it
-        fn = filename
-        try:
-            z_grp = zarr.open_consolidated(filename, mode="r")
-
-        except (KeyError, aiohttp.client_exceptions.ClientResponseError):
-            z_grp = zarr.open(filename, mode="r")
-
-        rois = z_grp.attrs.get("rois", [])
-
-    elif isinstance(filename, str):
+    if isinstance(filename, str):
         split_pos = filename.lower().find(source_format)
         rois_str = filename[split_pos + len(source_format):]
         fn = filename[:split_pos + len(source_format)]
         rois_str = rois_str.split(";")[1:]
+
         for roi in rois_str:
             start_coords, axis_lengths = roi.split(":")
 
@@ -141,6 +117,7 @@ def parse_roi(filename, source_format):
 
             roi_slices = tuple([slice(c_i, c_i + l_i, None) for c_i, l_i in
                                 zip(start_coords, axis_lengths)])
+
             rois.append(roi_slices)
 
     return fn, rois
@@ -186,10 +163,10 @@ def get_valid_mask(filename, shape, rois, data_axes, mask_group=None,
         scaled_h = int(math.floor(shape[-2] * default_mask_scale))
         scaled_w = int(math.floor(shape[-1] * default_mask_scale))
 
-        mask = np.ones((scaled_h, scaled_w), dtype=np.bool)
+        mask = np.ones((scaled_h, scaled_w), dtype=bool)
 
     scale = mask.shape[-1] / shape[-1]
-    roi_mask = np.zeros_like(mask, dtype=np.bool)
+    roi_mask = np.zeros_like(mask, dtype=bool)
     tr_ord = get_spatial_axes_order(data_axes, "YX")
 
     for roi in rois:
@@ -228,7 +205,7 @@ class PatchSampler(object):
             curr_tls = np.hstack((curr_tls, curr_brs))
             toplefts.append(curr_tls)
 
-        return np.array(toplefts)
+        return np.array(toplefts, dtype=object)
 
 
 class GridPatchSampler(PatchSampler):
@@ -269,34 +246,40 @@ class GridPatchSampler(PatchSampler):
 
 
 class BlueNoisePatchSampler(PatchSampler):
-    def __init__(self, patch_size):
+    def __init__(self, patch_size, allow_overlap=True):
         super(BlueNoisePatchSampler, self).__init__(patch_size)
+        self._overlap = math.sqrt(2) ** (not allow_overlap)
 
     def _sampling_method(self, mask, shape):
         mask_scale =  mask.shape[-1] / shape[-1]
 
-        radius = self._patch_size * mask_scale
+        rad = self._patch_size * mask_scale
         H, W = mask.shape
 
-        if H <= radius or W <= radius:
+        if H <= rad or W <= rad:
             sample_tls = np.array([[0, 0]], dtype=np.float32)
+
         else:
-            sample_tls = np.array(poisson_disc_samples(height=H - radius,
-                                                       width=W - radius,
-                                                       r=radius,
+            sample_tls = np.array(poisson_disc_samples(height=H - rad,
+                                                       width=W - rad,
+                                                       r=rad * self._overlap,
                                                        k=30),
                                   dtype=np.float32)
 
         # If there are ROIs in the mask, take the sampling positions that
         # are inside them.
         if np.any(np.bitwise_not(mask)):
-            validsample_tls = np.zeros(len(sample_tls), dtype=np.bool)
-            mask_conts = measure.find_contours(mask, 0.5)
+            validsample_tls = np.zeros(len(sample_tls), dtype=bool)
+            mask_conts = measure.find_contours(np.pad(mask, 1),
+                                               fully_connected='low',
+                                               level=0.999)
 
             for cont in mask_conts:
-                mask_path = Path(cont[:, (1, 0)])
+                mask_path = Path(cont[:, (1, 0)] - 1)
                 validsample_tls = np.bitwise_or(
-                    validsample_tls, mask_path.contains_points(sample_tls))
+                    validsample_tls,
+                    mask_path.contains_points(sample_tls + rad / 2, 
+                                              radius=rad))
 
             toplefts = sample_tls[validsample_tls]
 
@@ -308,7 +291,19 @@ class BlueNoisePatchSampler(PatchSampler):
         return toplefts
 
 
+class DaskToArray(object):
+    def __init__(self, use_multithread=False):
+        self._scheduler = "threads" if use_multithread else "synchronous"
+
+    def __call__(self, pic):
+        return pic.compute(scheduler=self._scheduler)
+
+
 class ImageLoader(object):
+    """Image lazy loader class.
+
+    Opens the zarr file, or any image that can be open by PIL, as a Dask array.
+    """
     def __init__(self, filename, data_group, data_axes, mask_group=None,
                  mask_data_axes="YX",
                  source_format=".zarr",
@@ -317,57 +312,19 @@ class ImageLoader(object):
         # Separate the filename and any ROI passed as the name of the file
         filename, rois = parse_roi(filename, source_format)
 
-        self._shape = None
-        self._arr = None
-
-        self._slice_axes_order = map_axes_order("XYZCT", data_axes)
-        self._transpose_axes_order = get_spatial_axes_order(data_axes, "CYX")
-
         (self._arr,
-         self._shape) = image_to_zarr(filename, source_format, data_group,
-                                      s3_obj)
+         self.shape) = image2dask(filename, source_format, data_group, s3_obj)
 
         if len(rois) == 0:
-            rois = [tuple([slice(0, s, None) for s in self._shape])]
+            rois = [tuple([slice(0, s, None) for s in self.shape])]
 
-        self._mask = get_valid_mask(filename, shape=self._shape,
+        self.mask = get_valid_mask(filename, shape=self.shape, rois=rois,
+                                    data_axes=data_axes,
                                     mask_group=mask_group,
-                                    mask_data_axes=mask_data_axes,
-                                    rois=rois,
-                                    data_axes=data_axes)
+                                    mask_data_axes=mask_data_axes)
 
-    def __getitem__(self, index):        
-        # Taking OME axes ordering (XYZCT), reorder them to the actual input
-        # axes ordering.
-        tl_y, tl_x, br_y, br_x = index
-        slices = [slice(tl_y, br_y, None),
-                  slice(tl_x, br_x, None),
-                  slice(None),
-                  slice(None),
-                  slice(None)]
-        slices = tuple((slices[a] for a in self._slice_axes_order))
-
-        patch = self._arr[slices]
-
-        # Transpose the input patch to the CYX order
-        patch = patch.transpose(self._transpose_axes_order)
-
-        if isinstance(patch, da.core.Array):
-            patch = patch.compute()
-
-        return patch
-
-    @property
-    def mask(self):
-        return self._mask
-
-    @property
-    def mask_scale(self):
-        return self._mask_scale
-
-    @property
-    def shape(self):
-        return self._shape
+    def __getitem__(self, index):
+        return self._arr[index]
 
 
 def preload_files(filenames, source_format, data_group="", data_axes="XYZCT",
@@ -375,10 +332,16 @@ def preload_files(filenames, source_format, data_group="", data_axes="XYZCT",
                   mask_data_axes=None,
                   s3_obj=None,
                   progress_bar=False):
+    """Open a connection to the zarr file using Dask for lazy loading.
+
+    If the mask group is passed, that group within each zarr is used to
+    determine the valid regions that can be sampled. If None is passed, that
+    means that the full image can be sampled.
+    """
     z_list = []
 
     if progress_bar:
-        q = tqdm(total=len(filenames))
+        q = tqdm(desc="Preloading files as dask arrays", total=len(filenames))
 
     for fn in filenames:
         z_list.append(ImageLoader(fn, data_group=data_group,
@@ -394,46 +357,29 @@ def preload_files(filenames, source_format, data_group="", data_axes="XYZCT",
     if progress_bar:
         q.close()
 
-    return np.array(z_list)
+    return np.array(z_list, dtype=object)
 
 
 def zarrdataset_worker_init(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset_obj = worker_info.dataset
 
+    # Reset the random number generators in each worker.
     torch_seed = torch.initial_seed()
-    random.seed(torch_seed + worker_id)
-    if torch_seed >= 2**30:  # make sure torch_seed + workder_id < 2**32
-        torch_seed = torch_seed % 2**30
+    random.seed(torch_seed)
+    np.random.seed(torch_seed % (2**32 - 1))
 
-    np.random.seed(torch_seed + worker_id)
-
-    dataset_obj._s3_obj = connect_s3(dataset_obj._filenames[0])
+    # Open a copy of the dataset on each worker.
     n_files = len(dataset_obj._filenames)
-
-    if n_files >= worker_info.num_workers:
-        # Distribute multiple images to multiple workers
-        nf_worker = int(math.ceil(n_files / worker_info.num_workers))
-        curr_worker_indices = slice(worker_id*nf_worker,
-                                    (worker_id + 1)*nf_worker,
-                                    None)
-
-        dataset_obj._filenames = dataset_obj._filenames[curr_worker_indices]
-
-        if dataset_obj._toplefts is not None:
-            # Copy the top-left positions from the corresponding images of this
-            # worker.
-            dataset_obj._toplefts = dataset_obj._toplefts[curr_worker_indices]
-            dataset_obj._patches_per_image = \
-                np.cumsum([0] + list(map(len, dataset_obj._toplefts)))
-
-    else:
-        raise ValueError("There are more workers than files to distribute")
-
-    dataset_obj._preload_files()
+    n_files_per_worker = int(math.ceil(n_files / worker_info.num_workers))
+    dataset_obj._filenames = \
+        dataset_obj._filenames[slice(n_files_per_worker * worker_id,
+                                     n_files_per_worker * (worker_id + 1),
+                                     None)]
+    dataset_obj._initialize()
 
 
-class ZarrDataset(Dataset):
+class ZarrDataset(IterableDataset):
     """A zarr-based dataset.
 
     Only two-dimensional (+color channels) data is supported by now.
@@ -443,10 +389,12 @@ class ZarrDataset(Dataset):
                  mask_group=None,
                  mask_data_axes=None,
                  transform=None,
-                 progress_bar=False,
                  patch_sampler=False,
-                 num_workers=0,
+                 shuffle=False,
+                 dataset_size=None,
+                 progress_bar=False,
                  **kwargs):
+
         self._filenames = filenames
         
         self._transform = transform
@@ -457,33 +405,21 @@ class ZarrDataset(Dataset):
         self._mask_group = mask_group
         self._mask_data_axes = mask_data_axes
 
+        self._shuffle = shuffle
         self._progress_bar = progress_bar
 
-        self._s3_obj = connect_s3(self._filenames[0])
-
-        self.z_list = []
+        self._arr_list = []
         self._patch_sampler = patch_sampler
-
-        self._preload_files()
-
-        if patch_sampler is not None:
-            self._toplefts = patch_sampler.compute_toplefts(self.z_list)
-            self._patches_per_image = np.cumsum([0]
-                                                + list(map(len,
-                                                           self._toplefts)))
-
-            self._dataset_size = self._patches_per_image[-1]
-
-        else:
-            self._toplefts = None
-            self._dataset_size = len(self.z_list)
-
-        if num_workers > 0:
-            del self.z_list
-            self.z_list = []
+        self._initialized = False
+        self._max_dataset_size = dataset_size
+        self._dataset_size = 0
 
     def _preload_files(self):
-        self.z_list = preload_files(self._filenames, source_format=".zarr",
+        # If the zarr files are stored in a S3 bucket, create a connection to
+        # that bucket.
+        self._s3_obj = connect_s3(self._filenames[0])
+
+        self._arr_list = preload_files(self._filenames, source_format=".zarr",
                                     data_group=self._data_group,
                                     data_axes=self._data_axes,
                                     mask_group=self._mask_group,
@@ -491,33 +427,93 @@ class ZarrDataset(Dataset):
                                     s3_obj=self._s3_obj,
                                     progress_bar=self._progress_bar)
 
-    def _get_tl(self, index):
-        if self._toplefts is not None:
-            im_id = np.nonzero(index < self._patches_per_image)[0][0] - 1
-            index = index - self._patches_per_image[im_id]
+        # If a patch sampler was passed, it is used to determine the top-left
+        # and bottom-right coordinates of the valid samples that can be
+        # retrieved from images. If it is not passed, the full image is
+        # returned.
+        if self._patch_sampler is not None:
+            self._toplefts = self._patch_sampler.compute_toplefts(
+                self._arr_list)
+            self._dataset_size = sum(map(len, self._toplefts))
 
-            tl_br = self._toplefts[im_id][index]
         else:
-            im_id = index
-            tl_br = None
- 
-        return im_id, tl_br
+            self._toplefts = None
+            self._dataset_size = len(self._arr_list)
 
-    def __getitem__(self, index):
-        im_id, tl_br = self._get_tl(index)
+    def _initialize(self):
+        if self._initialized:
+            return
 
-        if tl_br is None:
-            patch = self.z_list[im_id]
-        else:
-            patch = self.z_list[im_id][tl_br]
-        
+        self._preload_files()
+
+        self._initialized = True
+
+    def _get_coords(self, tlbr, data_axes):
+        if tlbr is None:
+            return slice(None)
+
+        tl_y, tl_x, br_y, br_x = tlbr
+        coords = []
+        for a in data_axes:
+            if a == "Y":
+                coords.append(slice(tl_y, br_y, None))
+            elif a == "X":
+                coords.append(slice(tl_x, br_x, None))
+            else:
+                coords.append(slice(None))
+
+        return tuple(coords)
+
+    def _getitem(self, im_id, tlbr):
+        coords = self._get_coords(tlbr, self._data_axes)
+        patch = self._arr_list[im_id][coords]
+
         if self._transform is not None:
             patch = self._transform(patch)
 
         # Returns anything as label, to prevent an error during training
         return patch, 0
 
+    def __iter__(self):
+        # Preload the files and masks associated with them
+        self._initialize()
+
+        if self._shuffle:
+            im_indices = random.sample(range(len(self._arr_list)),
+                                       len(self._arr_list))
+        else:
+            im_indices = range(len(self._arr_list))
+
+        num_examples = 0
+        for im_id in im_indices:
+            if self._toplefts is not None:
+                if self._shuffle:
+                    tlbr_indices = random.sample(
+                        range(len(self._toplefts[im_id])),
+                        len(self._toplefts[im_id]))
+                else:
+                    tlbr_indices = range(len(self._toplefts[im_id]))
+
+                for tlbr_id in tlbr_indices:
+                    if num_examples >= self._max_dataset_size:
+                        break
+
+                    num_examples += 1
+
+                    yield self._getitem(im_id, self._toplefts[im_id][tlbr_id])
+
+            else:
+                if num_examples >= self._max_dataset_size:
+                    break
+
+                num_examples += 1
+
+                yield self._getitem(im_id, None)
+
     def __len__(self):
+        if self._max_dataset_size is not None:
+            return self._max_dataset_size
+
         return self._dataset_size
 
 
@@ -528,8 +524,7 @@ class LabeledZarrDataset(ZarrDataset):
     def __init__(self, filenames, labels_data_group="labels/0/0",
                  labels_data_axes="XYC",
                  input_target_transform=None,
-                 target_transform=None, 
-                 num_workers=0,                
+                 target_transform=None,
                  **kwargs):
 
         # Open the labels from the labels group
@@ -545,17 +540,13 @@ class LabeledZarrDataset(ZarrDataset):
 
         self._lab_list = []
 
-        super(LabeledZarrDataset, self).__init__(filenames,
-                                                 num_workers=num_workers,
-                                                 **kwargs)
-
-        if num_workers > 0:
-            del self._lab_list
-            self._lab_list = []
+        super(LabeledZarrDataset, self).__init__(filenames, **kwargs)
 
     def _preload_files(self):
+        # Preload the input images
         super()._preload_files()
 
+        # Preload the target labels
         self._lab_list = preload_files(self._filenames, source_format=".zarr",
                                        data_group=self._labels_data_group,
                                        data_axes=self._labels_data_axes,
@@ -564,25 +555,22 @@ class LabeledZarrDataset(ZarrDataset):
                                        s3_obj=self._s3_obj,
                                        progress_bar=self._progress_bar)
 
-    def __getitem__(self, index):
-        im_id, tl_br = self._get_tl(index)
+    def _getitem(self, im_id, tlbr):
+        coords = self._get_coords(tlbr, self._data_axes)
+        patch = self._arr_list[im_id][coords]
 
-        if tl_br is None:
-            patch = self.z_list[im_id]
-        else:
-            patch = self.z_list[im_id][tl_br]
+        coords = self._get_coords(tlbr, self._labels_data_axes)
+        target = self._lab_list[im_id][coords]
 
+        # Transform the input with non-spatial transforms
         if self._transform is not None:
             patch = self._transform(patch)
 
-        if tl_br is None:
-            target = self._lab_list[im_id]
-        else:
-            target = self._lab_list[im_id][tl_br]
-
+        # Transform the input and target with the same spatial transforms
         if self._input_target_transform:
             patch, target = self._input_target_transform((patch, target))
 
+        # Transform the target with the target-only transforms
         if self._target_transform:
             target = self._target_transform(target)
 
@@ -592,7 +580,7 @@ class LabeledZarrDataset(ZarrDataset):
 if __name__ == "__main__":
     import argparse
     import os
-    from torch.utils.data import DataLoader, BatchSampler
+    from torch.utils.data import DataLoader, BatchSampler, random_split
 
     parser = argparse.ArgumentParser("Zarr-based data loader demo")
     parser.add_argument("-dd", "--data-dir", dest="data_dir",
@@ -656,10 +644,12 @@ if __name__ == "__main__":
     parser.add_argument("-sam", "--sample-method", dest="sample_method",
                         type=str,
                         help="Patches sampling method.",
-                        choices=["grid", "blue-noise"],
+                        choices=["grid", "blue-noise", "none"],
                         default="grid")
 
     args = parser.parse_args()
+
+    torch.manual_seed(777)
 
     if os.path.isdir(args.data_dir):
         filenames = [os.path.join(args.data_dir, fn)
@@ -675,6 +665,11 @@ if __name__ == "__main__":
     elif 'blue-noise' in args.sample_method:
         patch_sampler = BlueNoisePatchSampler(args.patch_size)
 
+    else:
+        patch_sampler = None
+
+    transform_fn = DaskToArray(True)
+
     if args.labels_data_group is not None:
         my_dataset = LabeledZarrDataset(
             filenames,
@@ -684,8 +679,11 @@ if __name__ == "__main__":
             labels_data_axes=args.labels_data_axes,
             mask_group=args.mask_group,
             mask_data_axes=args.mask_data_axes,
+            transform=transform_fn,
+            target_transform=transform_fn,
             patch_sampler=patch_sampler,
             num_workers=args.num_workers,
+            shuffle=True,
             progress_bar=True)
 
     else:
@@ -693,13 +691,17 @@ if __name__ == "__main__":
                                  data_group=args.data_group,
                                  mask_group=args.mask_group,
                                  mask_data_axes=args.mask_data_axes,
+                                 transform=transform_fn,
                                  patch_sampler=patch_sampler,
                                  num_workers=args.num_workers,
+                                 shuffle=True,
                                  progress_bar=True)
 
     my_dataloader = DataLoader(my_dataset, batch_size=args.batch_size,
                                num_workers=args.num_workers,
-                               worker_init_fn=zarrdataset_worker_init)
+                               worker_init_fn=zarrdataset_worker_init,
+                               persistent_workers=True)
 
-    for i, (x, t) in enumerate(my_dataloader):
-        print("Sample %i" % i, x.shape, x.dtype, t.shape, t.dtype)
+    for e in range(3):
+        for i, (x, t) in enumerate(my_dataloader):
+            print("Sample %i" % i, x.shape, x.dtype, t.shape, t.dtype)
