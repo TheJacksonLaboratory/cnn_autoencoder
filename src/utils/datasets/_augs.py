@@ -6,7 +6,7 @@ import torchvision.transforms as transforms
 
 from elasticdeform import deform_grid
 from scipy.ndimage import rotate, label, distance_transform_edt
-
+from zarrdataset import SelectAxes, DaskToArray
 
 merge_funs = {'mean': np.mean, 'max': np.max, 'median':np.median}
 
@@ -189,10 +189,13 @@ class ConvertTensorDtype(object):
                 "Convertion to data type {} not supported".format(dtype))
 
     def __call__(self, image):
+        if isinstance(image, np.ndarray):
+            image = torch.from_numpy(image)
         return self.__tofun(image)
 
 
-def get_zarr_transform(data_mode='test', normalize=False,
+def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
+                       normalize=False,
                        compressed_input=False,
                        rotation=False,
                        elastic_deformation=False,
@@ -213,7 +216,11 @@ def get_zarr_transform(data_mode='test', normalize=False,
     convenient to shift into a range of [-127.5, 127.5]. If the input is a
     color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
     """
-    prep_trans_list = [transforms.ToTensor(),
+    prep_trans_list = [SelectAxes(source_axes=data_axes,
+                                  axes_selection={"T": 0, "Z": 0},
+                                  target_axes="YXC"),
+                       DaskToArray(False),
+                       transforms.ToTensor(),
                        transforms.ConvertImageDtype(torch.float32)]
 
     if add_noise:
@@ -270,14 +277,19 @@ def get_zarr_transform(data_mode='test', normalize=False,
                                                  sigma=weights_map_sigma,
                                                  w_0=weights_map_w))
 
-    if label_density > 1:
-        target_trans_list.append(ExpandTensor(ndim=3))
-    elif label_density > 0:
-        target_trans_list.append(ExpandTensor(ndim=0))
+    target_trans_list.append(SelectAxes(source_axes=labels_data_axes,
+                                        axes_selection={"T": 0, "Z": 0},
+                                        target_axes="CYX"))
+    target_trans_list.append(DaskToArray(False))
 
     if target_data_type is not None:
         target_trans_list.append(
             ConvertTensorDtype(target_data_type))
+
+    if label_density > 1:
+        target_trans_list.append(ExpandTensor(ndim=3))
+    elif label_density > 0:
+        target_trans_list.append(ExpandTensor(ndim=0))
 
     if len(target_trans_list) > 0:
         target_trans = transforms.Compose(target_trans_list)

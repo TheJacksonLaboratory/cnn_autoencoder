@@ -2,7 +2,6 @@ import math
 import random
 
 import numpy as np
-import aiohttp
 import zarr
 
 import dask
@@ -145,19 +144,12 @@ def get_valid_mask(filename, shape, rois, data_axes, mask_group=None,
 
     # If the input file is stored in zarr format, try to retrieve the object
     # mask from the `mask_group`.
-    if (mask_group is not None
-      and (isinstance(filename, zarr.Group) or (isinstance(filename, str)
-          and ".zarr" in filename))):
-        try:
-            z_grp = zarr.open_consolidated(filename, mode="r")
-
-        except (KeyError, aiohttp.client_exceptions.ClientResponseError):
-            z_grp = zarr.open(filename, mode="r")
-
-        mask_grp = z_grp[mask_group]
+    if mask_group is not None and ".zarr" in filename:
+        mask = da.from_zarr(filename, component=mask_group)
 
         tr_ord = get_spatial_axes_order(mask_data_axes, "YX")
-        mask = mask_grp[:].transpose(tr_ord).squeeze()
+        mask = mask.transpose(tr_ord).squeeze()
+        mask = mask.compute(scheduler="synchronous")
 
     else:
         scaled_h = int(math.floor(shape[-2] * default_mask_scale))
@@ -391,7 +383,6 @@ class ZarrDataset(IterableDataset):
                  transform=None,
                  patch_sampler=False,
                  shuffle=False,
-                 dataset_size=None,
                  progress_bar=False,
                  **kwargs):
 
@@ -411,7 +402,6 @@ class ZarrDataset(IterableDataset):
         self._arr_list = []
         self._patch_sampler = patch_sampler
         self._initialized = False
-        self._max_dataset_size = dataset_size
         self._dataset_size = 0
 
     def _preload_files(self):
@@ -484,7 +474,6 @@ class ZarrDataset(IterableDataset):
         else:
             im_indices = range(len(self._arr_list))
 
-        num_examples = 0
         for im_id in im_indices:
             if self._toplefts is not None:
                 if self._shuffle:
@@ -495,25 +484,12 @@ class ZarrDataset(IterableDataset):
                     tlbr_indices = range(len(self._toplefts[im_id]))
 
                 for tlbr_id in tlbr_indices:
-                    if num_examples >= self._max_dataset_size:
-                        break
-
-                    num_examples += 1
-
                     yield self._getitem(im_id, self._toplefts[im_id][tlbr_id])
 
             else:
-                if num_examples >= self._max_dataset_size:
-                    break
-
-                num_examples += 1
-
                 yield self._getitem(im_id, None)
 
     def __len__(self):
-        if self._max_dataset_size is not None:
-            return self._max_dataset_size
-
         return self._dataset_size
 
 
