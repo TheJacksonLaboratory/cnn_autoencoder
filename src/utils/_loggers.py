@@ -101,7 +101,6 @@ def checkpoint(step, model, mod_optimizers, mod_schedulers, best_valid_loss,
     best_valid_loss : float
         The updated current best validation loss obtained through all training
     """
-
     # Create a dictionary with the current state as checkpoint
     training_state = dict(args.__dict__)
 
