@@ -319,7 +319,7 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
         test_queue = DataLoader(zarr_data, batch_size=batch_size,
                                 num_workers=min(workers, 
                                                 len(zarr_data._filenames)),
-                                persist_workers=workers > 0,
+                                persistent_workers=workers > 0,
                                 pin_memory=gpu,
                                 worker_init_fn=zarrdataset_worker_init)
         return test_queue, num_classes
@@ -337,7 +337,6 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
                                     transform=prep_trans,
                                     input_target_transform=input_target_trans,
                                     target_transform=target_trans,
-                                    workers=workers,
                                     shuffle=shuffle_train,
                                     **kwargs)
     zarr_valid_data = histo_dataset(val_filenames,
@@ -345,7 +344,6 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
                                     transform=prep_trans,
                                     input_target_transform=input_target_trans,
                                     target_transform=target_trans,
-                                    workers=workers,
                                     shuffle=shuffle_val,
                                     **kwargs)
 
@@ -356,12 +354,14 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
                              num_workers=min(workers,
                                              len(zarr_train_data._filenames)),
                              pin_memory=gpu,
-                             worker_init_fn=zarrdataset_worker_init)
+                             worker_init_fn=zarrdataset_worker_init,
+                             persistent_workers=True)
     valid_queue = DataLoader(zarr_valid_data, batch_size=val_batch_size,
                              num_workers=min(workers,
                                              len(zarr_valid_data._filenames)),
                              pin_memory=gpu,
-                             worker_init_fn=zarrdataset_worker_init)
+                             worker_init_fn=zarrdataset_worker_init,
+                             persistent_workers=True)
 
     return train_queue, valid_queue, num_classes
 
