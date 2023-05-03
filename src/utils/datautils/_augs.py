@@ -6,7 +6,7 @@ import torchvision.transforms as transforms
 
 from elasticdeform import deform_grid
 from scipy.ndimage import rotate, label, distance_transform_edt
-from zarrdataset import SelectAxes, DaskToArray
+from zarrdataset import SelectAxes, ZarrToArray
 
 merge_funs = {'mean': np.mean, 'max': np.max, 'median':np.median}
 
@@ -219,7 +219,7 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
     prep_trans_list = [SelectAxes(source_axes=data_axes,
                                   axes_selection={"T": 0, "Z": 0},
                                   target_axes="YXC"),
-                       DaskToArray(False),
+                       ZarrToArray(dtype=None),
                        transforms.ToTensor(),
                        transforms.ConvertImageDtype(torch.float32)]
 
@@ -280,7 +280,7 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
     target_trans_list.append(SelectAxes(source_axes=labels_data_axes,
                                         axes_selection={"T": 0, "Z": 0},
                                         target_axes="CYX"))
-    target_trans_list.append(DaskToArray(False))
+    target_trans_list.append(ZarrToArray(dtype=None))
 
     if target_data_type is not None:
         target_trans_list.append(

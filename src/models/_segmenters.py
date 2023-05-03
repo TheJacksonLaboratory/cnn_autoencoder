@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -347,6 +348,8 @@ def load_state_dict(model, checkpoint_state):
 def segmenter_from_state_dict(checkpoint, gpu=False, train=False):
     if isinstance(checkpoint, str):
         checkpoint_state = torch.load(checkpoint, map_location='cpu')
+    elif isinstance(checkpoint, argparse.Namespace):
+        checkpoint_state = checkpoint.__dict__
     else:
         checkpoint_state = checkpoint
 

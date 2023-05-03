@@ -1,3 +1,4 @@
+import copy
 import logging
 
 import numpy as np
@@ -14,13 +15,15 @@ from itertools import chain
 from tqdm import tqdm
 
 
-def valid(model, data, criterion, args):
+def valid(cae_model, model, data, criterion, args):
     """ Validation step.
     Evaluates the performance of the network in its current state using the
     full set of validation elements.
 
     Parameters
     ----------
+    cae_model : dict
+        The convolutional autoencoder mode to compress the inputs
     model : dict
         The network model in the current state
     data : torch.utils.data.DataLoader or list[tuple]
@@ -39,6 +42,10 @@ def valid(model, data, criterion, args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
+    compress_forward_step = models.decorate_trainable_modules(
+        trainable_modules=None,
+        enabled_modules=["encoder", "fact_ent"])
+
     valid_forward_step = models.decorate_trainable_modules(
         trainable_modules=None,
         enabled_modules=args.enabled_modules)
@@ -47,18 +54,29 @@ def valid(model, data, criterion, args):
         model[k].eval()
 
     sum_loss = 0
+    num_examples = 0
     rec_metrics = None
     channel_e_history = []
 
     if args.progress_bar:
-        q = tqdm(total=len(data), desc='Validating', position=1, leave=None)
+        q = tqdm(desc='Validating', position=1, leave=None)
 
-    for i, (x, t) in enumerate(data):
-        output = valid_forward_step(x, model)
+    for i, (p, x, t) in enumerate(data):
+        comp_x = compress_forward_step(x, cae_model)["y_q"]
+        b, c, _, _ = comp_x.shape
+        comp_x = comp_x.permute(1, 0, 2, 3).reshape(1, c, 1, -1)
+
+        t = torch.max(t).view(1, -1)
+
+        output = valid_forward_step(comp_x, model, position=p)
+        output["t_pred"] = output["t_pred"].view(1, -1)
+        if output["t_aux_pred"] is not None:
+            output["t_aux_pred"] = output["t_aux_pred"].view(1, -1)
 
         loss_dict = criterion(inputs=x, outputs=output, targets=t, net=model)
         loss = torch.mean(loss_dict['loss'])
         sum_loss += loss.item()
+        num_examples += b
 
         channel_e_history.append(loss_dict['channel_e'])
         channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
@@ -74,7 +92,7 @@ def valid(model, data, criterion, args):
             q.set_description(log_str)
             q.update()
 
-        if i % max(1, int(0.1 * len(data))) == 0:
+        if i % 1000 == 0:
             (log_str,
              curr_rec_metrics) = utils.log_info(None, i + 1, None, model, x, t,
                                                 output,
@@ -99,12 +117,12 @@ def valid(model, data, criterion, args):
     for m, v in rec_metrics.items():
         avg_rec_metrics['val_' + m] = np.nanmean(v)
 
-    mean_loss = sum_loss / len(data)
+    mean_loss = sum_loss / num_examples
 
     return mean_loss, avg_rec_metrics
 
 
-def train(model, train_data,
+def train(cae_model, model, train_data,
           valid_data,
           criterion,
           stopping_criteria,
@@ -117,6 +135,8 @@ def train(model, train_data,
 
     Parameters
     ----------
+    cae_model : dict
+        The convolutional autoencoder mode to compress the inputs
     model : dict
         The modules of the model to be trained as a dictionary
     train_data : torch.utils.data.DataLoader or list[tuple]
@@ -142,6 +162,10 @@ def train(model, train_data,
         Whether the training was sucessfully completed or it was interrupted
     """
     logger = logging.getLogger(args.mode + '_log')
+
+    compress_forward_step = models.decorate_trainable_modules(
+        trainable_modules=None,
+        enabled_modules=["encoder", "fact_ent"])
 
     train_forward_step = models.decorate_trainable_modules(
         trainable_modules=args.trainable_modules,
@@ -176,7 +200,7 @@ def train(model, train_data,
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
-        for i, (x, t) in enumerate(train_data):
+        for i, (p, x, t) in enumerate(train_data):
             step += 1
 
             if 'penalty' in stopping_criteria.keys():
@@ -190,10 +214,19 @@ def train(model, train_data,
             sub_step = 0
             sub_step_loss = 0
             while True:
-                sub_step += 1
                 # Start of training step
+                sub_step += 1
 
-                output = train_forward_step(x, model)
+                comp_x = compress_forward_step(x, cae_model)["y_q"]
+                b, c, _, _ = comp_x.shape
+                comp_x = comp_x.permute(1, 0, 2, 3).reshape(1, c, 1, -1)
+
+                t = torch.max(t).view(1, -1)
+
+                output = train_forward_step(comp_x, model, position=p)
+                output["t_pred"] = output["t_pred"].view(1, -1)
+                if output["t_aux_pred"] is not None:
+                    output["t_aux_pred"] = output["t_aux_pred"].view(1, -1)
 
                 loss_dict = criterion(inputs=x, outputs=output, targets=t,
                                       net=model)
@@ -272,8 +305,7 @@ def train(model, train_data,
                 q.set_description(log_str)
                 q.update()
 
-            # Log the training performance every 10% of the training set
-            if i % max(1, int(0.01 * len(train_data))) == 0:
+            if i % max(1, 1000) == 0:
                 current_lr = ''
                 for k, sched in mod_schedulers.items():
                     if hasattr(sched, '_last_lr'):
@@ -285,7 +317,7 @@ def train(model, train_data,
 
                 (log_str,
                  curr_rec_metrics) = utils.log_info(step, i + 1,
-                                                    len(train_data),
+                                                    None,
                                                     model,
                                                     x,
                                                     t,
@@ -317,7 +349,9 @@ def train(model, train_data,
 
                 # Evaluate the model with the validation set
                 (valid_loss,
-                 val_avg_metrics) = valid(model, valid_data, criterion, args)
+                 val_avg_metrics) = valid(cae_model, model, valid_data,
+                                          criterion,
+                                          args)
 
                 # Update the learning rate of the trainable modules
                 for k in args.trainable_modules:
@@ -442,15 +476,21 @@ def setup_network(args):
 
     Returns
     -------
+    cae_model : dict
+        The convolutional autoencoder model used to compress original inputs.
+        This model is fixed and not trained.
+
     model : dict
-        The convolutional autoencoder model and other models for any extra
-        tasks.
+        The models for subsequent extra tasks.
     """
+    cae_args = copy.deepcopy(args)
+    cae_args.checkpoint = args.cae_checkpoint
+    cae_args.enabled_modules = ["encoder", "fact_ent"]
+    cae_model = models.autoencoder_from_state_dict(cae_args, gpu=args.gpu,
+                                                   train=False)
+
     args = utils.setup_network_args(args)
-
-    model = models.autoencoder_from_state_dict(args, gpu=args.gpu,
-                                               train=train)
-
+    model = {}
     if 'class_model' in args.enabled_modules:
         model['class_model'] = models.classifier_from_state_dict(args,
                                                                  gpu=args.gpu,
@@ -460,7 +500,7 @@ def setup_network(args):
                                                               gpu=args.gpu,
                                                               train=train)
 
-    return model
+    return cae_model, model
 
 
 def main(args):
@@ -474,10 +514,13 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
+    args.return_batches = True
+    args.return_positions = True
     train_data, valid_data, num_classes = utils.get_data(args)
     args.num_classes = num_classes
 
-    model = setup_network(args)
+    comp_model, model = setup_network(args)
+
     (criterion,
      stopping_criteria) = utils.setup_criteria(args,
                                                checkpoint=args.checkpoint)
@@ -516,7 +559,8 @@ def main(args):
         logger.info('\n{}'.format(k))
         logger.info(mod_schedulers[k])
 
-    train(model, train_data, valid_data, criterion, stopping_criteria,
+    train(comp_model, model, train_data, valid_data, criterion,
+          stopping_criteria,
           mod_optimizers,
           mod_schedulers,
           mod_grad_accumulate,

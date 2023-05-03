@@ -1,3 +1,4 @@
+import argparse
 import struct
 import math
 import numpy as np
@@ -78,8 +79,7 @@ class DownsamplingUnit(nn.Module):
                                padding=kernel_size//2,
                                dilation=1,
                                groups=channels_in if groups else 1,
-                               bias=bias,
-                               padding_mode='reflect'))
+                               bias=bias))
 
         if batch_norm:
             model.append(nn.BatchNorm2d(channels_out, affine=True))
@@ -130,8 +130,7 @@ class ResidualDownsamplingUnit(nn.Module):
                                     padding=kernel_size//2,
                                     dilation=1,
                                     groups=channels_in if groups else 1,
-                                    bias=bias,
-                                    padding_mode='reflect'))
+                                    bias=bias))
 
             if batch_norm:
                 res_model.append(nn.BatchNorm2d(channels_in, affine=True))
@@ -421,8 +420,7 @@ class Synthesizer(nn.Module):
                               padding=kernel_size//2,
                               dilation=1,
                               groups=channels_org if groups else 1,
-                              bias=bias,
-                              padding_mode='reflect'))
+                              bias=bias))
                             for i in reversed(range(compression_level - 1))]
         else:
             color_layers = [nn.Sequential(NoneColorLayer())
@@ -501,6 +499,8 @@ def load_state_dict(model, encoder=None, decoder=None, fact_ent=None,
 def autoencoder_from_state_dict(checkpoint, gpu=False, train=False):
     if isinstance(checkpoint, str):
         checkpoint_state = torch.load(checkpoint, map_location='cpu')
+    elif isinstance(checkpoint, argparse.Namespace):
+        checkpoint_state = checkpoint.__dict__
     else:
         checkpoint_state = checkpoint
 

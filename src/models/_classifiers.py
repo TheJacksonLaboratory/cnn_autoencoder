@@ -1,12 +1,199 @@
-import sys
+import argparse
+from collections import OrderedDict
+from functools import partial
 from torchvision.models import inception, resnet, mobilenet, vision_transformer
 
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# TODO: Implement a version of the Mobilenet
+
+class WSIEncoder(nn.Module):
+    """Transformer Model Encoder for sequence to sequence translation with
+    whole slide images.
+
+    The main difference between this class and the original ViT Encoder class
+    is that positional encoding is generated from fixed sinusoidal waves
+    instead of learned during training. Fixed waves are used because WSI can
+    have arbitrary shape in a large scale, which would require large amounts of
+    memory to keep track of a learnable positional encoding.
+    """
+    def __init__(
+        self,
+        patch_size,
+        compression_level,
+        max_width=1000000,
+        max_height=1000000,
+        num_layers=12,
+        num_heads=12,
+        hidden_dim=768,
+        mlp_dim=3072,
+        attention_dropout=0.0,
+        dropout=0.0,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+    ):
+        super().__init__()
+
+        self._hidden_dim = hidden_dim
+        self._patch_size = patch_size
+        self._compression_level = compression_level
+        self._max_height = (max_height // patch_size) // 2 ** compression_level
+        self._max_width = (max_width // patch_size) // 2 ** compression_level
+
+        layers = OrderedDict()
+        for i in range(num_layers):
+            layers[f"encoder_layer_{i}"] = vision_transformer.EncoderBlock(
+                num_heads,
+                hidden_dim,
+                mlp_dim,
+                dropout,
+                attention_dropout,
+                norm_layer,
+            )
+
+        dim_seq = torch.arange(hidden_dim // 4)
+
+        sin_div_x = 1e-5 ** (2 * dim_seq / hidden_dim)
+        cos_div_x = 1e-5 ** ((2 * dim_seq + 1) / hidden_dim)
+        sin_div_y = 1e-5 ** ((2 * dim_seq + hidden_dim // 2) / hidden_dim)
+        cos_div_y = 1e-5 ** ((2 * dim_seq + 1 + hidden_dim // 2) / hidden_dim)
+
+        self.register_buffer("_sin_div_x", sin_div_x)
+        self.register_buffer("_cos_div_x", cos_div_x)
+        self.register_buffer("_sin_div_y", sin_div_y)
+        self.register_buffer("_cos_div_y", cos_div_y)
+
+        self.layers = nn.Sequential(layers)
+        self.ln = norm_layer(hidden_dim)
+
+    def get_pos_embedding(self, position):
+        x = ((position[:, 0] // self._patch_size)
+             / 2 ** self._compression_level)
+        y = ((position[:, 1] // self._patch_size)
+             / 2 ** self._compression_level)
+
+        pos_i_sin = torch.sin(y.view(-1, 1) * self._sin_div_y.view(1, -1))
+        pos_i_cos = torch.sin(y.view(-1, 1) * self._cos_div_y.view(1, -1))
+        pos_j_sin = torch.sin(x.view(-1, 1) * self._sin_div_x.view(1, -1))
+        pos_j_cos = torch.sin(x.view(-1, 1) * self._cos_div_x.view(1, -1))
+
+        pos_embedding = torch.stack((pos_i_sin, pos_i_cos,
+                                     pos_j_sin, pos_j_cos), dim=-1)
+
+        pos_embedding = torch.flatten(pos_embedding, -2, -1)
+        pos_embedding = pos_embedding.view(-1, 1, self._hidden_dim)
+
+        return pos_embedding
+
+    def forward(self, input, position):
+        # No extra drop out is perfomed since patches are already randomly
+        # sampled from the image.
+        input = input + self.get_pos_embedding(position)
+        return self.ln(self.layers(input))
+
+
+class ViTWSIClassifier(nn.Module):
+    """Implementation of a ViT classifier to be used with whole slide images as
+    inputs.
+
+    This model is intended for use along with an Autoencoder model that
+    downsamples the image into a more manageable size.
+    """
+    def __init__(self, channels_bn=768,
+                 num_layers=6,
+                 num_heads=12,
+                 hidden_dim=768,
+                 mlp_dim=3072,
+                 num_classes=1000,
+                 patch_size=128,
+                 compression_level=4,
+                 max_width=1000000,
+                 max_height=1000000,
+                 attention_dropout=0.0,
+                 dropout=0.0,
+                 **kwargs):
+        super().__init__()
+
+        self.patch_size = patch_size // 2 ** compression_level
+        self.hidden_dim = hidden_dim
+        self.mlp_dim = 3072
+        self.attention_dropout = attention_dropout
+        self.dropout = dropout
+        self.num_classes = num_classes
+
+        # Add a class token
+        self.class_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+
+        self.encoder = WSIEncoder(patch_size,
+                                  compression_level,
+                                  max_width=max_width,
+                                  max_height=max_height,
+                                  num_layers=num_layers,
+                                  num_heads=num_heads,
+                                  hidden_dim=hidden_dim,
+                                  mlp_dim=mlp_dim,
+                                  attention_dropout=attention_dropout,
+                                  dropout=dropout)
+
+        self.conv_proj = nn.Conv2d(in_channels=channels_bn,
+                                   out_channels=hidden_dim,
+                                   kernel_size=1,
+                                   stride=1)
+
+        heads_layers = OrderedDict()
+        heads_layers["head"] = nn.Linear(hidden_dim, num_classes)
+        self.heads = nn.Sequential(heads_layers)
+
+        # Init the patchify stem
+        fan_in = (self.conv_proj.in_channels
+                  * self.conv_proj.kernel_size[0]
+                  * self.conv_proj.kernel_size[1])
+
+        nn.init.trunc_normal_(self.conv_proj.weight, std=math.sqrt(1 / fan_in))
+
+        if self.conv_proj.bias is not None:
+            nn.init.zeros_(self.conv_proj.bias)
+
+        if isinstance(self.heads.head, nn.Linear):
+            nn.init.zeros_(self.heads.head.weight)
+            nn.init.zeros_(self.heads.head.bias)
+
+    def _process_input(self, x):
+        n, _, n_h, n_w = x.shape
+
+        # (n, c, n_h, n_w) -> (n, hidden_dim, n_h, n_w)
+        x = self.conv_proj(x)
+
+        # (n, hidden_dim, n_h, n_w) -> (n, hidden_dim, (n_h * n_w))
+        x = x.reshape(n, self.hidden_dim, n_h * n_w)
+
+        # (n, hidden_dim, (n_h * n_w)) -> (n, (n_h * n_w), hidden_dim)
+        # The self attention layer expects inputs in the format (N, S, E)
+        # where S is the source sequence length, N is the batch size, E is the
+        # embedding dimension
+        x = x.permute(0, 2, 1)
+
+        return x
+
+    def forward(self, x, position=None):
+        # Reshape and permute the input tensor
+        x = self._process_input(x)
+        n = x.shape[0]
+
+        # Expand the class token to the full batch
+        batch_class_token = self.class_token.expand(n, -1, -1)
+        x = torch.cat([batch_class_token, x], dim=1)
+
+        x = self.encoder(x, position)
+
+        # Classifier "token" as used by standard language architectures
+        x = x[:, 0]
+
+        x = self.heads(x)
+
+        return x
 
 
 class ViTClassifierHead(vision_transformer.VisionTransformer):
@@ -205,6 +392,7 @@ class InceptionV3ClassifierHead(inception.Inception3):
 
 
 CLASS_MODELS = {
+    "ViT-WSI": ViTWSIClassifier,
     "ViT": ViTClassifierHead,
     "ResNet": ResNetClassifierHead,
     "InceptionV3": InceptionV3ClassifierHead,
@@ -224,6 +412,8 @@ def load_state_dict(model, checkpoint_state):
 def classifier_from_state_dict(checkpoint, gpu=False, train=False):
     if isinstance(checkpoint, str):
         checkpoint_state = torch.load(checkpoint, map_location='cpu')
+    elif isinstance(checkpoint, argparse.Namespace):
+        checkpoint_state = checkpoint.__dict__
     else:
         checkpoint_state = checkpoint
 
@@ -249,35 +439,17 @@ def classifier_from_state_dict(checkpoint, gpu=False, train=False):
 
 
 if __name__ == '__main__':
-    import os
-    from PIL import Image
-    from torchvision import transforms
-    
-    transform = transforms.Compose([
-                    transforms.CenterCrop((256, 256)),
-                    transforms.ToTensor(),
-                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                ])
+    x = torch.rand(10, 320, 1, 128)
+    pos = torch.randint(200000, (10, 4))
 
-    x = []
+    model = ViTWSIClassifier(channels_bn=320, num_classes=1,
+                             num_layers=12,
+                             num_heads=12,
+                             hidden_dim=768,
+                             mlp_dim=3072,
+                             patch_size=16,
+                             compression_level=4)
 
-    data_dir = sys.argv[1]
-    for im_fn in [fn for fn in os.listdir(data_dir)[-10:] if fn.lower().endswith('.png')]:
-        fn = os.path.join(data_dir, im_fn)
-        im = Image.open(fn)
-        im = transform(im).unsqueeze(0)
-        x.append(im)
-    x = torch.cat(x, dim=0)
+    output = model(x, pos)
 
-    net = ResNetClassifierHead(cut_position=0, patch_size=256)
-
-    net.eval()
-    with torch.no_grad():
-        y = net(x)
-        if isinstance(y, tuple):
-            y, aux_y = y
-
-        top5_prob, top5_catid = torch.topk(torch.softmax(y, dim=1), 1, dim=1)
-        print('ViT (Consensus: Most confident), y_size:{}, {}\n'.format(y.size(), top5_catid.size()), top5_catid.squeeze(), top5_prob.squeeze())
-
-    print('End experiment')
+    print(output.shape)

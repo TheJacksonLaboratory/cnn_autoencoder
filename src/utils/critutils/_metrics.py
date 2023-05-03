@@ -125,7 +125,7 @@ def compute_class_metrics(pred_class, target, top_k, num_classes,
         metrics_dict['p'] = target.sum()
         metrics_dict['n'] = target.size - metrics_dict['p']
 
-        if metrics_dict['p'] > 0:
+        if metrics_dict['p'] > 0 and target.shape[0] > 1:
             metrics_dict['auc'] = roc_auc_score(target, pred_scores[:, 0])
         else:
             metrics_dict['auc'] = float('nan')

@@ -135,6 +135,16 @@ task_args = [
         }
     },
     {'tasks': ['all'],
+        'modes': ['all'],
+        'flags': ('-comp', '--compression-model-checkpoint'),
+        'details': {
+        'dest': 'cae_checkpoint',
+        'type': str,
+        'help': 'Autoencoder model checkpoint',
+        'default': None,
+        }
+    },
+    {'tasks': ['all'],
         'modes': ['training'],
         'flags': ('-cmt', '--class-model-type'),
         'details': {

@@ -3,7 +3,7 @@ import logging
 import torch
 from inspect import signature
 
-from ._metrics import compute_metrics_per_image
+from .critutils._metrics import compute_metrics_per_image
 from ._info import VER, SEG_VER
 
 
