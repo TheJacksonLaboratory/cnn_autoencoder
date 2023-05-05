@@ -3,6 +3,7 @@ from ._taskutils import *
 from ._autoencoders import (Analyzer,
                             Synthesizer,
                             ConvolutionalAutoencoder,
+                            ConvolutionalAutoencoderBottleneck,
                             autoencoder_from_state_dict)
 
 from ._classifiers import (ViTClassifierHead,

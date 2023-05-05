@@ -1,3 +1,5 @@
+import io
+import base64
 import struct
 import math
 import numpy as np
@@ -5,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from compressai import ans
 from compressai.layers import GDN
 from compressai.entropy_models import EntropyBottleneck
 
@@ -495,6 +498,7 @@ def load_state_dict(model, encoder=None, decoder=None, fact_ent=None,
             model['fact_ent']._cdf_length = fact_ent['_cdf_length']
 
         model['fact_ent'].load_state_dict(fact_ent)
+
         model['fact_ent'].update(force=True)
 
 
@@ -582,31 +586,88 @@ class ConvolutionalAutoencoder(Codec):
 
 class ConvolutionalAutoencoderBottleneck(Codec):
     codec_id = 'cae_bn'
-    def __init__(self, checkpoint, gpu=False):
-        self.checkpoint = checkpoint
-        self.gpu = gpu
+    def __init__(self, channels_bn, fact_ent=None, filters=None,
+                 fact_ent_checkpoint=None,
+                 gpu=False):
 
-        self._model = autoencoder_from_state_dict(checkpoint, gpu=gpu,
-                                                  train=False)
+        if fact_ent is not None:
+            filters = fact_ent.filters
+
+            fact_ent_checkpoint = {}
+            for n, par in fact_ent.named_parameters():
+                fact_ent_checkpoint[n] = self._tensor2bytes(par)
+
+        self.filters = filters
+        self.channels_bn = channels_bn
+        self.fact_ent_checkpoint = fact_ent_checkpoint
+
+        self._setup_encoder(gpu)
+
+    def _setup_encoder(self, gpu=False):
+        self._fact_ent = EntropyBottleneck(channels=self.channels_bn,
+                                           filters=self.filters)
+
+        fact_ent_checkpoint = {}
+        for n, par in self.fact_ent_checkpoint.items():
+            fact_ent_checkpoint[n] = self._bytes2tensor(par)
+
+        self._fact_ent.load_state_dict(fact_ent_checkpoint, strict=False)
+        self._fact_ent.update(force=True)
+
+        if gpu:
+            self._fact_ent = nn.DataParallel(self._fact_ent)
+            self._fact_ent.cuda()
+
+    @staticmethod
+    def _tensor2bytes(tensor):
+        buf = io.BytesIO()
+        torch.save(tensor.cpu().detach(), buf)
+
+        # Convert the bytes buffer into a serializable ASCII string
+        buf = base64.b64encode(buf.getvalue()).decode('ascii')
+        return buf
+
+    @staticmethod
+    def _bytes2tensor(buf):
+        # Decode the string into bytes
+        buf = io.BytesIO(base64.b64decode(buf))
+        tensor = torch.load(buf)
+        return tensor
 
     def encode(self, buf):
-        pass
+        h, w, c = buf.shape
+
+        buf_y = torch.from_numpy(buf)
+        buf_y = buf_y.permute(2, 0, 1)
+        buf_y = buf_y.view(1, c, h, w)
+
+        if isinstance(self._fact_ent, torch.nn.DataParallel):
+            buf_ae = self._fact_ent.module.compress(buf_y)
+        else:
+            buf_ae = self._fact_ent.compress(buf_y)
+
+        chunk_size_code = struct.pack('>QQ', h, w)
+
+        return chunk_size_code + buf_ae[0]
 
     def decode(self, buf, out=None):
         if out is not None:
             out = ensure_contiguous_ndarray(out)
 
-        compression_level = len(self._model['decoder'].module.synthesis_track)
-
         h, w = struct.unpack('>QQ', buf[:16])
 
-        buf_shape = (h // 2 ** compression_level, w // 2 ** compression_level)
+        buf_shape = (h, w)
 
-        if isinstance(self._model['fact_ent'], torch.nn.DataParallel):
-            buf_y_q = self._model['fact_ent'].module.decompress([buf[16:]],
-                                                                size=buf_shape)
+        if isinstance(self._fact_ent, torch.nn.DataParallel):
+            buf_y_q = self._fact_ent.module.decompress([buf[16:]],
+                                                       size=buf_shape)
         else:
-            buf_y_q = self._model['fact_ent'].decompress([buf[16:]],
-                                                         size=buf_shape)
+            buf_y_q = self._fact_ent.decompress([buf[16:]], size=buf_shape)
+
+        buf_y_q = buf_y_q[0].detach().cpu().permute(1, 2, 0)
+        buf_y_q = buf_y_q.float().numpy()
+
+        buf_y_q = np.ascontiguousarray(buf_y_q)
+        buf_y_q = ensure_contiguous_ndarray(buf_y_q)
 
         return ndarray_copy(buf_y_q, out)

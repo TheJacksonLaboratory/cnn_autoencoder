@@ -113,9 +113,6 @@ def checkpoint(step, model, mod_optimizers, mod_schedulers, best_valid_loss,
     # Append any extra information passed by the training loop
     training_state.update(extra_info)
 
-    if 'fact_ent' in model.keys() and 'fact_ent' in args.trainable_modules:
-        model['fact_ent'].module.update(force=True)
-
     for k in model.keys():
         training_state[k] = model[k].module.state_dict()
 

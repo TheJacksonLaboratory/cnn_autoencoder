@@ -1,3 +1,4 @@
+import dask
 from dask.diagnostics import ProgressBar
 import dask.array as da
 
@@ -5,8 +6,11 @@ import logging
 import os
 import shutil
 import requests
+from itertools import repeat
 
 import aiohttp
+import numpy as np
+import torch
 import zarr
 
 from numcodecs import register_codec
@@ -15,6 +19,21 @@ import models
 import utils
 
 register_codec(models.ConvolutionalAutoencoder)
+register_codec(models.ConvolutionalAutoencoderBottleneck)
+
+
+def compress_fn_impl(chunk, model):
+    with torch.no_grad():
+        c, h, w = chunk.shape
+        x = torch.from_numpy(chunk)
+        x = x.view(1, c, h, w)
+        x = x.float() / 255.0
+
+        y = model['encoder'](x)
+
+        y = y[0].cpu().detach().numpy()
+
+    return y
 
 
 def compress_image(checkpoint, input_filename, output_filename,
@@ -23,10 +42,23 @@ def compress_image(checkpoint, input_filename, output_filename,
                    data_group='0/0',
                    data_axes='TCZYX',
                    progress_bar=False,
+                   save_as_bottleneck=False,
                    gpu=False):
 
-    compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint,
-                                                 gpu=gpu)
+    if save_as_bottleneck:
+        model = models.autoencoder_from_state_dict(checkpoint=checkpoint,
+                                                   gpu=gpu,
+                                                   train=False)
+        channels_bn = model["fact_ent"].module.channels
+        compression_level = len(model["encoder"].module.analysis_track)
+
+        compressor = models.ConvolutionalAutoencoderBottleneck(
+            channels_bn=channels_bn,
+            fact_ent=model["fact_ent"].module,
+            gpu=gpu)
+    else:
+        compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint,
+                                                     gpu=gpu)
 
     fn, rois = utils.parse_roi(input_filename, source_format)
 
@@ -44,16 +76,35 @@ def compress_image(checkpoint, input_filename, output_filename,
     data_axes = [a for a in data_axes if a in 'YXC']
     tran_axes = [data_axes.index(a) for a in 'YXC']
 
-    z = z.transpose(tran_axes)
-    z = z.rechunk(chunks=(patch_size, patch_size, 3))
+    if save_as_bottleneck:
+        z = z.rechunk(chunks=(3, patch_size, patch_size))
+
+        comp_chunks = np.array([(ch // 2**compression_level,
+                                 cw // 2**compression_level)
+                                for ch, cw in zip(*z.chunks[1:])])
+
+        comp_chunks = tuple([(channels_bn,)] +
+                            [tuple(chk) for chk in comp_chunks.T])
+
+        z_cmp = z.map_blocks(compress_fn_impl, model=model, dtype=np.float32,
+                             chunks=comp_chunks,
+                             meta=np.empty((0), dtype=np.float32))
+
+        z_cmp = z_cmp.transpose(tran_axes)
+
+    else:
+        z = z.transpose(tran_axes)
+        z = z.rechunk(chunks=(patch_size, patch_size, 3))
+        z_cmp = z
 
     if progress_bar:
         with ProgressBar():
-            z.to_zarr(output_filename, component=data_group, overwrite=True,
-                      compressor=compressor)
+            z_cmp.to_zarr(output_filename, component=data_group,
+                          overwrite=True,
+                          compressor=compressor)
     else:
-        z.to_zarr(output_filename, component=data_group, overwrite=True,
-                  compressor=compressor)
+        z_cmp.to_zarr(output_filename, component=data_group, overwrite=True,
+                      compressor=compressor)
 
     # Add metadata to the compressed zarr file
     group_dst = zarr.open(output_filename)
@@ -87,8 +138,7 @@ def compress_image(checkpoint, input_filename, output_filename,
 
         elif os.path.isdir(os.path.join(fn, 'OME')):
             shutil.copytree(os.path.join(fn, 'OME'),
-                            os.path.join(output_filename, 'OME'),
-                            dirs_exist_ok=True)
+                            os.path.join(output_filename, 'OME'))
 
 
 def compress(args):
@@ -126,6 +176,7 @@ def compress(args):
                        data_axes=args.data_axes,
                        data_group=args.data_group,
                        progress_bar=args.progress_bar,
+                       save_as_bottleneck=args.save_as_bottleneck,
                        gpu=args.gpu)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))

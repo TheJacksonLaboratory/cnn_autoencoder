@@ -134,6 +134,18 @@ task_args = [
         'default': 3
         }
     },
+    {'tasks': ['encoder'],
+        'modes': ['all'],
+        'flags': ('-sbn', '--save-bottleneck'),
+        'details': {
+        'dest': 'save_as_bottleneck',
+        'action': 'store_true',
+        'help': 'Whether store the bottleneck as it is or compress it using '
+                'arithmetic encoding. Default is set to compress the '
+                'bottleneck with arithmetic encoding',
+        'default': False
+        }
+    },
     {'tasks': ['all'],
         'modes': ['training'],
         'flags': ('-cmt', '--class-model-type'),
