@@ -40,7 +40,7 @@ def decompress_fn_impl(chunk, model):
 def decompress_image(input_filename, output_filename,
                      destination_format='zarr',
                      data_group='0/0',
-                     decomp_label='reconstruction',
+                     decomp_group='decompressed',
                      checkpoint=None,
                      progress_bar=False,
                      gpu=False):
@@ -69,18 +69,17 @@ def decompress_image(input_filename, output_filename,
 
         compression_level = model["decoder"].module.rec_level
 
-        decomp_chunks = np.array([(ch * 2**compression_level,
-                                   cw * 2**compression_level)
-                                   for ch, cw in zip(*z.chunks[:2])])
+        decomp_chk_y = tuple(cs * 2**compression_level for cs in z.chunks[0])
+        decomp_chk_x = tuple(cs * 2**compression_level for cs in z.chunks[1])
 
-        decomp_chunks = tuple([tuple(chk) for chk in decomp_chunks.T] + [(3,)])
+        decomp_chunks = (decomp_chk_y, decomp_chk_x, (3,))
 
         z_r = z.map_blocks(decompress_fn_impl, model=model, dtype=np.uint8,
                            chunks=decomp_chunks,
                            meta=np.empty((0), dtype=np.uint8))
 
-    if len(decomp_label):
-        component = '%s/%s' % (decomp_label, data_group)
+    if len(decomp_group):
+        component = '%s/%s' % (decomp_group, data_group)
     else:
         component = data_group
 
@@ -134,8 +133,7 @@ def decompress_image(input_filename, output_filename,
         else:
             im = Image.fromarray(z_r.compute())
 
-        im.save(fn_out, quality_opts={'compress_level': 9,
-                                        'optimize': False})
+        im.save(fn_out, quality_opts={'compress_level': 9, 'optimize': False})
 
 
 def decompress(args):
@@ -158,11 +156,13 @@ def decompress(args):
             fn = fn.split('.zarr')[0].replace('\\', '/').split('/')[-1]
             output_fn_list.append(
                 os.path.join(args.output_dir[0], 
-                             '%s%s%s' % (fn,args.task_label_identifier,
-                                         args.destination_format)))
+                             '%s%s' % (fn, args.destination_format)))
 
     else:
         output_fn_list = args.output_dir
+
+    if args.task_label_identifier is None:
+        args.task_label_identifier = 'decompressed'
 
     # Compress each file by separate. This allows to process large images.
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
@@ -170,7 +170,7 @@ def decompress(args):
         decompress_image(input_filename=in_fn, output_filename=out_fn,
                          destination_format=args.destination_format,
                          data_group=args.data_group,
-                         decomp_label=args.task_label_identifier,
+                         decomp_group=args.task_label_identifier,
                          progress_bar=args.progress_bar,
                          checkpoint=args.checkpoint,
                          gpu=args.gpu)

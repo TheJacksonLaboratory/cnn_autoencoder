@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 import requests
-from itertools import repeat
+from itertools import cycle
 
 import aiohttp
 import numpy as np
@@ -24,14 +24,15 @@ register_codec(models.ConvolutionalAutoencoderBottleneck)
 
 def compress_fn_impl(chunk, model):
     with torch.no_grad():
-        c, h, w = chunk.shape
-        x = torch.from_numpy(chunk)
+        h, w, c = chunk.shape
+        x = torch.from_numpy(chunk.transpose(2, 0, 1))
         x = x.view(1, c, h, w)
         x = x.float() / 255.0
 
         y = model['encoder'](x)
 
         y = y[0].cpu().detach().numpy()
+        y = y.transpose(1, 2, 0)
 
     return y
 
@@ -67,35 +68,39 @@ def compress_image(checkpoint, input_filename, output_filename,
                           use_dask=True)
 
     if len(rois):
-        z = z[rois[0]].squeeze()
         rois = rois[0]
     else:
-        z = z.squeeze()
-        rois = None
+        rois = [slice(None) for _ in data_axes]
 
-    data_axes = [a for a in data_axes if a in 'YXC']
-    tran_axes = [data_axes.index(a) for a in 'YXC']
+    rem_axes = "".join(set(data_axes) - set("YXC"))
+    tran_axes = utils.map_axes_order(data_axes, target_axes=rem_axes + "YXC")
+
+    z = z.transpose(tran_axes)
+    rois = [rois[a] for a in tran_axes]
+    
+    # Select the index 0 from all non-spatial non-color axes
+    # TODO: Allow to compress Time and Z axes without hard selecting index 0
+    for a in range(len(rem_axes)):
+        rois[a] = slice(0, 1, None)
+
+    z = z[tuple(rois)].squeeze(axis=tuple(range(len(rem_axes))))
+    z = z.rechunk(chunks=(patch_size, patch_size, 3))
 
     if save_as_bottleneck:
-        z = z.rechunk(chunks=(3, patch_size, patch_size))
+        comp_chk_y = tuple(cs // 2**compression_level for cs in z.chunks[0])
+        comp_chk_x = tuple(cs // 2**compression_level for cs in z.chunks[1])
 
-        comp_chunks = np.array([(ch // 2**compression_level,
-                                 cw // 2**compression_level)
-                                for ch, cw in zip(*z.chunks[1:])])
-
-        comp_chunks = tuple([(channels_bn,)] +
-                            [tuple(chk) for chk in comp_chunks.T])
+        comp_chunks = (comp_chk_y, comp_chk_x, (channels_bn,))
 
         z_cmp = z.map_blocks(compress_fn_impl, model=model, dtype=np.float32,
                              chunks=comp_chunks,
                              meta=np.empty((0), dtype=np.float32))
 
-        z_cmp = z_cmp.transpose(tran_axes)
-
     else:
-        z = z.transpose(tran_axes)
-        z = z.rechunk(chunks=(patch_size, patch_size, 3))
         z_cmp = z
+
+    if not len(data_group):
+        data_group = "0/0"
 
     if progress_bar:
         with ProgressBar():
@@ -160,9 +165,8 @@ def compress(args):
         for fn in input_fn_list:
             fn = fn[:fn.lower().find(args.source_format)]
             fn = fn.replace('\\', '/').split('/')[-1]
-            output_fn_list.append(
-                os.path.join(args.output_dir[0],
-                             '%s%s.zarr' % (fn, args.task_label_identifier)))
+            output_fn_list.append(os.path.join(args.output_dir[0],
+                                               '%s.zarr' % fn))
 
     else:
         output_fn_list = args.output_dir

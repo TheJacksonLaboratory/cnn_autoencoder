@@ -5,7 +5,6 @@ import json
 import argparse
 
 from ._confargs import config_args
-from ._lcargs import lc_args
 from ._logargs import logging_args
 from ._critargs import criteria_args
 from ._dataargs import data_args
@@ -51,8 +50,7 @@ def get_args(task, mode, parser_only=False):
     parser.add_argument('-g', '--gpu', action='store_true', dest='use_gpu',
                         help='Use GPU when available')
 
-    all_args = (config_args + lc_args + logging_args + criteria_args
-                + data_args
+    all_args = (config_args + logging_args + criteria_args + data_args
                 + task_args)
 
     for par in all_args:

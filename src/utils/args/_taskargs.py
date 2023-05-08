@@ -209,7 +209,7 @@ task_args = [
         'default': ['encoder', 'decoder', 'fact_ent', 'class_model'],
         }
     },
-    {'tasks': ['all'],
+    {'tasks': ['autoencoder'],
         'modes': ['all'],
         'flags': ('-enm', '--enabled-modules'),
         'details': {
@@ -232,7 +232,7 @@ task_args = [
         }
     },
     {'tasks': ['all'],
-        'modes': ['all'],
+        'modes': ['training'],
         'flags': ('-clsw', '--class-weights'),
         'details': {
         'dest': 'class_weights',

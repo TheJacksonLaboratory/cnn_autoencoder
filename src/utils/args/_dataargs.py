@@ -318,15 +318,15 @@ data_args = [
         'default': '.'
         }
     },
-    {'tasks': ['encoder', 'decoder'],
+    {'tasks': ['decoder'],
         'modes': ['test', 'inference'],
         'flags': ('-tli', '--task-label-identifier'),
         'details': {
         'dest': 'task_label_identifier',
         'type': str,
-        'help': 'Name of the sub group used to store compression and '
-                'reconstruction outputs',
-        'default': ''
+        'help': 'Name of the sub group used to store decompressed output when '
+                'storing back into zarr format',
+        'default': None
         }
     },
     {'tasks': ['decoder'],

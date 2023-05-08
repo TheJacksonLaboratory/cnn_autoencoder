@@ -235,7 +235,7 @@ def test_cae(args):
 
 
 if __name__ == '__main__':
-    args = utils.get_args(task='encoder', mode='test')
+    args = utils.get_args(task='autoencoder', mode='test')
 
     utils.setup_logger(args)
 
