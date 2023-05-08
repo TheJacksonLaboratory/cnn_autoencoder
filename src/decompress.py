@@ -101,8 +101,12 @@ def decompress_image(input_filename, output_filename,
         # Copy the labels of the original image
         if is_s3 or not os.path.samefile(output_filename, input_filename):
             z_org = zarr.open(output_filename, mode="rw")
+
             if 'labels' in z_org.keys() and 'labels' not in group.keys():
                 zarr.copy(z_org['labels'], group)
+
+            if 'masks' in z_org.keys() and 'masks' not in group.keys():
+                zarr.copy(z_org['masks'], group)
 
             # If the source file has metadata (e.g. extracted by
             # bioformats2raw) copy that the destination zarr file.

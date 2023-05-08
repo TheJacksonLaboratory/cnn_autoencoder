@@ -133,6 +133,9 @@ def compress_image(checkpoint, input_filename, output_filename,
             if 'labels' in z_org.keys() and 'labels' not in group_dst.keys():
                 zarr.copy(z_org['labels'], group_dst)
 
+            if 'masks' in z_org.keys() and 'masks' not in group_dst.keys():
+                zarr.copy(z_org['labels'], group_dst)
+
             # If the source file has metadata (e.g. extracted by bioformats2raw)
             # copy that into the destination zarr file.
             if is_s3:
