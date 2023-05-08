@@ -1,6 +1,7 @@
 import dask
 from dask.diagnostics import ProgressBar
 import dask.array as da
+import math
 
 import logging
 import os
@@ -87,8 +88,10 @@ def compress_image(checkpoint, input_filename, output_filename,
     z = z.rechunk(chunks=(patch_size, patch_size, 3))
 
     if save_as_bottleneck:
-        comp_chk_y = tuple(cs // 2**compression_level for cs in z.chunks[0])
-        comp_chk_x = tuple(cs // 2**compression_level for cs in z.chunks[1])
+        comp_chk_y = tuple(int(math.ceil(cs / 2**compression_level))
+                           for cs in z.chunks[0])
+        comp_chk_x = tuple(int(math.ceil(cs / 2**compression_level))
+                           for cs in z.chunks[1])
 
         comp_chunks = (comp_chk_y, comp_chk_x, (channels_bn,))
 
