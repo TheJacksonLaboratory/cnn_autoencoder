@@ -118,18 +118,21 @@ def compress_image(checkpoint, input_filename, output_filename,
     if ('zarr' in source_format):
         try:
             group_src = zarr.open_consolidated(fn, mode="r")
+            is_s3 = isinstance(group_src.store.store, zarr.storage.FSStore)
+
         except (KeyError, aiohttp.client_exceptions.ClientResponseError):
             group_src = zarr.open(fn, mode="r")
+            is_s3 = isinstance(group_src.store, zarr.storage.FSStore)
 
-        if (isinstance(group_src.store, zarr.storage.FSStore)
-          or not os.path.samefile(output_filename, fn)):
+        if is_s3 or not os.path.samefile(output_filename, fn):
             z_org = zarr.open(output_filename, mode="rw")
+
             if 'labels' in z_org.keys() and 'labels' not in group_dst.keys():
                 zarr.copy(z_org['labels'], group_dst)
 
             # If the source file has metadata (e.g. extracted by bioformats2raw)
             # copy that into the destination zarr file.
-            if isinstance(group_src.store, zarr.storage.FSStore):
+            if is_s3:
                 metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
                 if metadata_resp.status_code == 200:
                     if not os.path.isdir(os.path.join(output_filename, 'OME')):

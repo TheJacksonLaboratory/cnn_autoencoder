@@ -96,17 +96,17 @@ def decompress_image(input_filename, output_filename,
                         compressor=compressor)
 
         group = zarr.open(output_filename)
+        is_s3 = isinstance(z_arr.store, zarr.storage.FSStore)
 
         # Copy the labels of the original image
-        if (isinstance(z_arr.store, zarr.storage.FSStore)
-           or not os.path.samefile(output_filename, input_filename)):
+        if is_s3 or not os.path.samefile(output_filename, input_filename):
             z_org = zarr.open(output_filename, mode="rw")
             if 'labels' in z_org.keys() and 'labels' not in group.keys():
                 zarr.copy(z_org['labels'], group)
 
             # If the source file has metadata (e.g. extracted by
             # bioformats2raw) copy that the destination zarr file.
-            if isinstance(z_arr.store, zarr.storage.FSStore):
+            if is_s3:
                 metadata_resp = requests.get(input_filename
                                              + '/OME/METADATA.ome.xml')
                 if metadata_resp.status_code == 200:
