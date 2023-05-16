@@ -5,7 +5,10 @@ import os
 import shutil
 import requests
 
+import numpy as np
+import torch
 import zarr
+import dask
 import dask.array as da
 
 from PIL import Image
@@ -14,17 +17,35 @@ from numcodecs import Blosc, register_codec
 import models
 import utils
 
+register_codec(models.ConvolutionalAutoencoderBottleneck)
 register_codec(models.ConvolutionalAutoencoder)
+
+
+def decompress_fn_impl(chunk, model):
+    with torch.no_grad():
+        h, w, c = chunk.shape
+
+        y_q = torch.from_numpy(chunk).permute(2, 0, 1)
+        y_q = y_q.view(1, c, h, w)
+
+        x_r, _ = model['decoder'](y_q)
+
+        x_r = x_r[0][0].cpu().detach() * 255.0
+        x_r = x_r.clip(0, 255).to(torch.uint8)
+        x_r = x_r.permute(1, 2, 0).numpy()
+
+    return x_r
 
 
 def decompress_image(input_filename, output_filename,
                      destination_format='zarr',
                      data_group='0/0',
-                     decomp_label='reconstruction',
-                     progress_bar=False):
+                     decomp_group='decompressed',
+                     checkpoint=None,
+                     progress_bar=False,
+                     gpu=False):
 
     compressor = Blosc(cname='zlib', clevel=9, shuffle=Blosc.BITSHUFFLE)
-
     fn, rois = utils.parse_roi(input_filename, '.zarr')
 
     src_group = zarr.open(fn, mode='r')
@@ -37,34 +58,59 @@ def decompress_image(input_filename, output_filename,
         z = da.from_zarr(z_arr)
         rois = None
 
-    if len(decomp_label):
-        component = '%s/%s' % (decomp_label, data_group)
+    if (checkpoint is None
+      or (isinstance(checkpoint, str) and not len(checkpoint))):
+        z_r = z
+
+    else:
+        model = models.autoencoder_from_state_dict(checkpoint=checkpoint,
+                                                   gpu=gpu,
+                                                   train=False)
+
+        compression_level = model["decoder"].module.rec_level
+
+        decomp_chk_y = tuple(cs * 2**compression_level for cs in z.chunks[0])
+        decomp_chk_x = tuple(cs * 2**compression_level for cs in z.chunks[1])
+
+        decomp_chunks = (decomp_chk_y, decomp_chk_x, (3,))
+
+        z_r = z.map_blocks(decompress_fn_impl, model=model, dtype=np.uint8,
+                           chunks=decomp_chunks,
+                           meta=np.empty((0), dtype=np.uint8))
+
+    if len(decomp_group):
+        component = '%s/%s' % (decomp_group, data_group)
     else:
         component = data_group
 
     if 'zarr' in destination_format:
         comp_pyr = '/'.join(component.split('/')[:-1])
         comp_r = comp_pyr + '/%i' % 0
+
         if progress_bar:
             with ProgressBar():
-                z.to_zarr(output_filename, component=comp_r, overwrite=True,
-                          compressor=compressor)
+                z_r.to_zarr(output_filename, component=comp_r, overwrite=True,
+                            compressor=compressor)
         else:
-            z.to_zarr(output_filename, component=comp_r, overwrite=True,
-                      compressor=compressor)
+            z_r.to_zarr(output_filename, component=comp_r, overwrite=True,
+                        compressor=compressor)
 
         group = zarr.open(output_filename)
+        is_s3 = isinstance(z_arr.store, zarr.storage.FSStore)
 
         # Copy the labels of the original image
-        if (isinstance(z_arr.store, zarr.storage.FSStore)
-           or not os.path.samefile(output_filename, input_filename)):
+        if is_s3 or not os.path.samefile(output_filename, input_filename):
             z_org = zarr.open(output_filename, mode="rw")
+
             if 'labels' in z_org.keys() and 'labels' not in group.keys():
                 zarr.copy(z_org['labels'], group)
 
+            if 'masks' in z_org.keys() and 'masks' not in group.keys():
+                zarr.copy(z_org['masks'], group)
+
             # If the source file has metadata (e.g. extracted by
             # bioformats2raw) copy that the destination zarr file.
-            if isinstance(z_arr.store, zarr.storage.FSStore):
+            if is_s3:
                 metadata_resp = requests.get(input_filename
                                              + '/OME/METADATA.ome.xml')
                 if metadata_resp.status_code == 200:
@@ -78,8 +124,7 @@ def decompress_image(input_filename, output_filename,
 
             elif os.path.isdir(os.path.join(input_filename, 'OME')):
                 shutil.copytree(os.path.join(input_filename, 'OME'),
-                                os.path.join(output_filename, 'OME'),
-                                dirs_exist_ok=True)
+                                os.path.join(output_filename, 'OME'))
     else:
         # Note that the image should have a number of classes that can be
         # interpreted as a GRAYSCALE image, RGB image or RBGA image.
@@ -88,12 +133,11 @@ def decompress_image(input_filename, output_filename,
         fn_out = fn_out_base + destination_format
         if progress_bar:
             with ProgressBar():
-                im = Image.fromarray(z.compute())
+                im = Image.fromarray(z_r.compute())
         else:
-            im = Image.fromarray(z.compute())
+            im = Image.fromarray(z_r.compute())
 
-        im.save(fn_out, quality_opts={'compress_level': 9,
-                                        'optimize': False})
+        im.save(fn_out, quality_opts={'compress_level': 9, 'optimize': False})
 
 
 def decompress(args):
@@ -116,21 +160,24 @@ def decompress(args):
             fn = fn.split('.zarr')[0].replace('\\', '/').split('/')[-1]
             output_fn_list.append(
                 os.path.join(args.output_dir[0], 
-                             '%s%s%s' % (fn,args.task_label_identifier,
-                                         args.destination_format)))
+                             '%s%s' % (fn, args.destination_format)))
 
     else:
         output_fn_list = args.output_dir
 
+    if args.task_label_identifier is None:
+        args.task_label_identifier = 'decompressed'
+
     # Compress each file by separate. This allows to process large images.
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
+        logger.info('Decompressing %s into %s' % (in_fn, out_fn))
         decompress_image(input_filename=in_fn, output_filename=out_fn,
                          destination_format=args.destination_format,
                          data_group=args.data_group,
-                         decomp_label=args.task_label_identifier,
-                         progress_bar=args.progress_bar)
-
-        logger.info('Compressed image %s has been decompressed into %s' % (in_fn, out_fn))
+                         decomp_group=args.task_label_identifier,
+                         progress_bar=args.progress_bar,
+                         checkpoint=args.checkpoint,
+                         gpu=args.gpu)
 
 
 if __name__ == '__main__':

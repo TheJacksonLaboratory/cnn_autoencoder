@@ -1,5 +1,5 @@
 import torch
-from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
+from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss, L1Loss, MSELoss
 
 
 class ClassLoss(object):
@@ -102,7 +102,32 @@ class BCEClassLossWithAux(ClassLossWithAux):
             self._aux_loss.cuda()
 
 
+class L1ClassLoss(ClassLoss):
+    def __init__(self, gpu=False, **kwargs):
+        self._loss = L1Loss()
+        if gpu:
+            self._loss.cuda()
+
+
+class L2ClassLoss(ClassLoss):
+    def __init__(self, gpu=False, **kwargs):
+        self._loss = MSELoss()
+        if gpu:
+            self._loss.cuda()
+
+
+class HingeClassLoss(ClassLoss):
+    def __init__(self, **kwargs):
+        pass
+    
+    def _loss(self, pred, target):
+        return torch.mean(torch.clamp(1 - target * torch.tanh(pred), min=0))
+
+
 CLASSLOSS_LIST = {
+    "L1Loss": L1ClassLoss,
+    "L2Loss": L2ClassLoss,
+    "HingeLoss": HingeClassLoss,
     "CELoss": CEClassLoss,
     "BCELoss": BCEClassLoss,
     "WeightedBCELoss": BCEWeightedClassLoss,

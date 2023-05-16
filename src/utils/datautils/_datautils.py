@@ -271,7 +271,7 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
                      patch_sample_mode=None,
                      return_batches=False,
                      **kwargs):
-    """Creates a data queue using pytorch\"s DataLoader module to retrieve
+    """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
     """
 

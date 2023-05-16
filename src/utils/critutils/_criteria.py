@@ -137,6 +137,12 @@ def setup_loss(criterion, **kwargs):
         class_loss_type = 'BCELoss'
     elif 'ce' in criterion.lower() or 'crossentropy' in criterion.lower():
         class_loss_type = 'CELoss'
+    elif 'l1' in criterion.lower() or 'l1loss' in criterion.lower():
+        class_loss_type = 'L1Loss'
+    elif 'l2' in criterion.lower() or 'l2loss' in criterion.lower():
+        class_loss_type = 'L2Loss'
+    elif 'hinge' in criterion.lower() or 'hingeloss' in criterion.lower():
+        class_loss_type = 'HingeLoss'
     else:
         class_loss_type = None
 

@@ -161,6 +161,9 @@ def setup_optim(model, args):
     optim_algos = parse_typed_arguments(args.mod_optim_algo)
 
     scheduler_algos = {}
+    if args.mod_scheduler_algo is None:
+        args.mod_scheduler_algo = []
+
     for mod_pars in args.mod_scheduler_algo:
         mod = mod_pars[:mod_pars.find('=')]
         sched_type_args = mod_pars[mod_pars.find('=') + 1:]

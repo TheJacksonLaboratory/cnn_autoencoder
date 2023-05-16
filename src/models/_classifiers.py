@@ -10,6 +10,58 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class WSIMLPModel(nn.Module):
+    def __init__(self, channels_bn, hidden_channels=None, pooling_op=None,
+                 out_layer=None,
+                 num_classes=1,
+                 **kwargs):
+        super(WSIMLPModel, self).__init__()
+
+        if pooling_op is None:
+            pooling_op = nn.AdaptiveAvgPool2d
+
+        if out_layer is None:
+            out_layer = nn.Identity
+
+        if hidden_channels is None:
+            hidden_channels = []
+
+        layers = []
+        prev_out_channels = channels_bn
+        for h in hidden_channels:
+            layers.append(
+                nn.Conv2d(in_channels=prev_out_channels,
+                          out_channels=h,
+                          kernel_size=1,
+                          bias=True)
+            )
+            layers.append(
+                nn.ReLU()
+            )
+            prev_out_channels = h
+
+        layers.append(
+            nn.Conv2d(in_channels=prev_out_channels,
+                      out_channels=num_classes,
+                      kernel_size=1,
+                      bias=True)
+            )
+
+        self._layers = nn.Sequential(*layers)
+        self._pool_op = pooling_op(output_size=(1, 1))
+        self._out_layer = out_layer()
+
+    def forward(self, x):
+        fx = self._layers(x)
+
+        b, c, h, w = fx.shape
+        fx = fx.permute(1, 0, 2, 3).reshape(1, c, b * h, w)
+
+        fx = self._pool_op(fx)
+        y = self._out_layer(fx)
+        return y
+
+
 class WSIEncoder(nn.Module):
     """Transformer Model Encoder for sequence to sequence translation with
     whole slide images.
@@ -90,6 +142,8 @@ class WSIEncoder(nn.Module):
     def forward(self, input, position):
         # No extra drop out is perfomed since patches are already randomly
         # sampled from the image.
+        b, c, h, w = input.shape
+        input = input.permute(1, 0, 2, 3).reshape(1, c, h * b, w)
         input = input + self.get_pos_embedding(position)
         return self.ln(self.layers(input))
 
@@ -392,6 +446,7 @@ class InceptionV3ClassifierHead(inception.Inception3):
 
 
 CLASS_MODELS = {
+    "MLP-WSI": WSIMLPModel,
     "ViT-WSI": ViTWSIClassifier,
     "ViT": ViTClassifierHead,
     "ResNet": ResNetClassifierHead,

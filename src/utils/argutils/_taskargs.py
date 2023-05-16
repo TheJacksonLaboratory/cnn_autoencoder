@@ -49,7 +49,7 @@ task_args = [
         'type': str,
         'help': 'Type of activation layer used for the Convolutional '
                 'Autoencoder architecture',
-        'default': 'LeakyRelU'
+        'default': 'LeakyReLU'
         }
     },
     {'tasks': ['all'],

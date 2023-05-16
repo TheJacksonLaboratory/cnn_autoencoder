@@ -1,12 +1,17 @@
+import dask
 from dask.diagnostics import ProgressBar
 import dask.array as da
+import math
 
 import logging
 import os
 import shutil
 import requests
+from itertools import cycle
 
 import aiohttp
+import numpy as np
+import torch
 import zarr
 
 from numcodecs import register_codec
@@ -15,6 +20,22 @@ import models
 import utils
 
 register_codec(models.ConvolutionalAutoencoder)
+register_codec(models.ConvolutionalAutoencoderBottleneck)
+
+
+def compress_fn_impl(chunk, model):
+    with torch.no_grad():
+        h, w, c = chunk.shape
+        x = torch.from_numpy(chunk.transpose(2, 0, 1))
+        x = x.view(1, c, h, w)
+        x = x.float() / 255.0
+
+        y = model['encoder'](x)
+
+        y = y[0].cpu().detach().numpy()
+        y = y.transpose(1, 2, 0)
+
+    return y
 
 
 def compress_image(checkpoint, input_filename, output_filename,
@@ -23,10 +44,23 @@ def compress_image(checkpoint, input_filename, output_filename,
                    data_group='0/0',
                    data_axes='TCZYX',
                    progress_bar=False,
+                   save_as_bottleneck=False,
                    gpu=False):
 
-    compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint,
-                                                 gpu=gpu)
+    if save_as_bottleneck:
+        model = models.autoencoder_from_state_dict(checkpoint=checkpoint,
+                                                   gpu=gpu,
+                                                   train=False)
+        channels_bn = model["fact_ent"].module.channels
+        compression_level = len(model["encoder"].module.analysis_track)
+
+        compressor = models.ConvolutionalAutoencoderBottleneck(
+            channels_bn=channels_bn,
+            fact_ent=model["fact_ent"].module,
+            gpu=gpu)
+    else:
+        compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint,
+                                                     gpu=gpu)
 
     fn, rois = utils.parse_roi(input_filename, source_format)
 
@@ -35,25 +69,50 @@ def compress_image(checkpoint, input_filename, output_filename,
                           use_dask=True)
 
     if len(rois):
-        z = z[rois[0]].squeeze()
         rois = rois[0]
     else:
-        z = z.squeeze()
-        rois = None
+        rois = [slice(None) for _ in data_axes]
 
-    data_axes = [a for a in data_axes if a in 'YXC']
-    tran_axes = [data_axes.index(a) for a in 'YXC']
+    rem_axes = "".join(set(data_axes) - set("YXC"))
+    tran_axes = utils.map_axes_order(data_axes, target_axes=rem_axes + "YXC")
 
     z = z.transpose(tran_axes)
+    rois = [rois[a] for a in tran_axes]
+    
+    # Select the index 0 from all non-spatial non-color axes
+    # TODO: Allow to compress Time and Z axes without hard selecting index 0
+    for a in range(len(rem_axes)):
+        rois[a] = slice(0, 1, None)
+
+    z = z[tuple(rois)].squeeze(axis=tuple(range(len(rem_axes))))
     z = z.rechunk(chunks=(patch_size, patch_size, 3))
+
+    if save_as_bottleneck:
+        comp_chk_y = tuple(int(math.ceil(cs / 2**compression_level))
+                           for cs in z.chunks[0])
+        comp_chk_x = tuple(int(math.ceil(cs / 2**compression_level))
+                           for cs in z.chunks[1])
+
+        comp_chunks = (comp_chk_y, comp_chk_x, (channels_bn,))
+
+        z_cmp = z.map_blocks(compress_fn_impl, model=model, dtype=np.float32,
+                             chunks=comp_chunks,
+                             meta=np.empty((0), dtype=np.float32))
+
+    else:
+        z_cmp = z
+
+    if not len(data_group):
+        data_group = "0/0"
 
     if progress_bar:
         with ProgressBar():
-            z.to_zarr(output_filename, component=data_group, overwrite=True,
-                      compressor=compressor)
+            z_cmp.to_zarr(output_filename, component=data_group,
+                          overwrite=True,
+                          compressor=compressor)
     else:
-        z.to_zarr(output_filename, component=data_group, overwrite=True,
-                  compressor=compressor)
+        z_cmp.to_zarr(output_filename, component=data_group, overwrite=True,
+                      compressor=compressor)
 
     # Add metadata to the compressed zarr file
     group_dst = zarr.open(output_filename)
@@ -62,18 +121,24 @@ def compress_image(checkpoint, input_filename, output_filename,
     if ('zarr' in source_format):
         try:
             group_src = zarr.open_consolidated(fn, mode="r")
+            is_s3 = isinstance(group_src.store.store, zarr.storage.FSStore)
+
         except (KeyError, aiohttp.client_exceptions.ClientResponseError):
             group_src = zarr.open(fn, mode="r")
+            is_s3 = isinstance(group_src.store, zarr.storage.FSStore)
 
-        if (isinstance(group_src.store, zarr.storage.FSStore)
-          or not os.path.samefile(output_filename, fn)):
+        if is_s3 or not os.path.samefile(output_filename, fn):
             z_org = zarr.open(output_filename, mode="rw")
+
             if 'labels' in z_org.keys() and 'labels' not in group_dst.keys():
+                zarr.copy(z_org['labels'], group_dst)
+
+            if 'masks' in z_org.keys() and 'masks' not in group_dst.keys():
                 zarr.copy(z_org['labels'], group_dst)
 
             # If the source file has metadata (e.g. extracted by bioformats2raw)
             # copy that into the destination zarr file.
-            if isinstance(group_src.store, zarr.storage.FSStore):
+            if is_s3:
                 metadata_resp = requests.get(fn + '/OME/METADATA.ome.xml')
                 if metadata_resp.status_code == 200:
                     if not os.path.isdir(os.path.join(output_filename, 'OME')):
@@ -87,8 +152,7 @@ def compress_image(checkpoint, input_filename, output_filename,
 
         elif os.path.isdir(os.path.join(fn, 'OME')):
             shutil.copytree(os.path.join(fn, 'OME'),
-                            os.path.join(output_filename, 'OME'),
-                            dirs_exist_ok=True)
+                            os.path.join(output_filename, 'OME'))
 
 
 def compress(args):
@@ -110,9 +174,8 @@ def compress(args):
         for fn in input_fn_list:
             fn = fn[:fn.lower().find(args.source_format)]
             fn = fn.replace('\\', '/').split('/')[-1]
-            output_fn_list.append(
-                os.path.join(args.output_dir[0],
-                             '%s%s.zarr' % (fn, args.task_label_identifier)))
+            output_fn_list.append(os.path.join(args.output_dir[0],
+                                               '%s.zarr' % fn))
 
     else:
         output_fn_list = args.output_dir
@@ -126,6 +189,7 @@ def compress(args):
                        data_axes=args.data_axes,
                        data_group=args.data_group,
                        progress_bar=args.progress_bar,
+                       save_as_bottleneck=args.save_as_bottleneck,
                        gpu=args.gpu)
 
         logger.info('Compressed image %s into %s' % (in_fn, out_fn))

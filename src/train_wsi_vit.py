@@ -56,16 +56,12 @@ def valid(cae_model, model, data, criterion, args):
     sum_loss = 0
     num_examples = 0
     rec_metrics = None
-    channel_e_history = []
 
     if args.progress_bar:
         q = tqdm(desc='Validating', position=1, leave=None)
 
     for i, (p, x, t) in enumerate(data):
         comp_x = compress_forward_step(x, cae_model)["y_q"]
-        b, c, _, _ = comp_x.shape
-        comp_x = comp_x.permute(1, 0, 2, 3).reshape(1, c, 1, -1)
-
         t = torch.max(t).view(1, -1)
 
         output = valid_forward_step(comp_x, model, position=p)
@@ -76,16 +72,13 @@ def valid(cae_model, model, data, criterion, args):
         loss_dict = criterion(inputs=x, outputs=output, targets=t, net=model)
         loss = torch.mean(loss_dict['loss'])
         sum_loss += loss.item()
-        num_examples += b
-
-        channel_e_history.append(loss_dict['channel_e'])
-        channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
+        num_examples += x.size(0)
 
         if args.progress_bar:
             log_str, _ = utils.log_info(None, i + 1, None, model, x, t, output,
                                         sum_loss / (i + 1),
                                         loss_dict,
-                                        channel_e,
+                                        channel_e=-1,
                                         step_type='Validation',
                                         lr=None,
                                         progress_bar=True)
@@ -98,7 +91,7 @@ def valid(cae_model, model, data, criterion, args):
                                                 output,
                                                 sum_loss / (i + 1),
                                                 loss_dict,
-                                                channel_e,
+                                                channel_e=-1,
                                                 step_type='Validation',
                                                 lr=None,
                                                 progress_bar=False)
@@ -177,7 +170,6 @@ def train(cae_model, model, train_data,
     best_valid_loss = float('inf')
     train_loss_history = []
     valid_loss_history = []
-    channel_e_history = []
 
     step = 0
     if args.progress_bar:
@@ -200,36 +192,28 @@ def train(cae_model, model, train_data,
     while keep_training:
         # Reset the average loss computation every epoch
         sum_loss = 0
-        for i, (p, x, t) in enumerate(train_data):
-            step += 1
 
-            if 'penalty' in stopping_criteria.keys():
-                stopping_criteria['penalty'].reset()
-                if args.progress_bar:
-                    q_penalty = tqdm(
-                        total=stopping_criteria['penalty']._max_iterations,
-                        position=2,
-                        leave=None)
+        for im_data in train_data:
+            # Iterate on all patches of a single image
 
-            sub_step = 0
-            sub_step_loss = 0
-            while True:
-                # Start of training step
-                sub_step += 1
+            for k, opt in mod_optimizers.items():
+                if step % mod_grad_accumulate[k] == 0:
+                    opt.zero_grad()
+
+            for i, (p, x, t) in enumerate(im_data):
 
                 comp_x = compress_forward_step(x, cae_model)["y_q"]
-                b, c, _, _ = comp_x.shape
-                comp_x = comp_x.permute(1, 0, 2, 3).reshape(1, c, 1, -1)
-
-                t = torch.max(t).view(1, -1)
 
                 output = train_forward_step(comp_x, model, position=p)
+
                 output["t_pred"] = output["t_pred"].view(1, -1)
+
                 if output["t_aux_pred"] is not None:
                     output["t_aux_pred"] = output["t_aux_pred"].view(1, -1)
 
+                t = torch.max(t).view(1, -1)
                 loss_dict = criterion(inputs=x, outputs=output, targets=t,
-                                      net=model)
+                                    net=model)
 
                 loss = torch.mean(loss_dict['loss'])
                 loss.backward()
@@ -238,120 +222,64 @@ def train(cae_model, model, train_data,
                     aux_loss = torch.mean(loss_dict['entropy_loss'])
                     aux_loss.backward()
 
-                for k, opt in mod_optimizers.items():
-                    if step % mod_grad_accumulate[k] == 0:
-                        # Clip the gradients to prevent the exploding gradients
-                        # problem
-                        nn.utils.clip_grad_norm_(opt.param_groups[0]['params'],
-                                                 max_norm=1.0)
+                sum_loss += loss.item()
 
-                        # Update each network's module by separate
-                        opt.step()
-                        opt.zero_grad()
+            step += 1
 
-                step_loss = loss.item()
-                sub_step_loss += step_loss
-                channel_e_history.append(loss_dict.get('channel_e', -1))
+            for k, opt in mod_optimizers.items():
+                if step % mod_grad_accumulate[k] == 0:
+                    # Clip the gradients to prevent the exploding gradients
+                    # problem
+                    nn.utils.clip_grad_norm_(opt.param_groups[0]['params'],
+                                                max_norm=1.0)
 
-                # When training with penalty on the energy of the compression
-                # representation, update the respective stopping criterion
-                if 'penalty' in stopping_criteria.keys():
-                    if args.progress_bar:
-                        channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
-                        log_str, _ = utils.log_info(sub_step, None, model, x,
-                                                    t,
-                                                    output,
-                                                    sub_step_loss / sub_step,
-                                                    loss_dict,
-                                                    channel_e,
-                                                    step_type='Sub-iter',
-                                                    lr=None,
-                                                    progress_bar=True)
+                    # Update each network's module by separate
+                    opt.step()
 
-                        q_penalty.set_description(log_str)
-                        q_penalty.update()
-
-                    stopping_criteria['penalty'].update(iteration=sub_step,
-                                                        metric=torch.mean(loss_dict['energy']).item())
-
-                    if not stopping_criteria['penalty'].check():
-                        if args.progress_bar:
-                            q_penalty.close()
-                        break
+            current_lr = ''
+            for k, sched in mod_schedulers.items():
+                if hasattr(sched, '_last_lr'):
+                    current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
                 else:
-                    break
+                    current_lr += '{}=None '.format(k)
 
-            sum_loss += sub_step_loss / sub_step
+            log_str, curr_rec_metrics = utils.log_info(step, i + 1,
+                                                       None,
+                                                       model,
+                                                       x,
+                                                       t,
+                                                       output,
+                                                       sum_loss / (i + 1),
+                                                       loss_dict,
+                                                       channel_e=-1,
+                                                       step_type='Training',
+                                                       lr=current_lr,
+                                                       progress_bar=False)
 
-            # End of training step
-            if args.progress_bar:
-                current_lr = ''
-                for k, sched in mod_schedulers.items():
-                    if hasattr(sched, '_last_lr'):
-                        current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
-                    else:
-                        current_lr += '{}=None '.format(k)
+            logger.debug(log_str)
 
-                channel_e = int(torch.median(torch.LongTensor((channel_e_history))))
-                log_str, _ = utils.log_info(None, i + 1, None, model, x, t,
-                                            output,
-                                            sum_loss / (i + 1),
-                                            loss_dict,
-                                            channel_e,
-                                            step_type='Training',
-                                            lr=current_lr,
-                                            progress_bar=True)
-
-                q.set_description(log_str)
-                q.update()
-
-            if i % max(1, 1000) == 0:
-                current_lr = ''
-                for k, sched in mod_schedulers.items():
-                    if hasattr(sched, '_last_lr'):
-                        current_lr += '{}={:.2e} '.format(k, sched._last_lr[0])
-                    else:
-                        current_lr += '{}=None '.format(k)
-
-                channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
-
-                (log_str,
-                 curr_rec_metrics) = utils.log_info(step, i + 1,
-                                                    None,
-                                                    model,
-                                                    x,
-                                                    t,
-                                                    output,
-                                                    sum_loss / (i + 1),
-                                                    loss_dict,
-                                                    channel_e,
-                                                    step_type='Training',
-                                                    lr=current_lr,
-                                                    progress_bar=False)
-
-                logger.debug(log_str)
-
-                if rec_metrics is None:
-                    rec_metrics = dict((m, [])
-                                       for m in curr_rec_metrics.keys())
-                
-                for m, v in curr_rec_metrics.items():
-                    rec_metrics[m].append(v)
+            if rec_metrics is None:
+                rec_metrics = dict((m, [])
+                                    for m in curr_rec_metrics.keys())
+            
+            for m, v in curr_rec_metrics.items():
+                rec_metrics[m].append(v)
 
             # Checkpoint step
             keep_training = stopping_criteria['early_stopping'].check()
 
             if (not keep_training
-              or (step >= args.early_warmup
-                  and (step-args.early_warmup) % args.checkpoint_steps == 0)
-                  and step > 1):
-                train_loss = sum_loss / (i+1)
+                or (step >= args.early_warmup
+                    and (step-args.early_warmup) % args.checkpoint_steps == 0)
+                    and step > 1):
+
+                train_loss = sum_loss / step
 
                 # Evaluate the model with the validation set
-                (valid_loss,
-                 val_avg_metrics) = valid(cae_model, model, valid_data,
-                                          criterion,
-                                          args)
+                valid_loss, val_avg_metrics = valid(cae_model, model,
+                                                    valid_data,
+                                                    criterion,
+                                                    args)
 
                 # Update the learning rate of the trainable modules
                 for k in args.trainable_modules:
@@ -364,17 +292,18 @@ def train(cae_model, model, train_data,
                             sched.step()
 
                     aux_sched = mod_schedulers.get(k + '_aux', None)
+                    # If there is a learning rate scheduler, perform a step
                     if aux_sched is not None:
                         if 'metrics' in signature(aux_sched.step).parameters:
                             aux_sched.step(valid_loss)
                         else:
                             aux_sched.step()
 
-                # If there is a learning rate scheduler, perform a step
+                stopping_info = ';'.join(
+                    map(lambda k_sc: k_sc[0] + ": " + k_sc[1].__repr__(),
+                        stopping_criteria.items()))
+
                 # Log the overall network performance every checkpoint step
-                stopping_info = ';'.join(map(lambda k_sc:\
-                                             k_sc[0] + ": " + k_sc[1].__repr__(),
-                                             stopping_criteria.items()))
                 current_lr = ''
                 trn_avg_metrics = {}
                 for k, sched in mod_schedulers.items():
@@ -394,16 +323,14 @@ def train(cae_model, model, train_data,
                     for m, v in rec_metrics.items():
                         trn_avg_metrics['trn_' + m] = np.nanmean(v)
 
-                channel_e = int(torch.median(torch.LongTensor(channel_e_history)))
                 if extra_metrics is None:
-                    extra_metrics = {'channel_e': []}
+                    extra_metrics = {}
                     for m in chain(trn_avg_metrics.keys(),
-                                   val_avg_metrics.keys()):
+                                    val_avg_metrics.keys()):
                         extra_metrics[m] = []
 
-                extra_metrics['channel_e'].append(channel_e)
                 for m, v in chain(trn_avg_metrics.items(),
-                                  val_avg_metrics.items()):
+                                    val_avg_metrics.items()):
                     extra_metrics[m].append(v)
 
                 # Save the current training state in a checkpoint file
@@ -414,7 +341,7 @@ def train(cae_model, model, train_data,
                                                    valid_loss_history,
                                                    args,
                                                    extra_metrics)
-                channel_e_history = []
+
                 rec_metrics = None
 
                 logger.info(
@@ -431,7 +358,7 @@ def train(cae_model, model, train_data,
 
                 # Update the state of the stopping criteria
                 stopping_criteria['early_stopping'].update(iteration=step,
-                                                           metric=valid_loss)
+                                                            metric=valid_loss)
             else:
                 stopping_criteria['early_stopping'].update(iteration=step)
 
@@ -451,7 +378,7 @@ def train(cae_model, model, train_data,
 
             if not keep_training:
                 logging.info('\n**** Stopping criteria met: '
-                             'Interrupting training ****')
+                                'Interrupting training ****')
                 break
 
     else:
@@ -503,6 +430,86 @@ def setup_network(args):
     return cae_model, model
 
 
+def get_data(args):
+    target_data_type = None
+
+    if args.criterion is not None and "ce" in args.criterion.lower():
+        if "bce" in args.criterion.lower():
+            target_data_type = torch.float32
+        else:
+            target_data_type = torch.int64
+
+    (prep_trans,
+     input_target_trans,
+     target_trans) = utils.get_zarr_transform(
+        data_mode="train",
+        target_data_type=target_data_type,
+        **args.__dict__)
+
+    if args.label_density:
+        zarr_dataset = utils.LabeledZarrDataset
+    else:
+        zarr_dataset = utils.ZarrDataset
+
+    if (isinstance(args.patch_sample_mode, str)
+      and "blue-noise" in args.patch_sample_mode):
+        patch_sampler = utils.BlueNoisePatchSampler(**args.__dict__)
+    elif (isinstance(args.patch_sample_mode, str)
+      and "grid" in args.patch_sample_mode):
+        patch_sampler = utils.GridPatchSampler(**args.__dict__)
+    else:
+        patch_sampler = None
+
+    train_filenames = utils.get_filenames(args.data_dir, source_format=".zarr",
+                                          data_mode="train")
+
+    val_filenames = uitls.get_filenames(args.data_dir, source_format=".zarr",
+                                        data_mode="val")
+
+    train_data_list = []
+    for fn in train_filenames:
+        zarr_train_data = zarr_dataset(
+            fn,
+            patch_sampler=patch_sampler,
+            transform=prep_trans,
+            input_target_transform=input_target_trans,
+            target_transform=target_trans,
+            return_positions=True,
+            batch_images=True,
+            **args.__dict__)
+
+        # When training a network that expects to receive a complete image divided
+        # into patches, it is better to use shuffle_trainin=False to preserve all
+        # patches in the same batch.
+        train_data = torch.utils.data.DataLoader(
+            zarr_train_data,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            pin_memory=args.gpu,
+            worker_init_fn=utils.zarrdataset_worker_init,
+            persistent_workers=utils.workers > 0)
+
+        train_data_list.append(train_data)
+
+    zarr_valid_data = zarr_dataset(val_filenames,
+                                patch_sampler=patch_sampler,
+                                transform=prep_trans,
+                                input_target_transform=input_target_trans,
+                                target_transform=target_trans,
+                                return_positions=True,
+                                batch_images=True,
+                                **args.__dict__)
+    valid_data = torch.utils.data.DataLoader(
+        zarr_valid_data,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        pin_memory=args.gpu,
+        worker_init_fn=utils.zarrdataset_worker_init,
+        persistent_workers=utils.workers > 0)
+
+    return train_data, valid_data, args.num_classes
+
+
 def main(args):
     """Set up the training environment
 
@@ -514,9 +521,8 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    args.return_batches = True
-    args.return_positions = True
-    train_data, valid_data, num_classes = utils.get_data(args)
+    train_data, valid_data, num_classes = get_data(args)
+
     args.num_classes = num_classes
 
     comp_model, model = setup_network(args)
