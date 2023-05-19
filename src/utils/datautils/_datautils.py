@@ -13,7 +13,6 @@ from ._augs import (get_zarr_transform,
 from ._cifar import CIFAR10, CIFAR100
 from ._mnist import MNIST, EMNIST
 from zarrdataset import (zarrdataset_worker_init,
-                         collate_zarr_batches_fn,
                          GridPatchSampler,
                          BlueNoisePatchSampler,
                          ZarrDataset,
@@ -325,7 +324,6 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
             num_workers=min(workers, len(zarr_data._filenames)),
             persistent_workers=workers > 0,
             pin_memory=gpu,
-            collate_fn=collate_zarr_batches_fn,
             worker_init_fn=zarrdataset_worker_init)
 
         return test_queue, num_classes
@@ -364,7 +362,6 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
         num_workers=min(workers, len(zarr_train_data._filenames)),
         pin_memory=gpu,
         worker_init_fn=zarrdataset_worker_init,
-        collate_fn=collate_zarr_batches_fn,
         persistent_workers=workers > 0)
 
     valid_queue = DataLoader(
@@ -373,7 +370,6 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
         num_workers=min(workers, len(zarr_valid_data._filenames)),
         pin_memory=gpu,
         worker_init_fn=zarrdataset_worker_init,
-        collate_fn=collate_zarr_batches_fn,
         persistent_workers=workers > 0)
 
     return train_queue, valid_queue, num_classes

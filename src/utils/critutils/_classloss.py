@@ -121,7 +121,9 @@ class HingeClassLoss(ClassLoss):
         pass
     
     def _loss(self, pred, target):
-        return torch.mean(torch.clamp(1 - target * torch.tanh(pred), min=0))
+        norm_target = target * 2 - 1
+        return torch.mean(torch.clamp(1 - norm_target * torch.tanh(pred),
+                                      min=0))
 
 
 CLASSLOSS_LIST = {

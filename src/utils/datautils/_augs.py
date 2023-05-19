@@ -194,28 +194,12 @@ class ConvertTensorDtype(object):
         return self.__tofun(image)
 
 
-def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
-                       normalize=False,
-                       compressed_input=False,
-                       rotation=False,
-                       elastic_deformation=False,
-                       target_data_type=None,
-                       label_density=0,
-                       map_labels=None,
-                       merge_labels=None,
-                       add_noise=False,
-                       patch_size=128,
-                       weights_map_sigma=None,
-                       weights_map_w=None,
-                       class_weights=None,
-                       **kwargs):
-    """Define the transformations that are commonly applied to zarr-based
-    datasets.
+def zarr_input_transform(patch_size, data_axes, add_noise, data_mode,
+                         normalize,
+                         rotation,
+                         label_density,
+                         elastic_deformation):
 
-    When the input is compressed, it has a range of [0, 255], which is
-    convenient to shift into a range of [-127.5, 127.5]. If the input is a
-    color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
-    """
     prep_trans_list = [SelectAxes(source_axes=data_axes,
                                   axes_selection={"T": 0, "Z": 0},
                                   target_axes="YXC"),
@@ -234,7 +218,7 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
 
     # The ToTensor transforms the input into the range [0, 1]. However, if
     # the input is compressed, it is required in the range [-127.5, 127.5].
-    if not compressed_input and normalize:
+    if normalize:
         prep_trans_list.append(transforms.Normalize(mean=0.5, std=0.5))
 
     input_target_trans_list = []
@@ -263,6 +247,17 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
     else:
         input_target_trans = None
 
+    return prep_trans, input_target_trans
+
+def zarr_target_transform(labels_data_axes,
+                          target_data_type,
+                          label_density,
+                          map_labels,
+                          merge_labels,
+                          class_weights,
+                          weights_map_sigma,
+                          weights_map_w):
+    
     target_trans_list = []
     if map_labels:
         target_trans_list.append(MapLabels())
@@ -274,17 +269,17 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
       and weights_map_sigma is not None
       and weights_map_w is not None):
         target_trans_list.append(WeightsDistances(class_weights=class_weights,
-                                                 sigma=weights_map_sigma,
-                                                 w_0=weights_map_w))
+                                                  sigma=weights_map_sigma,
+                                                  w_0=weights_map_w))
 
     target_trans_list.append(SelectAxes(source_axes=labels_data_axes,
                                         axes_selection={"T": 0, "Z": 0},
                                         target_axes="CYX"))
+
     target_trans_list.append(ZarrToArray(dtype=None))
 
     if target_data_type is not None:
-        target_trans_list.append(
-            ConvertTensorDtype(target_data_type))
+        target_trans_list.append(ConvertTensorDtype(target_data_type))
 
     if label_density > 1:
         target_trans_list.append(ExpandTensor(ndim=3))
@@ -295,6 +290,48 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
         target_trans = transforms.Compose(target_trans_list)
     else:
         target_trans = None
+
+    return target_trans
+
+
+def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
+                       normalize=False,
+                       rotation=False,
+                       elastic_deformation=False,
+                       target_data_type=None,
+                       label_density=0,
+                       map_labels=None,
+                       merge_labels=None,
+                       add_noise=False,
+                       patch_size=128,
+                       compression_level=0,
+                       weights_map_sigma=None,
+                       weights_map_w=None,
+                       class_weights=None,
+                       **kwargs):
+    """Define the transformations that are commonly applied to zarr-based
+    datasets.
+
+    When the input is compressed, it has a range of [0, 255], which is
+    convenient to shift into a range of [-127.5, 127.5]. If the input is a
+    color image (RGB) stored as zarr, it is normalized into the range [-1, 1].
+    """
+    (prep_trans,
+     input_target_trans) = zarr_input_transform(patch_size, data_axes,
+                                                add_noise,
+                                                data_mode,
+                                                normalize,
+                                                rotation,
+                                                label_density,
+                                                elastic_deformation)
+
+    target_trans = zarr_target_transform(labels_data_axes, target_data_type,
+                                         label_density,
+                                         map_labels,
+                                         merge_labels,
+                                         class_weights,
+                                         weights_map_sigma,
+                                         weights_map_w)
 
     return prep_trans, input_target_trans, target_trans
 

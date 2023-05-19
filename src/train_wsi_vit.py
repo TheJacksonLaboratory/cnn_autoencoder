@@ -413,7 +413,8 @@ def setup_network(args):
     cae_args = copy.deepcopy(args)
     cae_args.checkpoint = args.cae_checkpoint
     cae_args.enabled_modules = ["encoder", "fact_ent"]
-    cae_model = models.autoencoder_from_state_dict(cae_args, gpu=args.gpu,
+    cae_model = models.autoencoder_from_state_dict(cae_args.__dict__,
+                                                   gpu=args.gpu,
                                                    train=False)
 
     args = utils.setup_network_args(args)
@@ -430,86 +431,6 @@ def setup_network(args):
     return cae_model, model
 
 
-def get_data(args):
-    target_data_type = None
-
-    if args.criterion is not None and "ce" in args.criterion.lower():
-        if "bce" in args.criterion.lower():
-            target_data_type = torch.float32
-        else:
-            target_data_type = torch.int64
-
-    (prep_trans,
-     input_target_trans,
-     target_trans) = utils.get_zarr_transform(
-        data_mode="train",
-        target_data_type=target_data_type,
-        **args.__dict__)
-
-    if args.label_density:
-        zarr_dataset = utils.LabeledZarrDataset
-    else:
-        zarr_dataset = utils.ZarrDataset
-
-    if (isinstance(args.patch_sample_mode, str)
-      and "blue-noise" in args.patch_sample_mode):
-        patch_sampler = utils.BlueNoisePatchSampler(**args.__dict__)
-    elif (isinstance(args.patch_sample_mode, str)
-      and "grid" in args.patch_sample_mode):
-        patch_sampler = utils.GridPatchSampler(**args.__dict__)
-    else:
-        patch_sampler = None
-
-    train_filenames = utils.get_filenames(args.data_dir, source_format=".zarr",
-                                          data_mode="train")
-
-    val_filenames = uitls.get_filenames(args.data_dir, source_format=".zarr",
-                                        data_mode="val")
-
-    train_data_list = []
-    for fn in train_filenames:
-        zarr_train_data = zarr_dataset(
-            fn,
-            patch_sampler=patch_sampler,
-            transform=prep_trans,
-            input_target_transform=input_target_trans,
-            target_transform=target_trans,
-            return_positions=True,
-            batch_images=True,
-            **args.__dict__)
-
-        # When training a network that expects to receive a complete image divided
-        # into patches, it is better to use shuffle_trainin=False to preserve all
-        # patches in the same batch.
-        train_data = torch.utils.data.DataLoader(
-            zarr_train_data,
-            batch_size=args.batch_size,
-            num_workers=args.workers,
-            pin_memory=args.gpu,
-            worker_init_fn=utils.zarrdataset_worker_init,
-            persistent_workers=utils.workers > 0)
-
-        train_data_list.append(train_data)
-
-    zarr_valid_data = zarr_dataset(val_filenames,
-                                patch_sampler=patch_sampler,
-                                transform=prep_trans,
-                                input_target_transform=input_target_trans,
-                                target_transform=target_trans,
-                                return_positions=True,
-                                batch_images=True,
-                                **args.__dict__)
-    valid_data = torch.utils.data.DataLoader(
-        zarr_valid_data,
-        batch_size=args.batch_size,
-        num_workers=args.workers,
-        pin_memory=args.gpu,
-        worker_init_fn=utils.zarrdataset_worker_init,
-        persistent_workers=utils.workers > 0)
-
-    return train_data, valid_data, args.num_classes
-
-
 def main(args):
     """Set up the training environment
 
@@ -521,7 +442,7 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
-    train_data, valid_data, num_classes = get_data(args)
+    train_data, valid_data, num_classes = utils.get_data(args)
 
     args.num_classes = num_classes
 

@@ -10,55 +10,86 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class WSIMLPModel(nn.Module):
-    def __init__(self, channels_bn, hidden_channels=None, pooling_op=None,
-                 out_layer=None,
-                 num_classes=1,
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride):
+        super(ConvBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels=in_channels,
+                               out_channels=out_channels,
+                               kernel_size=kernel_size,
+                               stride=stride,
+                               padding=kernel_size//2)
+        self.bnorm = nn.BatchNorm2d(num_features=out_channels)
+        self.act = nn.ReLU()
+
+    def forward(self, x):
+        fx = self.conv(x)
+        fx = self.bnorm(fx)
+        fx = self.act(fx)
+        return fx
+
+
+class BaseModel(nn.Module):
+    def __init__(self, im_size, channels_bn, num_classes, hidden_block_op=None,
+                 hidden_channels=None,
+                 out_op=None,
                  **kwargs):
-        super(WSIMLPModel, self).__init__()
+        super(BaseModel, self).__init__()
+        if not isinstance(im_size, tuple):
+            im_size = (im_size, im_size)
 
-        if pooling_op is None:
-            pooling_op = nn.AdaptiveAvgPool2d
+        if out_op is None:
+            out_op = nn.Identity
 
-        if out_layer is None:
-            out_layer = nn.Identity
+        if hidden_block_op is None and hidden_channels is not None:
+            hidden_block_op = ConvBlock
 
         if hidden_channels is None:
             hidden_channels = []
 
-        layers = []
+        self._im_size = im_size
+
         prev_out_channels = channels_bn
+        layers = []
         for h in hidden_channels:
-            layers.append(
-                nn.Conv2d(in_channels=prev_out_channels,
-                          out_channels=h,
-                          kernel_size=1,
-                          bias=True)
-            )
-            layers.append(
-                nn.ReLU()
-            )
+            layers.append(hidden_block_op(in_channels=prev_out_channels, out_channels=h, kernel_size=1, stride=1))
             prev_out_channels = h
 
-        layers.append(
-            nn.Conv2d(in_channels=prev_out_channels,
-                      out_channels=num_classes,
-                      kernel_size=1,
-                      bias=True)
-            )
-
         self._layers = nn.Sequential(*layers)
-        self._pool_op = pooling_op(output_size=(1, 1))
-        self._out_layer = out_layer()
 
-    def forward(self, x):
+        self._unfold = nn.Unfold(kernel_size=(im_size[0], im_size[1]), stride=(im_size[0], im_size[1]))
+
+        self._classifier = nn.Linear(in_features=prev_out_channels * im_size[0] * im_size[1], out_features=num_classes)
+
+        self._out_op = out_op()
+
+        self._pool_op = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+
+    def features(self, x):
         fx = self._layers(x)
 
         b, c, h, w = fx.shape
-        fx = fx.permute(1, 0, 2, 3).reshape(1, c, b * h, w)
+        n_h = h // self._im_size[0]
+        n_w = w // self._im_size[0]
 
-        fx = self._pool_op(fx)
-        y = self._out_layer(fx)
+        fx = self._unfold(fx)
+
+        fx = fx.permute(0, 2, 1)
+
+        fx = self._classifier(fx)
+
+        fx = fx.permute(0, 2, 1).reshape(b, -1, n_h, n_w)
+
+        return fx
+
+    def forward(self, x):
+        fx = self.features(x)
+
+        y = self._out_op(fx)
+
+        # This works as a consensus of the label given to the image according
+        # to the prediction from all sub-patches.
+        y = self._pool_op(y)
+
         return y
 
 
@@ -445,8 +476,30 @@ class InceptionV3ClassifierHead(inception.Inception3):
         return y, y_aux
 
 
+BASELINE_MODELS = {
+    "SVN": {
+        "im_size": 16, 
+        "hidden_block_op": None,
+        "hidden_channels": None,
+        "out_op": nn.Tanh
+    },
+    "Logistic": {
+        "im_size": 16, 
+        "hidden_block_op": None,
+        "hidden_channels": None,
+        "out_op": None
+    },
+    "MLP": {
+        "im_size": 16, 
+        "hidden_block_op": ConvBlock,
+        "hidden_channels": [128, 64, 32],
+        "out_op": None
+    }
+}
+
+
 CLASS_MODELS = {
-    "MLP-WSI": WSIMLPModel,
+    "Base-WSI": BaseModel,
     "ViT-WSI": ViTWSIClassifier,
     "ViT": ViTClassifierHead,
     "ResNet": ResNetClassifierHead,
@@ -455,6 +508,10 @@ CLASS_MODELS = {
 
 
 def setup_modules(class_model_type, **kwargs):
+    if class_model_type in BASELINE_MODELS:
+        kwargs.update(BASELINE_MODELS[class_model_type])
+        class_model_type = "Base-WSI"
+
     class_model = CLASS_MODELS[class_model_type](**kwargs)
     return class_model
 
@@ -471,8 +528,6 @@ def classifier_from_state_dict(checkpoint, gpu=False, train=False):
         checkpoint_state = checkpoint.__dict__
     else:
         checkpoint_state = checkpoint
-
-    assert checkpoint_state.get('class_model_type', None) in CLASS_MODELS
 
     model = setup_modules(**checkpoint_state)
 
