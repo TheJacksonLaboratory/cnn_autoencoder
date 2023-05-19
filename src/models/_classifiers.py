@@ -81,7 +81,7 @@ class BaseModel(nn.Module):
 
         return fx
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         fx = self.features(x)
 
         y = self._out_op(fx)
@@ -90,7 +90,7 @@ class BaseModel(nn.Module):
         # to the prediction from all sub-patches.
         y = self._pool_op(y)
 
-        return y
+        return y, None
 
 
 class WSIEncoder(nn.Module):
@@ -170,11 +170,13 @@ class WSIEncoder(nn.Module):
 
         return pos_embedding
 
-    def forward(self, input, position):
+    def forward(self, input, position=None, **kwargs):
         # No extra drop out is perfomed since patches are already randomly
         # sampled from the image.
         b, c, h, w = input.shape
         input = input.permute(1, 0, 2, 3).reshape(1, c, h * b, w)
+
+        assert position is not None, "Positions must be passed to this class"
         input = input + self.get_pos_embedding(position)
         return self.ln(self.layers(input))
 
@@ -262,7 +264,7 @@ class ViTWSIClassifier(nn.Module):
 
         return x
 
-    def forward(self, x, position=None):
+    def forward(self, x, position=None, **kwargs):
         # Reshape and permute the input tensor
         x = self._process_input(x)
         n = x.shape[0]
@@ -278,7 +280,7 @@ class ViTWSIClassifier(nn.Module):
 
         x = self.heads(x)
 
-        return x
+        return x, None
 
 
 class ViTClassifierHead(vision_transformer.VisionTransformer):

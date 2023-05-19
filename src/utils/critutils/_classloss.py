@@ -4,13 +4,13 @@ from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss, L1Loss, MSELoss
 
 class ClassLoss(object):
     def __call__(self, pred, t, **kwargs):
-        return dict(class_error=self._loss(pred, t.to(pred.device)),
+        return dict(class_error=self._loss_impl(pred, t.to(pred.device)),
                     aux_class_error=0)
 
 
 class WeightedClassLoss(object):
     def __call__(self, pred, t, **kwargs):
-        loss = self._loss(pred, t[:, 1:].to(pred.device))
+        loss = self._loss_impl(pred, t[:, 1:].to(pred.device))
         loss = torch.mean(t[:, :1].to(pred.device) * loss)
         return dict(class_error=loss,
                     aux_class_error=0)
@@ -18,7 +18,7 @@ class WeightedClassLoss(object):
 
 class ClassLossWithAux(object):
     def __call__(self, pred, t, aux_pred, **kwargs):
-        class_error = self._loss(pred, t.to(pred.device))
+        class_error = self._loss_impl(pred, t.to(pred.device))
         if aux_pred is not None:
             aux_class_error = self._aux_loss(aux_pred, t.to(pred.device))
         else:
@@ -41,6 +41,9 @@ class CEClassLoss(ClassLoss):
         if gpu:
             self._loss.cuda()
 
+    def _loss_impl(self, pred, t):
+        return self._loss(pred, t)
+
 
 class BCEClassLoss(ClassLoss):
     def __init__(self, weight=None, size_average=None, reduce=None,
@@ -53,6 +56,12 @@ class BCEClassLoss(ClassLoss):
         if gpu:
             self._loss.cuda()
 
+    def _loss_impl(self, pred, t):
+        if t.ndim != pred.ndim:
+            t = t.expand_as(pred)
+
+        return self._loss(pred, t)
+
 
 class BCEWeightedClassLoss(WeightedClassLoss):
     def __init__(self, weight=None, size_average=None, reduce=None,
@@ -64,6 +73,12 @@ class BCEWeightedClassLoss(WeightedClassLoss):
                                        pos_weight)
         if gpu:
             self._loss.cuda()
+
+    def _loss_impl(self, pred, t):
+        if t.ndim != pred.ndim:
+            t = t.expand_as(pred)
+
+        return self._loss(pred, t)
 
 
 class CEClassLossWithAux(ClassLossWithAux):
@@ -85,6 +100,9 @@ class CEClassLossWithAux(ClassLossWithAux):
             self._loss.cuda()
             self._aux_loss.cuda()
 
+    def _loss_impl(self, pred, t):
+        return self._loss(pred, t)
+
 
 class BCEClassLossWithAux(ClassLossWithAux):
     def __init__(self, weight=None, size_average=None, reduce=None,
@@ -101,12 +119,21 @@ class BCEClassLossWithAux(ClassLossWithAux):
             self._loss.cuda()
             self._aux_loss.cuda()
 
+    def _loss_impl(self, pred, t):
+        if t.ndim != pred.ndim:
+            t = t.expand_as(pred)
+
+        return self._loss(pred, t)
+
 
 class L1ClassLoss(ClassLoss):
     def __init__(self, gpu=False, **kwargs):
         self._loss = L1Loss()
         if gpu:
             self._loss.cuda()
+
+    def _loss_impl(self, pred, t):
+        return self._loss(pred, t)
 
 
 class L2ClassLoss(ClassLoss):
@@ -115,13 +142,16 @@ class L2ClassLoss(ClassLoss):
         if gpu:
             self._loss.cuda()
 
+    def _loss_impl(self, pred, t):
+        return self._loss(pred, t)
+
 
 class HingeClassLoss(ClassLoss):
     def __init__(self, **kwargs):
         pass
-    
-    def _loss(self, pred, target):
-        norm_target = target * 2 - 1
+
+    def _loss_impl(self, pred, t):
+        norm_target = t * 2 - 1
         return torch.mean(torch.clamp(1 - norm_target * torch.tanh(pred),
                                       min=0))
 

@@ -60,48 +60,48 @@ def valid(cae_model, model, data, criterion, args):
     if args.progress_bar:
         q = tqdm(desc='Validating', position=1, leave=None)
 
-    for i, (p, x, t) in enumerate(data):
-        comp_x = compress_forward_step(x, cae_model)["y_q"]
-        t = torch.max(t).view(1, -1)
+    with torch.no_grad():
+        for i, (p, x, t) in enumerate(data):
+            comp_x = compress_forward_step(x, cae_model)["y_q"]
 
-        output = valid_forward_step(comp_x, model, position=p)
-        output["t_pred"] = output["t_pred"].view(1, -1)
-        if output["t_aux_pred"] is not None:
-            output["t_aux_pred"] = output["t_aux_pred"].view(1, -1)
+            output = valid_forward_step(comp_x, model, position=p)
 
-        loss_dict = criterion(inputs=x, outputs=output, targets=t, net=model)
-        loss = torch.mean(loss_dict['loss'])
-        sum_loss += loss.item()
-        num_examples += x.size(0)
+            loss_dict = criterion(inputs=x, outputs=output, targets=t,
+                                net=model)
 
-        if args.progress_bar:
-            log_str, _ = utils.log_info(None, i + 1, None, model, x, t, output,
-                                        sum_loss / (i + 1),
-                                        loss_dict,
-                                        channel_e=-1,
-                                        step_type='Validation',
-                                        lr=None,
-                                        progress_bar=True)
-            q.set_description(log_str)
-            q.update()
+            loss = torch.mean(loss_dict['loss'])
 
-        if i % 1000 == 0:
-            (log_str,
-             curr_rec_metrics) = utils.log_info(None, i + 1, None, model, x, t,
-                                                output,
-                                                sum_loss / (i + 1),
-                                                loss_dict,
-                                                channel_e=-1,
-                                                step_type='Validation',
-                                                lr=None,
-                                                progress_bar=False)
+            sum_loss += loss.item()
+            num_examples += x.size(0)
 
-            logger.debug(log_str)
-            if rec_metrics is None:
-                rec_metrics = dict((m, []) for m in curr_rec_metrics.keys())
-            
-            for m, v in curr_rec_metrics.items():
-                rec_metrics[m].append(v)
+            if args.progress_bar:
+                log_str, _ = utils.log_info(None, i + 1, None, model, x, t, output,
+                                            sum_loss / (i + 1),
+                                            loss_dict,
+                                            channel_e=-1,
+                                            step_type='Validation',
+                                            lr=None,
+                                            progress_bar=True)
+                q.set_description(log_str)
+                q.update()
+
+            if i % 1000 == 0:
+                (log_str,
+                curr_rec_metrics) = utils.log_info(None, i + 1, None, model, x, t,
+                                                    output,
+                                                    sum_loss / (i + 1),
+                                                    loss_dict,
+                                                    channel_e=-1,
+                                                    step_type='Validation',
+                                                    lr=None,
+                                                    progress_bar=False)
+
+                logger.debug(log_str)
+                if rec_metrics is None:
+                    rec_metrics = dict((m, []) for m in curr_rec_metrics.keys())
+                
+                for m, v in curr_rec_metrics.items():
+                    rec_metrics[m].append(v)
 
     if args.progress_bar:
         q.close()
@@ -193,34 +193,26 @@ def train(cae_model, model, train_data,
         # Reset the average loss computation every epoch
         sum_loss = 0
 
-        for im_data in train_data:
+        for i, (p, x, t) in enumerate(train_data):
             # Iterate on all patches of a single image
-
             for k, opt in mod_optimizers.items():
                 if step % mod_grad_accumulate[k] == 0:
                     opt.zero_grad()
 
-            for i, (p, x, t) in enumerate(im_data):
-
+            with torch.no_grad():
                 comp_x = compress_forward_step(x, cae_model)["y_q"]
 
-                output = train_forward_step(comp_x, model, position=p)
+            output = train_forward_step(comp_x, model, position=p)
 
-                output["t_pred"] = output["t_pred"].view(1, -1)
+            loss_dict = criterion(inputs=x, outputs=output, targets=t,
+                                  net=model)
 
-                if output["t_aux_pred"] is not None:
-                    output["t_aux_pred"] = output["t_aux_pred"].view(1, -1)
+            loss = torch.mean(loss_dict['loss'])
+            loss.backward()
 
-                t = torch.max(t).view(1, -1)
-                loss_dict = criterion(inputs=x, outputs=output, targets=t,
-                                    net=model)
-
-                loss = torch.mean(loss_dict['loss'])
-                loss.backward()
-
-                if 'entropy_loss' in loss_dict:
-                    aux_loss = torch.mean(loss_dict['entropy_loss'])
-                    aux_loss.backward()
+            if 'entropy_loss' in loss_dict:
+                aux_loss = torch.mean(loss_dict['entropy_loss'])
+                aux_loss.backward()
 
                 sum_loss += loss.item()
 
@@ -243,27 +235,28 @@ def train(cae_model, model, train_data,
                 else:
                     current_lr += '{}=None '.format(k)
 
-            log_str, curr_rec_metrics = utils.log_info(step, i + 1,
-                                                       None,
-                                                       model,
-                                                       x,
-                                                       t,
-                                                       output,
-                                                       sum_loss / (i + 1),
-                                                       loss_dict,
-                                                       channel_e=-1,
-                                                       step_type='Training',
-                                                       lr=current_lr,
-                                                       progress_bar=False)
+            if i % max(1, args.checkpoint_steps // 10) == 0:
+                log_str, curr_rec_metrics = utils.log_info(step, i + 1,
+                                                        None,
+                                                        model,
+                                                        x,
+                                                        t,
+                                                        output,
+                                                        sum_loss / (i + 1),
+                                                        loss_dict,
+                                                        channel_e=-1,
+                                                        step_type='Training',
+                                                        lr=current_lr,
+                                                        progress_bar=False)
 
-            logger.debug(log_str)
+                logger.debug(log_str)
 
-            if rec_metrics is None:
-                rec_metrics = dict((m, [])
-                                    for m in curr_rec_metrics.keys())
-            
-            for m, v in curr_rec_metrics.items():
-                rec_metrics[m].append(v)
+                if rec_metrics is None:
+                    rec_metrics = dict((m, [])
+                                        for m in curr_rec_metrics.keys())
+                
+                for m, v in curr_rec_metrics.items():
+                    rec_metrics[m].append(v)
 
             # Checkpoint step
             keep_training = stopping_criteria['early_stopping'].check()
@@ -442,6 +435,7 @@ def main(args):
     """
     logger = logging.getLogger(args.mode + '_log')
 
+    args.return_positions = True
     train_data, valid_data, num_classes = utils.get_data(args)
 
     args.num_classes = num_classes

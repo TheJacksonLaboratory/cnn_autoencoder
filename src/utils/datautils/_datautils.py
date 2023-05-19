@@ -268,7 +268,7 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
                      label_density=0,
                      criterion=None,
                      patch_sample_mode=None,
-                     return_batches=False,
+                     batch_per_image=False,
                      **kwargs):
     """Creates a data queue using pytorch\'s DataLoader module to retrieve
     patches from images stored in zarr format.
@@ -310,17 +310,15 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
                                        data_mode=data_mode)
 
         zarr_data = zarr_dataset(test_filenames,
-                                  transform=prep_trans,
-                                  intput_target_transform=input_target_trans,
-                                  target_transform=target_trans,
-                                  shuffle=shuffle_test,
-                                  patch_sampler=patch_sampler,
-                                  batch_size=batch_size,
-                                  return_batches=return_batches,
-                                  **kwargs)
+                                 transform=prep_trans,
+                                 intput_target_transform=input_target_trans,
+                                 target_transform=target_trans,
+                                 shuffle=shuffle_test,
+                                 patch_sampler=patch_sampler,
+                                 **kwargs)
         test_queue = DataLoader(
             zarr_data,
-            batch_size=None if return_batches else batch_size,
+            batch_size=batch_size,
             num_workers=min(workers, len(zarr_data._filenames)),
             persistent_workers=workers > 0,
             pin_memory=gpu,
@@ -334,43 +332,69 @@ def get_zarr_dataset(data_dir=".", batch_size=1, val_batch_size=1, workers=0,
     val_filenames = get_filenames(data_dir, source_format=".zarr",
                                   data_mode="val")
 
-    zarr_train_data = zarr_dataset(train_filenames,
-                                   patch_sampler=patch_sampler,
-                                   transform=prep_trans,
-                                   input_target_transform=input_target_trans,
-                                   target_transform=target_trans,
-                                   shuffle=shuffle_train,
-                                   batch_size=batch_size,
-                                   return_batches=return_batches,
-                                   **kwargs)
-    zarr_valid_data = zarr_dataset(val_filenames,
-                                   patch_sampler=patch_sampler,
-                                   transform=prep_trans,
-                                   input_target_transform=input_target_trans,
-                                   target_transform=target_trans,
-                                   shuffle=shuffle_val,
-                                   batch_size=batch_size,
-                                   return_batches=return_batches,
-                                   **kwargs)
+    if batch_per_image: 
+        train_queue = [DataLoader(
+            zarr_dataset(trn_fn, patch_sampler=patch_sampler,
+                         transform=prep_trans,
+                         input_target_transform=input_target_trans,
+                         target_transform=target_trans,
+                         shuffle=shuffle_train,
+                         **kwargs),
+            batch_size=batch_size,
+            num_workers=workers,
+            pin_memory=gpu,
+            worker_init_fn=zarrdataset_worker_init,
+            persistent_workers=workers > 0)
+                       for trn_fn in train_filenames]
 
-    # When training a network that expects to receive a complete image divided
-    # into patches, it is better to use shuffle_trainin=False to preserve all
-    # patches in the same batch.
-    train_queue = DataLoader(
-        zarr_train_data,
-        batch_size=None if return_batches else batch_size,
-        num_workers=min(workers, len(zarr_train_data._filenames)),
-        pin_memory=gpu,
-        worker_init_fn=zarrdataset_worker_init,
-        persistent_workers=workers > 0)
+        valid_queue = [DataLoader(
+            zarr_dataset(val_fn, patch_sampler=patch_sampler,
+                         transform=prep_trans,
+                         input_target_transform=input_target_trans,
+                         target_transform=target_trans,
+                         shuffle=shuffle_val,
+                         **kwargs),
+            batch_size=val_batch_size,
+            num_workers=workers,
+            pin_memory=gpu,
+            worker_init_fn=zarrdataset_worker_init,
+            persistent_workers=workers > 0)
+                       for val_fn in val_filenames]
 
-    valid_queue = DataLoader(
-        zarr_valid_data,
-        batch_size=None if return_batches else val_batch_size,
-        num_workers=min(workers, len(zarr_valid_data._filenames)),
-        pin_memory=gpu,
-        worker_init_fn=zarrdataset_worker_init,
-        persistent_workers=workers > 0)
+    else:
+        zarr_train_data = zarr_dataset(train_filenames,
+                                    patch_sampler=patch_sampler,
+                                    transform=prep_trans,
+                                    input_target_transform=input_target_trans,
+                                    target_transform=target_trans,
+                                    shuffle=shuffle_train,
+                                    **kwargs)
+        zarr_valid_data = zarr_dataset(val_filenames,
+                                    patch_sampler=patch_sampler,
+                                    transform=prep_trans,
+                                    input_target_transform=input_target_trans,
+                                    target_transform=target_trans,
+                                    shuffle=shuffle_val,
+                                    **kwargs)
+
+        # When training a network that expects to receive a complete image divided
+        # into patches, it is better to use shuffle_trainin=False to preserve all
+        # patches in the same batch.
+        train_queue = DataLoader(
+            zarr_train_data,
+            batch_size=batch_size,
+            num_workers=min(workers, len(train_filenames)),
+            pin_memory=gpu,
+            worker_init_fn=zarrdataset_worker_init,
+            persistent_workers=workers > 0)
+
+        valid_queue = DataLoader(
+            zarr_valid_data,
+            batch_size=val_batch_size,
+            num_workers=min(workers, len(val_filenames)),
+            pin_memory=gpu,
+            worker_init_fn=zarrdataset_worker_init,
+            persistent_workers=workers > 0)
 
     return train_queue, valid_queue, num_classes
 

@@ -281,11 +281,6 @@ def zarr_target_transform(labels_data_axes,
     if target_data_type is not None:
         target_trans_list.append(ConvertTensorDtype(target_data_type))
 
-    if label_density > 1:
-        target_trans_list.append(ExpandTensor(ndim=3))
-    elif label_density > 0:
-        target_trans_list.append(ExpandTensor(ndim=0))
-
     if len(target_trans_list) > 0:
         target_trans = transforms.Compose(target_trans_list)
     else:
@@ -304,7 +299,6 @@ def get_zarr_transform(data_mode='test', data_axes=None, labels_data_axes=None,
                        merge_labels=None,
                        add_noise=False,
                        patch_size=128,
-                       compression_level=0,
                        weights_map_sigma=None,
                        weights_map_w=None,
                        class_weights=None,
