@@ -479,7 +479,7 @@ class InceptionV3ClassifierHead(inception.Inception3):
 
 
 BASELINE_MODELS = {
-    "SVN": {
+    "SVM": {
         "im_size": 16, 
         "hidden_block_op": None,
         "hidden_channels": None,

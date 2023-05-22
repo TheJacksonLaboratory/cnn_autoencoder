@@ -75,7 +75,8 @@ def valid(cae_model, model, data, criterion, args):
             num_examples += x.size(0)
 
             if args.progress_bar:
-                log_str, _ = utils.log_info(None, i + 1, None, model, x, t, output,
+                log_str, _ = utils.log_info(None, i + 1, None, model, x, t,
+                                            output,
                                             sum_loss / (i + 1),
                                             loss_dict,
                                             channel_e=-1,
@@ -87,18 +88,20 @@ def valid(cae_model, model, data, criterion, args):
 
             if i % 1000 == 0:
                 (log_str,
-                curr_rec_metrics) = utils.log_info(None, i + 1, None, model, x, t,
-                                                    output,
-                                                    sum_loss / (i + 1),
-                                                    loss_dict,
-                                                    channel_e=-1,
-                                                    step_type='Validation',
-                                                    lr=None,
-                                                    progress_bar=False)
+                curr_rec_metrics) = utils.log_info(None, i + 1, None, model, x,
+                                                   t,
+                                                   output,
+                                                   sum_loss / (i + 1),
+                                                   loss_dict,
+                                                   channel_e=-1,
+                                                   step_type='Validation',
+                                                   lr=None,
+                                                   progress_bar=False)
 
                 logger.debug(log_str)
                 if rec_metrics is None:
-                    rec_metrics = dict((m, []) for m in curr_rec_metrics.keys())
+                    rec_metrics = dict((m, [])
+                                       for m in curr_rec_metrics.keys())
                 
                 for m, v in curr_rec_metrics.items():
                     rec_metrics[m].append(v)
@@ -214,7 +217,7 @@ def train(cae_model, model, train_data,
                 aux_loss = torch.mean(loss_dict['entropy_loss'])
                 aux_loss.backward()
 
-                sum_loss += loss.item()
+            sum_loss += loss.item()
 
             step += 1
 
@@ -223,7 +226,7 @@ def train(cae_model, model, train_data,
                     # Clip the gradients to prevent the exploding gradients
                     # problem
                     nn.utils.clip_grad_norm_(opt.param_groups[0]['params'],
-                                                max_norm=1.0)
+                                             max_norm=1.0)
 
                     # Update each network's module by separate
                     opt.step()
@@ -236,18 +239,20 @@ def train(cae_model, model, train_data,
                     current_lr += '{}=None '.format(k)
 
             if i % max(1, args.checkpoint_steps // 10) == 0:
-                log_str, curr_rec_metrics = utils.log_info(step, i + 1,
-                                                        None,
-                                                        model,
-                                                        x,
-                                                        t,
-                                                        output,
-                                                        sum_loss / (i + 1),
-                                                        loss_dict,
-                                                        channel_e=-1,
-                                                        step_type='Training',
-                                                        lr=current_lr,
-                                                        progress_bar=False)
+                log_str, curr_rec_metrics = utils.log_info(
+                    step,
+                    i + 1,
+                    None,
+                    model,
+                    x,
+                    t,
+                    output,
+                    sum_loss / (i + 1),
+                    loss_dict,
+                    channel_e=-1,
+                    step_type='Training',
+                    lr=current_lr,
+                    progress_bar=False)
 
                 logger.debug(log_str)
 
@@ -323,7 +328,7 @@ def train(cae_model, model, train_data,
                         extra_metrics[m] = []
 
                 for m, v in chain(trn_avg_metrics.items(),
-                                    val_avg_metrics.items()):
+                                  val_avg_metrics.items()):
                     extra_metrics[m].append(v)
 
                 # Save the current training state in a checkpoint file
