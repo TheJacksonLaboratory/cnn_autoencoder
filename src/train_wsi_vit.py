@@ -86,7 +86,7 @@ def valid(cae_model, model, data, criterion, args):
                 q.set_description(log_str)
                 q.update()
 
-            if i % 1000 == 0:
+            if i % 100 == 0:
                 (log_str,
                 curr_rec_metrics) = utils.log_info(None, i + 1, None, model, x,
                                                    t,
