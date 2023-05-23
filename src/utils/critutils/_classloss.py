@@ -1,5 +1,9 @@
 import torch
-from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss, L1Loss, MSELoss
+from torch.nn import (CrossEntropyLoss,
+                      BCELoss,
+                      BCEWithLogitsLoss,
+                      L1Loss,
+                      MSELoss)
 
 
 class ClassLoss(object):
@@ -48,6 +52,22 @@ class CEClassLoss(ClassLoss):
 class BCEClassLoss(ClassLoss):
     def __init__(self, weight=None, size_average=None, reduce=None,
                  reduction='mean',
+                 gpu=False,
+                 **kwargs):
+        self._loss = BCELoss(weight, size_average, reduce, reduction)
+        if gpu:
+            self._loss.cuda()
+
+    def _loss_impl(self, pred, t):
+        if t.ndim != pred.ndim:
+            t = t.expand_as(pred)
+
+        return self._loss(pred, t)
+
+
+class BCELogClassLoss(ClassLoss):
+    def __init__(self, weight=None, size_average=None, reduce=None,
+                 reduction='mean',
                  pos_weight=None,
                  gpu=False,
                  **kwargs):
@@ -64,6 +84,22 @@ class BCEClassLoss(ClassLoss):
 
 
 class BCEWeightedClassLoss(WeightedClassLoss):
+    def __init__(self, weight=None, size_average=None, reduce=None,
+                 reduction='none',
+                 gpu=False,
+                 **kwargs):
+        self._loss = BCELoss(weight, size_average, reduce, reduction)
+        if gpu:
+            self._loss.cuda()
+
+    def _loss_impl(self, pred, t):
+        if t.ndim != pred.ndim:
+            t = t.expand_as(pred)
+
+        return self._loss(pred, t)
+
+
+class BCELogWeightedClassLoss(WeightedClassLoss):
     def __init__(self, weight=None, size_average=None, reduce=None,
                  reduction='none',
                  pos_weight=None,
@@ -151,8 +187,9 @@ class HingeClassLoss(ClassLoss):
         pass
 
     def _loss_impl(self, pred, t):
-        norm_target = t * 2 - 1
-        return torch.mean(torch.clamp(1 - norm_target * torch.tanh(pred),
+        norm_target = 2 * t - 1
+        norm_pred = 2 * pred - 1
+        return torch.mean(torch.clamp(1 - norm_target * norm_pred,
                                       min=0))
 
 
@@ -162,7 +199,9 @@ CLASSLOSS_LIST = {
     "HingeLoss": HingeClassLoss,
     "CELoss": CEClassLoss,
     "BCELoss": BCEClassLoss,
+    "BCELogLoss": BCELogClassLoss,
     "WeightedBCELoss": BCEWeightedClassLoss,
+    "WeightedBCELogLoss": BCELogWeightedClassLoss,
     "CELossWithAux": CEClassLossWithAux,
     "BCELossWithAux": BCEClassLossWithAux,
 }

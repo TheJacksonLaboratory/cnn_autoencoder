@@ -134,7 +134,10 @@ def setup_loss(criterion, **kwargs):
         penalty_loss_type = 'none'
 
     if 'bce' in criterion.lower() or 'binarycrossentropy' in criterion.lower():
-        class_loss_type = 'BCELoss'
+        if 'logit' in criterion.lower():
+            class_loss_type = 'BCELogLoss'
+        else:
+            class_loss_type = 'BCELoss'
     elif 'ce' in criterion.lower() or 'crossentropy' in criterion.lower():
         class_loss_type = 'CELoss'
     elif 'l1' in criterion.lower() or 'l1loss' in criterion.lower():
@@ -172,12 +175,16 @@ class StoppingCriterion(object):
 
     def __repr__(self):
         decision = self.check()
-        repr = 'StoppingCriterion(max-iterations: %d, current-iterations: %d, decision: %s)' % (self._max_iterations, self._curr_iteration, 'Continue' if decision else 'Stop')
+        repr = (f'StoppingCriterion(max-iterations: {self._max_iterations}, '
+                f'current-iterations: {self._curr_iteration}, '
+                f'decision: {"Continue" if decision else "Stop"}')
         return repr
 
 
 class EarlyStoppingPatience(StoppingCriterion):
-    def __init__(self, early_patience=5, early_warmup=0, target='min', initial=None, **kwargs):
+    def __init__(self, early_patience=5, early_warmup=0, target='min',
+                 initial=None,
+                 **kwargs):
         super(EarlyStoppingPatience, self).__init__(**kwargs)
 
         self._bad_epochs = 0
@@ -185,13 +192,17 @@ class EarlyStoppingPatience(StoppingCriterion):
         self._warmup = early_warmup
 
         self._target = target
+        if initial is None and self._target == 'min':
+            initial = float('inf')
+        elif initial is None and self._target == 'max':
+            initial = 0
+
         self._initial = initial
+        self._best_metric = initial
 
         if self._target == 'min':
-            self._best_metric = float('inf') if self._initial is None else self._initial
             self._metric_sign = 1
         else:
-            self._best_metric = 0 if self._initial is None else self._initial
             self._metric_sign = -1
 
     def update(self, metric=None, **kwargs):
@@ -213,15 +224,17 @@ class EarlyStoppingPatience(StoppingCriterion):
 
     def reset(self):
         super().reset()
-        if self._target == 'min':
-            self._best_metric = float('inf') if self._initial is None else self._initial
-        else:
-            self._best_metric = 0 if self._initial is None else self._initial
+        self._best_metric = self._initial
 
     def __repr__(self):
         repr = super(EarlyStoppingPatience, self).__repr__()
         decision = self.check()
-        repr += '; EarlyStoppingPatience(target: %s, patience: %d, warmup: %d, bad-epochs: %d, best metric: %.4f, decision: %s)' % (self._target, self._patience, self._warmup, self._bad_epochs, self._best_metric, 'Continue' if decision else 'Stop')
+        repr += (f'; EarlyStoppingPatience(target: {self._target}, '
+                 f'patience: {self._patience}, '
+                 f'warmup: {self._warmup}, '
+                 f'bad-epochs: {self._bad_epochs}, '
+                 f'best metric: {self._best_metric:0.4f}, '
+                 f'decision: {"Continue" if decision else "Stop"})')
         return repr
 
 
@@ -260,7 +273,10 @@ class EarlyStoppingTarget(StoppingCriterion):
     def __repr__(self):
         repr = super(EarlyStoppingTarget, self).__repr__()
         decision = self.check()
-        repr += '; EarlyStoppingTarget(comparison: %s, target: %s, last-metric: %.4f, decision: %s)' % (self._comparison, self._target, self._last_metric, 'Continue' if decision else 'Stop')
+        repr += (f'; EarlyStoppingTarget(comparison: {self._comparison}, '
+                 f'target: {self._target}, '
+                 f'last-metric: {self._last_metric:0.4f}, '
+                 f'decision: {"Continue" if decision else "Stop"})')
         return repr
 
 

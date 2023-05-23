@@ -31,14 +31,15 @@ class ConvBlock(nn.Module):
 class BaseModel(nn.Module):
     def __init__(self, im_size, channels_bn, num_classes, hidden_block_op=None,
                  hidden_channels=None,
-                 out_op=None,
+                 pool_op=nn.AdaptiveAvgPool2d,
+                 thresh_block=None,
                  **kwargs):
         super(BaseModel, self).__init__()
         if not isinstance(im_size, tuple):
             im_size = (im_size, im_size)
 
-        if out_op is None:
-            out_op = nn.Identity
+        if thresh_block is None:
+            thresh_block = nn.Identity()
 
         if hidden_block_op is None and hidden_channels is not None:
             hidden_block_op = ConvBlock
@@ -60,9 +61,9 @@ class BaseModel(nn.Module):
 
         self._classifier = nn.Linear(in_features=prev_out_channels * im_size[0] * im_size[1], out_features=num_classes)
 
-        self._out_op = out_op()
+        self._pool_op = pool_op(output_size=(1, 1))
 
-        self._pool_op = nn.AdaptiveAvgPool2d(output_size=(1, 1))
+        self._trheshold_op = thresh_block
 
     def features(self, x):
         fx = self._layers(x)
@@ -83,12 +84,10 @@ class BaseModel(nn.Module):
 
     def forward(self, x, **kwargs):
         fx = self.features(x)
-
-        y = self._out_op(fx)
-
         # This works as a consensus of the label given to the image according
         # to the prediction from all sub-patches.
-        y = self._pool_op(y)
+        y = self._pool_op(fx)
+        y = self._trheshold_op(y)
 
         return y, None
 
@@ -483,19 +482,28 @@ BASELINE_MODELS = {
         "im_size": 16, 
         "hidden_block_op": None,
         "hidden_channels": None,
-        "out_op": nn.Tanh
+        "thresh_op": nn.Sequential(
+            nn.Sigmoid(),
+            nn.Threshold(threshold=0.95, value=0)
+        )
     },
     "Logistic": {
         "im_size": 16, 
         "hidden_block_op": None,
         "hidden_channels": None,
-        "out_op": None
+        "thresh_op": nn.Sequential(
+            nn.Sigmoid(),
+            nn.Threshold(threshold=0.95, value=0)
+        )
     },
     "MLP": {
         "im_size": 16, 
         "hidden_block_op": ConvBlock,
         "hidden_channels": [128, 64, 32],
-        "out_op": None
+        "thresh_op": nn.Sequential(
+            nn.Sigmoid(),
+            nn.Threshold(threshold=0.95, value=0)
+        )
     }
 }
 
