@@ -14,31 +14,19 @@ import numpy as np
 import torch
 import zarr
 
-from numcodecs import register_codec
+from imagecodecs.numcodecs import Jpeg2k, Jpeg
+import numcodecs
 
 import models
 import utils
 
-register_codec(models.ConvolutionalAutoencoder)
-register_codec(models.ConvolutionalAutoencoderBottleneck)
+numcodecs.register_codec(Jpeg2k)
+numcodecs.register_codec(Jpeg)
+numcodecs.register_codec(models.ConvolutionalAutoencoder)
+numcodecs.register_codec(models.ConvolutionalAutoencoderBottleneck)
 
 
-def compress_fn_impl(chunk, model):
-    with torch.no_grad():
-        h, w, c = chunk.shape
-        x = torch.from_numpy(chunk.transpose(2, 0, 1))
-        x = x.view(1, c, h, w)
-        x = x.float() / 255.0
-
-        y = model['encoder'](x)
-
-        y = y[0].cpu().detach().numpy()
-        y = y.transpose(1, 2, 0)
-
-    return y
-
-
-def compress_image(checkpoint, input_filename, output_filename,
+def compress_image(codec, checkpoint, input_filename, output_filename,
                    patch_size=512,
                    source_format='zarr',
                    data_group='0/0',
@@ -47,7 +35,7 @@ def compress_image(checkpoint, input_filename, output_filename,
                    save_as_bottleneck=False,
                    gpu=False):
 
-    if save_as_bottleneck:
+    if save_as_bottleneck and "CAE" in codec:
         model = models.autoencoder_from_state_dict(checkpoint=checkpoint,
                                                    gpu=gpu,
                                                    train=False)
@@ -58,9 +46,34 @@ def compress_image(checkpoint, input_filename, output_filename,
             channels_bn=channels_bn,
             fact_ent=model["fact_ent"].module,
             gpu=gpu)
-    else:
+
+        def compress_fn_impl(chunk):
+            with torch.no_grad():
+                h, w, c = chunk.shape
+                x = torch.from_numpy(chunk.transpose(2, 0, 1))
+                x = x.view(1, c, h, w)
+                x = x.float() / 255.0
+
+                y = model['encoder'](x)
+
+                y = y[0].cpu().detach().numpy()
+                y = y.transpose(1, 2, 0)
+
+            return y
+
+    elif "CAE" in codec:
         compressor = models.ConvolutionalAutoencoder(checkpoint=checkpoint,
                                                      gpu=gpu)
+    elif "Blosc" in codec:
+        compressor = numcodecs.Blosc(clevel=9)
+    elif "Jpeg2k" in codec:
+        compressor = Jpeg2k(level=90)
+    elif "Jpeg" in codec:
+        compressor = Jpeg(level=90)
+    elif "None" in codec:
+        compressor = None
+    else:
+        raise ValueError("Codec %s not supported" % codec)
 
     fn, rois = utils.parse_roi(input_filename, source_format)
 
@@ -87,7 +100,7 @@ def compress_image(checkpoint, input_filename, output_filename,
     z = z[tuple(rois)].squeeze(axis=tuple(range(len(rem_axes))))
     z = z.rechunk(chunks=(patch_size, patch_size, 3))
 
-    if save_as_bottleneck:
+    if save_as_bottleneck and "CAE" in codec:
         comp_chk_y = tuple(int(math.ceil(cs / 2**compression_level))
                            for cs in z.chunks[0])
         comp_chk_x = tuple(int(math.ceil(cs / 2**compression_level))
@@ -95,7 +108,7 @@ def compress_image(checkpoint, input_filename, output_filename,
 
         comp_chunks = (comp_chk_y, comp_chk_x, (channels_bn,))
 
-        z_cmp = z.map_blocks(compress_fn_impl, model=model, dtype=np.float32,
+        z_cmp = z.map_blocks(compress_fn_impl, dtype=np.float32,
                              chunks=comp_chunks,
                              meta=np.empty((0), dtype=np.float32))
 
@@ -182,7 +195,8 @@ def compress(args):
 
     # Compress each file by separate. This allows to process large images    
     for in_fn, out_fn in zip(input_fn_list, output_fn_list):
-        compress_image(checkpoint=args.checkpoint, input_filename=in_fn,
+        compress_image(codec=args.codec, checkpoint=args.checkpoint,
+                       input_filename=in_fn,
                        output_filename=out_fn,
                        patch_size=args.patch_size,
                        source_format=args.source_format,

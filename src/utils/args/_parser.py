@@ -10,8 +10,11 @@ from ._critargs import criteria_args
 from ._dataargs import data_args
 from ._taskargs import task_args
 
-def override_config_file(parser):
-    args = parser.parse_args()
+def override_config_file(parser, args_list=None):
+    if args_list is not None and isinstance(args_list, list):
+        args = parser.parse_args(args_list)
+    else:
+        args = parser.parse_args()
 
     config_parser = argparse.ArgumentParser(parents=[parser], add_help=False)
 

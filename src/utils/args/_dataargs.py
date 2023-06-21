@@ -123,6 +123,17 @@ data_args = [
     },
     {'tasks': ['all'],
         'modes': ['test', 'inference'],
+        'flags': ('-cod', '--codec'),
+        'details': {
+        'dest': 'codec',
+        'type': str,
+        'help': 'Codec used to compress the image',
+        'default': 'CAE',
+        'choices': ['CAE', 'Blosc', 'Jpeg', 'Jpeg2k', 'None'],
+        }
+    },
+    {'tasks': ['all'],
+        'modes': ['test', 'inference'],
         'flags': ('-off', '--add-offset'),
         'details': {
         'dest': 'add_offset',
